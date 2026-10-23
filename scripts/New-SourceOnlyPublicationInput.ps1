@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][ValidateSet('Readiness', 'Plan', 'StartOperation', 'ObserveOperation', 'Execution', 'Disposition', 'ObserveLanding', 'VerifyLanding')][string]$Action,
+    [Parameter(Mandatory = $true)][ValidateSet('Readiness', 'Plan', 'StartOperation', 'ObserveOperation', 'Execution', 'Disposition', 'ObserveLanding', 'VerifyLanding', 'ComputeReviewedIntegration')][string]$Action,
     [string]$WorkspaceRoot = '', [string]$UnitId = '', [string]$RepoMapPath = '', [string]$PublicationId = '',
     [ValidateSet('fast-forward', 'provider-merge')][string]$PublicationMode = 'provider-merge',
     [string]$Remote = 'origin', [string]$TargetBranch = 'main', [string]$PlanPath = '', [string]$RepoId = '',
@@ -14,9 +14,13 @@ param(
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
+if($Action -ceq 'ComputeReviewedIntegration'){$WarningPreference='SilentlyContinue'}
 Import-Module (Join-Path $PSScriptRoot 'SourceOnlyPublicationInputs.psm1') -Force
 
 switch ($Action) {
+    'ComputeReviewedIntegration' {
+        New-MorphospaceSourceDeliveryIntegrationComputation -RequestPath $RequestPath -ExpectedRequestSha256 $ExpectedRequestSha256 -WorkspaceRoot $WorkspaceRoot -RepoMapPath $RepoMapPath -OutPath $OutPath | ConvertTo-Json -Depth 8 -Compress
+    }
     'Disposition' {
         New-MorphospaceSourceDeliveryDisposition -RequestPath $RequestPath -ExpectedRequestSha256 $ExpectedRequestSha256 -WorkspaceRoot $WorkspaceRoot -RepoMapPath $RepoMapPath -HumanDecisionPath $HumanDecisionPath -ExpectedHumanDecisionSha256 $ExpectedHumanDecisionSha256 -OutPath $OutPath
     }

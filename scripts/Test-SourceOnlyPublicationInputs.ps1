@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([switch]$SelfTest, [switch]$DispositionOnly, [switch]$FixedSourcePathOnly)
+param([switch]$SelfTest, [switch]$DispositionOnly, [switch]$FixedSourcePathOnly, [switch]$ActiveEnvelopeReceiptOnly, [switch]$ReviewedIntegrationNativeOnly, [switch]$ReviewedIntegrationOnly)
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
@@ -184,6 +184,164 @@ function Invoke-FixedSourcePathControls {
     'Fixed source-query path controls passed: native root and Windows slash/backslash/case spelling; different/relative roots and changed/extra flags refuse.'
 }
 
+function Invoke-DeliveryComputeOriginal([string]$Root,[string]$Workspace,[string]$Map,[string]$RequestPath,[string]$OutPath,[string]$Name='actual-compute-original',[switch]$PermitFailure) {
+    # Real fixed public child, not New-DeliveryFixtureOriginal's MODELED transport.
+    $dir=Join-Path $Root $Name;Assert-Builder (-not(Test-Path -LiteralPath $dir)) 'Actual computation capture directory already exists.';[IO.Directory]::CreateDirectory($dir)|Out-Null
+    $hostPath=[Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+    $argv=@($hostPath,'-NoProfile','-File',(Join-Path $PSScriptRoot 'New-SourceOnlyPublicationInput.ps1'),'-Action','ComputeReviewedIntegration','-WorkspaceRoot',$Workspace,'-RepoMapPath',$Map,'-RequestPath',$RequestPath,'-ExpectedRequestSha256',(Delivery-Hash $RequestPath),'-OutPath',$OutPath)
+    $intent=[ordered]@{schema='task.root.command_capture_intent.v2';argv=$argv;cwd=$Root;started_utc=[DateTimeOffset]::UtcNow.ToString('o');no_timeout_or_retry=$true;capture_source=Delivery-Ref $PSCommandPath}
+    $ip=Join-Path $dir 'INTENT.json';Write-Json $ip $intent
+    $psi=[Diagnostics.ProcessStartInfo]::new();$psi.FileName=$hostPath;$psi.WorkingDirectory=$Root;$psi.UseShellExecute=$false;$psi.CreateNoWindow=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
+    foreach($arg in @($argv|Select-Object -Skip 1)){$psi.ArgumentList.Add($arg)}
+    $child=[Diagnostics.Process]::new();$child.StartInfo=$psi;$stdout=[IO.MemoryStream]::new();$stderr=[IO.MemoryStream]::new()
+    try {
+        Assert-Builder ($child.Start()) 'Public Compute child did not start.'
+        $outTask=$child.StandardOutput.BaseStream.CopyToAsync($stdout);$errTask=$child.StandardError.BaseStream.CopyToAsync($stderr)
+        $child.WaitForExit();[void]$outTask.GetAwaiter().GetResult();[void]$errTask.GetAwaiter().GetResult();$exit=$child.ExitCode
+        [IO.File]::WriteAllBytes((Join-Path $dir 'stdout.log'),$stdout.ToArray());[IO.File]::WriteAllBytes((Join-Path $dir 'stderr.log'),$stderr.ToArray())
+        $streams=[ordered]@{};foreach($name in @('stdout','stderr')){$ref=Delivery-Ref (Join-Path $dir "$name.log");$ref|Add-Member bytes ([IO.FileInfo]::new($ref.path).Length);$streams[$name]=[ordered]@{raw=$ref;eof=$true;drained_bytes=$ref.bytes;stored_bytes=$ref.bytes;raw_capture_complete=$true;storage_error=$null;read_error=$null}}
+        $completion=[ordered]@{schema='task.root.command_capture_completion.v2';exit_code=[int]$exit;genuine_full_eof=$true;raw_capture_complete=$true;process_reaped=$true;finished_utc=[DateTimeOffset]::UtcNow.ToString('o');intent=Delivery-Ref $ip;stdout=$streams.stdout.raw;stderr=$streams.stderr.raw;streams=$streams;observer_errors=@();termination_requested=$false;automatic_retry=$false}
+        $cp=Join-Path $dir 'COMPLETION.json';Write-Json $cp $completion
+        if(-not $PermitFailure){Assert-Builder ($exit -eq 0) "Actual public Compute failed: $([IO.File]::ReadAllText($streams.stderr.raw.path))"}
+        return Delivery-Ref $cp
+    } finally {$child.Dispose();$stdout.Dispose();$stderr.Dispose()}
+}
+
+function New-DeliveryIntegrationPublishedParent {
+    # This is an independent ordinary bounded source subject. Its provider
+    # observations remain explicitly MODELED; owner/Git and later Compute are real.
+    $branch=Git-Value $source @('symbolic-ref','--short','HEAD')
+    $remote=Join-Path $deliveryRoot 'integration-published.git'
+    Invoke-FixtureGit $source @('init','--bare','--initial-branch=main',$remote)|Out-Null
+    Invoke-FixtureGit $source @('remote','add','origin',$remote)|Out-Null
+    Invoke-FixtureGit $source @('push','origin',"$($seed.source_commit):refs/heads/main")|Out-Null
+    Invoke-FixtureGit $source @('checkout','-b','independent-published',$seed.source_commit)|Out-Null
+    $baselineContent=[IO.File]::ReadAllText((Join-Path $source 'morphospace/README.md'))
+    [IO.File]::WriteAllText((Join-Path $source 'morphospace/README.md'),"# independently published heading`n"+$baselineContent,$encoding)
+    Invoke-FixtureGit $source @('commit','-am','independent published documentation')|Out-Null
+    $candidate=Git-Value $source @('rev-parse','HEAD');$tree=Git-Value $source @('rev-parse','HEAD^{tree}')
+    $pmap=Join-Path $deliveryRoot 'integration-parent-map.json';Write-Json $pmap ([ordered]@{schema='rusty.morphospace.workflow.repository_map.v1';repositories=@([ordered]@{repo_id='project-shell';path=$source;role='source'})})
+    $parentRequest=Copy-Document $request;$parentRequest.disposition_id='independent-published-parent';$parentRequest.publication_map=Delivery-Ref $pmap
+    $parentRequest.publication_subject.base_commit=$seed.source_commit;$parentRequest.publication_subject.base_tree=$seed.source_tree;$parentRequest.publication_subject.candidate_commit=$candidate;$parentRequest.publication_subject.candidate_tree=$tree;$parentRequest.publication_subject.allowed_paths=@('morphospace/README.md')
+    $ppackage=Copy-Document (Read-EnvelopeProtocolJson $package);$ppackage.package_id='independent-published-parent';$ppackage.repositories[0].base_commit=$seed.source_commit;$ppackage.repositories[0].allowed_paths=@('morphospace/README.md')
+    $pkg=Join-Path $deliveryRoot 'integration-parent-package.json';Write-Json $pkg $ppackage;$parentRequest.source_package=Delivery-Ref $pkg
+    $parentRequest.source_check_commands=@(,@($gitExecutable,'-C',$source,'diff','--check',"$($seed.source_commit)..$candidate"))
+    $rp=Join-Path $deliveryRoot 'integration-parent-request.json';Write-Json $rp $parentRequest
+    $pd=New-MorphospaceSourceDeliveryDisposition -RequestPath $rp -ExpectedRequestSha256 (Delivery-Hash $rp) -WorkspaceRoot $ws -RepoMapPath $pmap -HumanDecisionPath $human -ExpectedHumanDecisionSha256 (Delivery-Hash $human) -OutPath (Join-Path $deliveryRoot 'integration-parent-disposition.json')
+    $snapshotArgs=@($gitExecutable,'--no-optional-locks','--no-pager','--no-replace-objects','-C',$source,'status','--porcelain=v2','--branch','--untracked-files=all');$status=(Invoke-FixtureGit $source @('status','--porcelain=v2','--branch','--untracked-files=all')) -join "`n"
+    $pre=New-DeliveryFixtureOriginal $deliveryRoot 'integration-parent-before' $snapshotArgs $source $status 20
+    Invoke-FixtureGit $source @('diff','--check',"$($seed.source_commit)..$candidate")|Out-Null
+    $check=New-DeliveryFixtureOriginal $deliveryRoot 'integration-parent-check' $parentRequest.source_check_commands[0] $source '' 21
+    $post=New-DeliveryFixtureOriginal $deliveryRoot 'integration-parent-after' $snapshotArgs $source $status 22
+    $published=Publish-SyntheticProviderMerge ([pscustomobject]@{id='integration-parent';repo=$source;remote=$remote;candidate=$candidate}) $deliveryRoot
+    $merge=New-DeliveryFixtureOriginal $deliveryRoot 'integration-parent-merge' @($providerOrigin,'pr','merge','9','--repo','Example/ported-source','--merge','--match-head-commit',$candidate) $source '' 23
+    $checks=New-DeliveryFixtureOriginal $deliveryRoot 'integration-parent-checks' @($providerOrigin,'pr','checks','9','--repo','Example/ported-source','--required','--json','name,state,link') $source '[{"name":"independent-source","state":"SUCCESS","link":"https://example.invalid/MODELED-parent"}]' 24
+    $prText=[ordered]@{number=9;state='closed';merged=$true;merged_at='2026-10-21T01:23:01Z';merge_commit_sha=$published.final;head=[ordered]@{sha=$candidate;repo=[ordered]@{full_name='Example/ported-source'}};base=[ordered]@{ref='main';repo=[ordered]@{full_name='Example/ported-source'}}}|ConvertTo-Json -Depth 10
+    $pr=New-DeliveryFixtureOriginal $deliveryRoot 'integration-parent-pr' @($providerOrigin,'api','--method','GET','repos/Example/ported-source/pulls/9') $source $prText 25
+    $parentLanding=Copy-Document $lr;$parentLanding.disposition=Delivery-Ref $pd.path;$parentLanding.source_checks=@($check);$parentLanding.source_before_original=$pre;$parentLanding.source_after_original=$post;$parentLanding.pull_request_number=9;$parentLanding.pull_request_original=$pr;$parentLanding.required_checks_original=$checks;$parentLanding.merge_original=$merge
+    $lp=Join-Path $deliveryRoot 'integration-parent-landing-request.json';Write-Json $lp $parentLanding
+    $landed=New-MorphospaceSourceDeliveryLanding -RequestPath $lp -ExpectedRequestSha256 (Delivery-Hash $lp) -RepoMapPath $pmap -OutPath (Join-Path $deliveryRoot 'integration-parent-landing.json')
+    Invoke-FixtureGit $source @('checkout',$branch)|Out-Null;Invoke-FixtureGit $source @('remote','remove','origin')|Out-Null
+    [pscustomobject]@{landing=Delivery-Ref $landed.path;commit=$published.final;tree=$tree;baseline_content=$baselineContent;remote=$remote}
+}
+
+function Invoke-DeliveryAcceptedIntegrationControls($Published) {
+    Invoke-FixtureGit $source @('checkout','-b','accepted-reviewed-integration',$acceptedRequest.source_reference.commit)|Out-Null
+    Invoke-FixtureGit $source @('merge','--no-ff','--no-edit',$Published.commit)|Out-Null
+    $candidate=Git-Value $source @('rev-parse','HEAD');$tree=Git-Value $source @('rev-parse','HEAD^{tree}')
+    $literal="# independently published heading`n"+$Published.baseline_content+"delivery consumer source`n"
+    Assert-Builder ([IO.File]::ReadAllText((Join-Path $source 'morphospace/README.md')) -ceq $literal) 'Real overlapping owner/published merge lost independently expected content.'
+    $cr=[ordered]@{schema='rusty.morphospace.workflow.source_delivery_disposition.v1';kind='integration-computation-request';consumer=Copy-Document $acceptedRequest.consumer;source_reference=Copy-Document $acceptedRequest.source_reference;publication_subject=Copy-Document $acceptedRequest.publication_subject;publication_map=Copy-Document $acceptedRequest.publication_map;published_landing=$Published.landing}
+    $cr.consumer.boundary_kind='accepted-source-owner-reviewed-integration';$cr.publication_subject.base_commit=$Published.commit;$cr.publication_subject.base_tree=$Published.tree;$cr.publication_subject.candidate_commit=$candidate;$cr.publication_subject.candidate_tree=$tree
+    $cp=Join-Path $deliveryRoot 'computation-request.json';Write-Json $cp $cr;$out=Join-Path $deliveryRoot 'computation.json'
+    $originalUrl=Git-Value $source @('remote','get-url','origin')
+    try {Invoke-FixtureGit $source @('remote','set-url','origin','https://github.com/Example/ported-source.git')|Out-Null;$original=Invoke-DeliveryComputeOriginal $deliveryRoot $ws $ownerMap $cp $out}
+    finally {Invoke-FixtureGit $source @('remote','set-url','origin',$originalUrl)|Out-Null}
+    # A clean commit with the SAME ordered parents but manually altered source
+    # must fail the actual public producer's computed-tree comparison.
+    $readme=Join-Path $source 'morphospace/README.md';$sourceBytes=[IO.File]::ReadAllBytes($readme)
+    try {[IO.File]::AppendAllText($readme,"unreviewed manual resolution`n",$encoding);Invoke-FixtureGit $source @('add','morphospace/README.md')|Out-Null;$manualTree=Git-Value $source @('write-tree')}
+    finally {[IO.File]::WriteAllBytes($readme,$sourceBytes);Invoke-FixtureGit $source @('add','morphospace/README.md')|Out-Null}
+    $manual=Git-Value $source @('commit-tree',$manualTree,'-p',$acceptedRequest.source_reference.commit,'-p',$Published.commit,'-m','manual-extra-source')
+    Invoke-FixtureGit $source @('checkout','-b','manual-reviewed-integration',$manual)|Out-Null
+    $manualRequest=Copy-Document $cr;$manualRequest.publication_subject.candidate_commit=$manual;$manualRequest.publication_subject.candidate_tree=$manualTree
+    $manualPath=Join-Path $deliveryRoot 'manual-integration-request.json';Write-Json $manualPath $manualRequest;$manualOutput=Join-Path $deliveryRoot 'manual-integration-computation.json'
+    try {Invoke-FixtureGit $source @('remote','set-url','origin','https://github.com/Example/ported-source.git')|Out-Null;$manualOriginal=Invoke-DeliveryComputeOriginal $deliveryRoot $ws $ownerMap $manualPath $manualOutput 'actual-manual-refusal' -PermitFailure}
+    finally {Invoke-FixtureGit $source @('remote','set-url','origin',$originalUrl)|Out-Null;Invoke-FixtureGit $source @('checkout','accepted-reviewed-integration')|Out-Null}
+    $manualCompletion=Read-EnvelopeProtocolJson $manualOriginal.path
+    Assert-Builder ($manualCompletion.exit_code -ne 0 -and -not(Test-Path -LiteralPath $manualOutput) -and [IO.File]::ReadAllText($manualCompletion.stderr.path) -like '*exact computed tree*') 'Public producer accepted a manual source tree with otherwise correct parents.'
+    $actualComputation=Read-EnvelopeProtocolJson $out;$actualCompletion=Read-EnvelopeProtocolJson $original.path
+    $actualOuter=[pscustomobject]@{completion=$actualCompletion;intent=Read-EnvelopeProtocolJson $actualCompletion.intent.path}
+    # Isolate the exact private native-reader predicates using genuine child
+    # records. These altered DTOs are NOT public Compute/Disposition authority.
+    foreach($damage in @('nonzero-tree-prefix','no-eof','string-eof','unknown-field','extra-option','reversed-time','wrong-stdin','custom-config','attribute-environment')) {
+        $nativeCase=Copy-Document $actualComputation;$index=if($damage -ceq 'wrong-stdin'){8}else{11}
+        $record=Read-EnvelopeProtocolJson $nativeCase.native.commands[$index].path
+        switch($damage) {
+            'nonzero-tree-prefix' {$record.exit_code=1}
+            'no-eof' {$record.stdout_eof=$false}
+            'string-eof' {$record.stdout_eof='true'}
+            'unknown-field' {$record|Add-Member caller_pass $true}
+            'extra-option' {$record.arguments+=,'-Xours'}
+            'reversed-time' {$record.finished_utc=$actualOuter.intent.started_utc}
+            'wrong-stdin' {$stdin=Join-Path $deliveryRoot 'wrong-native-stdin.bin';[IO.File]::WriteAllBytes($stdin,$encoding.GetBytes("unrelated.txt"+[char]0));$record.stdin=Delivery-Ref $stdin}
+            'custom-config' {$config=Join-Path $deliveryRoot 'wrong-native-config.bin';[IO.File]::WriteAllText($config,"[core]`nrepositoryformatversion = 0`nbare = true`n[merge]`ndefault = forbidden`n",$encoding);$nativeCase.native.config=Delivery-Ref $config}
+            'attribute-environment' {$envCase=Read-EnvelopeProtocolJson $nativeCase.native.environment.path;$envCase|Add-Member GIT_ATTR_SOURCE $seed.source_commit;$envPath=Join-Path $deliveryRoot 'wrong-native-environment.json';Write-Json $envPath $envCase;$nativeCase.native.environment=Delivery-Ref $envPath}
+        }
+        $recordPath=Join-Path $deliveryRoot "wrong-native-$damage.json";Write-Json $recordPath $record;$nativeCase.native.commands[$index]=Delivery-Ref $recordPath
+        Assert-Rejected {&$module {param($c,$o) Read-SourceDeliveryIntegrationNative $c (New-SourceDeliveryObservation) $o @('morphospace/README.md')} $nativeCase $actualOuter} '*Native*' "private native $damage"
+    }
+    $integrated=Copy-Document $acceptedRequest;$integrated.consumer=$cr.consumer;$integrated.publication_subject=$cr.publication_subject;$integrated.disposition_id='accepted-reviewed-integration';$integrated.relationship.kind='reviewed-integration';$integrated.relationship.limits=@('Acceptance and validation remain original source only; new subject requires fresh qualification and ordinary publication.');$integrated.source_check_commands=@(,@($gitExecutable,'-C',$source,'diff','--check',"$($Published.commit)..$candidate"))
+    $integrated|Add-Member integration ([pscustomobject]@{published_landing=$Published.landing;computation=Delivery-Ref $out;computation_original=$original})
+    $ip=Join-Path $deliveryRoot 'integrated-request.json';Write-Json $ip $integrated
+    $args=@{RequestPath=$ip;ExpectedRequestSha256=Delivery-Hash $ip;WorkspaceRoot=$ws;RepoMapPath=$ownerMap;HumanDecisionPath=$acceptedHuman;ExpectedHumanDecisionSha256=Delivery-Hash $acceptedHuman}
+    $beforeOwner=Get-EnvelopeWorkspaceByteInventorySha256 $ws
+    $disposition=New-MorphospaceSourceDeliveryDisposition @args -OutPath (Join-Path $deliveryRoot 'integrated-disposition.json')
+    Assert-Builder (-not $disposition.document.source_landed -and -not $disposition.document.acceptance_credit -and (Get-EnvelopeWorkspaceByteInventorySha256 $ws) -ceq $beforeOwner) 'Integration disposition mutated or transferred owner credit.'
+    foreach($damage in @('substituted-computation','wrong-source','wrong-parent','wrong-tree','old-branch','port-kind')) {
+        $bad=Copy-Document $integrated
+        switch($damage) {
+            'substituted-computation' {$savedComputation=[IO.File]::ReadAllBytes($out);$changed=Copy-Document (Read-EnvelopeProtocolJson $out);$changed.native.result_tree='1'*40;Write-Json $out $changed;$bad.integration.computation=Delivery-Ref $out}
+            'wrong-source' {$bad.source_reference.commit=$seed.source_commit}
+            'wrong-parent' {$bad.publication_subject.base_commit=$seed.source_commit;$bad.publication_subject.base_tree=$seed.source_tree}
+            'wrong-tree' {$bad.publication_subject.candidate_tree=$Published.tree}
+            'old-branch' {$bad.consumer.boundary_kind='accepted-source-owner';$bad.relationship.kind='same-source'}
+            'port-kind' {$bad.relationship.kind='reviewed-port'}
+        }
+        $bp=Join-Path $deliveryRoot "integrated-$damage-request.json";Write-Json $bp $bad;$a=$args.Clone();$a.RequestPath=$bp;$a.ExpectedRequestSha256=Delivery-Hash $bp
+        $reason=if($damage -ceq 'substituted-computation'){'*Outer original does not bind this exact computation output*'}else{'*'}
+        try {Assert-Rejected {New-MorphospaceSourceDeliveryDisposition @a -OutPath (Join-Path $deliveryRoot "refused-integrated-$damage.json")} $reason "integration $damage"}
+        finally {if($damage -ceq 'substituted-computation'){[IO.File]::WriteAllBytes($out,$savedComputation)}}
+        Assert-Builder ((Get-EnvelopeWorkspaceByteInventorySha256 $ws) -ceq $beforeOwner) 'Refused integration changed owner history.'
+    }
+    $remote=Join-Path $deliveryRoot 'integrated-publication.git';Invoke-FixtureGit $source @('init','--bare','--initial-branch=main',$remote)|Out-Null
+    Invoke-FixtureGit $source @('remote','set-url','origin',$remote)|Out-Null;Invoke-FixtureGit $source @('push','origin',"$($Published.commit):refs/heads/main")|Out-Null
+    $statusArgs=@($gitExecutable,'--no-optional-locks','--no-pager','--no-replace-objects','-C',$source,'status','--porcelain=v2','--branch','--untracked-files=all');$status=(Invoke-FixtureGit $source @('status','--porcelain=v2','--branch','--untracked-files=all')) -join "`n"
+    $pre=New-DeliveryFixtureOriginal $deliveryRoot 'integrated-before' $statusArgs $source $status 30
+    Invoke-FixtureGit $source @('diff','--check',"$($Published.commit)..$candidate")|Out-Null
+    $check=New-DeliveryFixtureOriginal $deliveryRoot 'integrated-check' $integrated.source_check_commands[0] $source '' 31
+    $post=New-DeliveryFixtureOriginal $deliveryRoot 'integrated-after' $statusArgs $source $status 32
+    $normal=Publish-SyntheticProviderMerge ([pscustomobject]@{id='integrated';repo=$source;remote=$remote;candidate=$candidate}) $deliveryRoot
+    $merge=New-DeliveryFixtureOriginal $deliveryRoot 'integrated-merge' @($providerOrigin,'pr','merge','10','--repo','Example/ported-source','--merge','--match-head-commit',$candidate) $source '' 33
+    $checks=New-DeliveryFixtureOriginal $deliveryRoot 'integrated-required-checks' @($providerOrigin,'pr','checks','10','--repo','Example/ported-source','--required','--json','name,state,link') $source '[{"name":"fresh-integrated-source","state":"SUCCESS","link":"https://example.invalid/MODELED-integrated"}]' 34
+    $prText=[ordered]@{number=10;state='closed';merged=$true;merged_at='2026-10-21T01:33:01Z';merge_commit_sha=$normal.final;head=[ordered]@{sha=$candidate;repo=[ordered]@{full_name='Example/ported-source'}};base=[ordered]@{ref='main';repo=[ordered]@{full_name='Example/ported-source'}}}|ConvertTo-Json -Depth 10
+    $pr=New-DeliveryFixtureOriginal $deliveryRoot 'integrated-pr' @($providerOrigin,'api','--method','GET','repos/Example/ported-source/pulls/10') $source $prText 35
+    $landingRequest=Copy-Document $ownerLandingRequest;$landingRequest.disposition=Delivery-Ref $disposition.path;$landingRequest.source_checks=@($check);$landingRequest.source_before_original=$pre;$landingRequest.source_after_original=$post;$landingRequest.pull_request_number=10;$landingRequest.pull_request_original=$pr;$landingRequest.required_checks_original=$checks;$landingRequest.merge_original=$merge
+    $lp=Join-Path $deliveryRoot 'integrated-landing-request.json';Write-Json $lp $landingRequest
+    $landed=New-MorphospaceSourceDeliveryLanding -RequestPath $lp -ExpectedRequestSha256 (Delivery-Hash $lp) -RepoMapPath $ownerMap -OutPath (Join-Path $deliveryRoot 'integrated-landing.json')
+    # Native execution and its private object database are unnecessary on retained
+    # reads. Existing Git object observation remains read-only and available.
+    $isolated=[IO.Path]::GetFullPath($out+'.native/isolated');$expected=[IO.Path]::GetFullPath((Join-Path ($out+'.native') 'isolated'))
+    Assert-Builder ($isolated -ceq $expected -and [IO.Path]::GetDirectoryName($isolated) -ceq [IO.Path]::GetFullPath($out+'.native')) 'Unsafe private computation cleanup.'
+    Assert-Builder (-not (Test-Path -LiteralPath $isolated)) 'Public computation left its obsolete private object database present.'
+    &$module {param($r) $script:integrationSavedNative=${function:Invoke-SourceDeliveryIntegrationGit};$script:integrationSavedRemote=${function:Get-SourceOnlyInputRemoteReadback};function script:Invoke-SourceDeliveryIntegrationGit{throw 'Native recomputation forbidden in retained read.'};function script:Get-SourceOnlyInputRemoteReadback{throw 'Network forbidden in retained read.'}} $integrated
+    try {Assert-Builder (Test-MorphospaceSourceDeliveryLanding -LandingPath $landed.path -ExpectedLandingSha256 $landed.sha256 -WorkspaceRoot $ws -UnitId u002 -RepositoryMap $map) 'Retained integrated landing required a network/native recomputation.'}
+    finally {&$module {Set-Item Function:script:Invoke-SourceDeliveryIntegrationGit $script:integrationSavedNative;Set-Item Function:script:Get-SourceOnlyInputRemoteReadback $script:integrationSavedRemote;Remove-Variable integrationSavedNative,integrationSavedRemote -Scope Script}}
+    Invoke-FixtureGit $source @('checkout','--detach',$ownerPublished.final)|Out-Null
+    Write-Host 'Accepted reviewed-integration controls passed: real accepted source and independent overlapping published parent; actual fixed public native producer/original; zero credit/no owner writes; immutable outer output substitution and source/parent/tree/old-variant refusals; retained native/network unavailable.'
+    return Delivery-Ref $landed.path
+}
+
 function Invoke-DeliveryContractControls {
     $deliveryRoot=Join-Path ([IO.Path]::GetTempPath()) ('source-delivery-contract-'+[guid]::NewGuid().ToString('N'))
     $ownerModule=Import-Module (Join-Path $PSScriptRoot 'DevelopmentUnitAdmission.psm1') -PassThru
@@ -253,6 +411,7 @@ function Invoke-DeliveryContractControls {
         $landing=New-MorphospaceSourceDeliveryLanding -RequestPath $lp -ExpectedRequestSha256 (Delivery-Hash $lp) -RepoMapPath $publicationMap -OutPath (Join-Path $deliveryRoot 'landing.json')
         Assert-Builder (Test-MorphospaceSourceDeliveryLanding -LandingPath $landing.path -ExpectedLandingSha256 $landing.sha256 -WorkspaceRoot $ws -UnitId u002 -RepositoryMap $map) 'Earlier landing read failed.'
         Assert-Builder ((Get-EnvelopeWorkspaceByteInventorySha256 $ws) -ceq $before) 'Landing observation/consumption changed the consumer.'
+        $integrationPublished=New-DeliveryIntegrationPublishedParent
         $originalCheck=[IO.File]::ReadAllBytes($check.path)
         foreach($damage in @('nonzero','no-eof','not-reaped','string-flag','nested-string-flag','string-count','string-exit','false-byte-count','reversed-time')) {
             $bad=Copy-Document (Read-EnvelopeProtocolJson $check.path)
@@ -383,6 +542,7 @@ function Invoke-DeliveryContractControls {
         Invoke-FixtureGit $source @('checkout','--detach',$ownerPublished.final)|Out-Null
         Assert-Builder (Test-MorphospaceSourceDeliveryLanding -LandingPath $ownerLanding.path -ExpectedLandingSha256 $ownerLanding.sha256 -WorkspaceRoot $ws -UnitId u002 -RepositoryMap $map) 'Accepted-owner earlier landing failed retained verification.'
         Assert-Builder ((Get-EnvelopeWorkspaceByteInventorySha256 $ws) -ceq $ownerBefore) 'Accepted-owner landing observation/readback changed owner history.'
+        $integrationLanding=Invoke-DeliveryAcceptedIntegrationControls $integrationPublished
         # Advance the disposable accepted owner through an existing, committed
         # evidence-relocation action. Historical landing readback must retain
         # the original Accept identity, without a caller-authored fake event.
@@ -395,6 +555,7 @@ function Invoke-DeliveryContractControls {
         Invoke-MorphospaceRelocateAcceptedValidationEvidence -WorkspaceRoot $ws -RelocationInput $relocation.path -ExpectedInputSha256 $relocation.sha256 -OutPath (Join-Path $ws "receipts/$($relocation.relocation_id).json") -Execute|Out-Null
         Assert-Builder ((Read-EnvelopeProtocolJson $statePath).last_event_id -cne $acceptedRequest.consumer.accept_event_id) 'Fixture did not earn a later committed owner tail.'
         Assert-Builder (Test-MorphospaceSourceDeliveryLanding -LandingPath $ownerLanding.path -ExpectedLandingSha256 $ownerLanding.sha256 -WorkspaceRoot $ws -UnitId u002 -RepositoryMap $map) 'Later committed owner tail lost retained acceptance/source authority.'
+        Assert-Builder (Test-MorphospaceSourceDeliveryLanding -LandingPath $integrationLanding.path -ExpectedLandingSha256 $integrationLanding.sha256 -WorkspaceRoot $ws -UnitId u002 -RepositoryMap $map) 'Later committed tail lost reviewed integration authority.'
         $historyBefore=Get-EnvelopeWorkspaceByteInventorySha256 $ws
         Assert-Rejected {New-MorphospaceSourceDeliveryDisposition @acceptedArgs -OutPath (Join-Path $deliveryRoot 'stale-accepted-disposition.json')} '*current acceptance tail*' 'stale accepted-owner creation'
         Assert-Builder ((Get-EnvelopeWorkspaceByteInventorySha256 $ws) -ceq $historyBefore) 'Stale accepted-owner creation changed history.'
@@ -406,9 +567,235 @@ function Invoke-DeliveryContractControls {
     }
 }
 
+function New-DeliveryActiveReceiptExtension {
+    param([string]$Workspace,[string]$RequestPath)
+    $project=Read-EnvelopeProtocolJson (Join-Path $Workspace 'project.spec.json');$lock=Read-EnvelopeProtocolJson (Join-Path $Workspace 'feature.lock.json');$state=Read-EnvelopeProtocolJson (Join-Path $Workspace 'workspace.state.json');$unit=Read-EnvelopeProtocolJson (Join-Path $Workspace 'iteration-units/u002.json')
+    $sourcePath=Join-Path $Workspace ([string]$unit.source_composition.lock_path);$source=Read-EnvelopeProtocolJson $sourcePath;$mapPath=Join-Path $Workspace 'repository-map.json';$root='delivery-extra/'
+    $targetProject=Copy-Envelope $project;$targetProject.revision=[int]$project.revision+1
+    @($targetProject.repositories|Where-Object repo_id -CEQ 'project-shell')[0].allowed_paths+=,$root
+    $targetLock=Copy-Envelope $lock;$targetLock.project_revision=$targetProject.revision;$targetLock.revision=[int]$lock.revision+1;$targetLock.generated_at=[DateTime]::UtcNow.ToString('o');$targetLock.lock_fingerprint='0'*64;$targetLock.lock_fingerprint=Get-EnvelopeCanonicalJsonSha256 $targetLock
+    $targetState=Copy-Envelope $state;$targetState.plan_revision=[int]$state.plan_revision+1;$targetState.last_event_id='delivery-native-add-root-recorded';$targetState.module_registry.lock_revision=$targetLock.revision;$targetState.module_registry.lock_fingerprint=$targetLock.lock_fingerprint
+    $assessment=Copy-Envelope $unit.agent_scope_assessment;@($assessment.owner_repositories|Where-Object repo_id -CEQ 'project-shell')[0].source_roots+=,$root
+    $allowed=@(Copy-Envelope @($unit.allowed_repositories));@($allowed|Where-Object repo_id -CEQ 'project-shell')[0].allowed_paths+=,$root
+    $effects=[ordered]@{};foreach($axis in @('permissions','services','activities','queries','tools','assets','shaders','native_libraries','commands','routes','streams','inputs','scenes','markers')){$effects[$axis]=@()}
+    $request=[ordered]@{
+        schema='rusty.morphospace.workflow.active_development_envelope_extension.v1';extension_id='delivery-native-add-root';project_id='envelope-test';unit_id='u002';rationale='The unchanged fixture documentation objective needs one additional exact documentation root.'
+        ownership_proof=@([ordered]@{repo_id='project-shell';source_roots=@($root);owner='project-shell';evidence='The existing documentation owner reviewed this exact new root for the unchanged objective.'})
+        additions=[ordered]@{repository_ids=@();owner_roots=@([ordered]@{repo_id='project-shell';source_roots=@($root)});feature_ids=@();module_ids=@();authority_parameters=@();effects=$effects;permissions=@();validation_profile_ids=@();acceptance_profile_ids=@();build_profile_ids=@();device_kinds=@()}
+        before=[ordered]@{project=$project;feature_lock=$lock;state=$state;agent_scope_assessment=$unit.agent_scope_assessment;allowed_repositories=@($unit.allowed_repositories);read_only_dependencies=@($unit.read_only_dependencies)}
+        target=[ordered]@{project=$targetProject;feature_lock=$targetLock;state=$targetState;agent_scope_assessment=$assessment;allowed_repositories=@($allowed);read_only_dependencies=@($unit.read_only_dependencies)}
+        source_composition=[ordered]@{path='source-composition-locks/delivery-native-add-root.json';repository_ids=@($source.repositories.repo_id)}
+        effective_repository_map=[ordered]@{path='repository-map.json';raw_sha256=Get-EnvelopeFileSha256 $mapPath}
+        expected=[ordered]@{status='active';current_unit='u002';project_revision=[int]$project.revision;feature_lock_revision=[int]$lock.revision;plan_revision=[int]$state.plan_revision;project_sha256=Get-EnvelopeCanonicalJsonSha256 $project;project_raw_sha256=Get-EnvelopeFileSha256 (Join-Path $Workspace 'project.spec.json');feature_lock_sha256=Get-EnvelopeCanonicalJsonSha256 $lock;feature_lock_raw_sha256=Get-EnvelopeFileSha256 (Join-Path $Workspace 'feature.lock.json');state_sha256=Get-EnvelopeCanonicalJsonSha256 $state;state_raw_sha256=Get-EnvelopeFileSha256 (Join-Path $Workspace 'workspace.state.json');unit_sha256=Get-EnvelopeCanonicalJsonSha256 $unit;unit_raw_sha256=Get-EnvelopeFileSha256 (Join-Path $Workspace 'iteration-units/u002.json');events_sha256=Get-EnvelopeFileSha256 (Join-Path $Workspace 'iteration-events.jsonl');events_length=([IO.FileInfo](Join-Path $Workspace 'iteration-events.jsonl')).Length;event_tail_id=$state.last_event_id;source_composition_path=$unit.source_composition.lock_path;source_composition_raw_sha256=Get-EnvelopeFileSha256 $sourcePath;source_composition_canonical_sha256=Get-EnvelopeCanonicalJsonSha256 $source;repository_map_path='repository-map.json';repository_map_raw_sha256=Get-EnvelopeFileSha256 $mapPath;original_source_composition_path=$unit.source_composition.lock_path;original_source_composition_raw_sha256=Get-EnvelopeFileSha256 $sourcePath;original_repository_map_path='repository-map.json';original_repository_map_raw_sha256=Get-EnvelopeFileSha256 $mapPath}
+        does_not_prove=@('Temporary owner scope extension only; no validation, acceptance, publication or device credit.')
+    }
+    Write-EnvelopeJson $RequestPath $request
+    [pscustomobject]@{request=$request;request_path=$RequestPath;map_path=$mapPath;receipt_path=(Join-Path $Workspace 'receipts/delivery-native-add-root.json');source_path=(Join-Path $Workspace 'source-composition-locks/delivery-native-add-root.json')}
+}
+
+function Invoke-ActiveEnvelopeReceiptControls {
+    $fixtureRoot=Join-Path ([IO.Path]::GetTempPath()) ('source-delivery-active-receipt-'+[guid]::NewGuid().ToString('N'))
+    $ledgerModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1') -PassThru
+    $protocolModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -PassThru
+    Import-Module (Join-Path $PSScriptRoot 'DevelopmentUnitAdmission.psm1')
+    Import-Module (Join-Path $PSScriptRoot 'ActiveDevelopmentEnvelopeExtension.psm1')
+    Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1')
+    . (Join-Path $PSScriptRoot 'test-support/DevelopmentAdmissionFixture.ps1')
+    function Invoke-EnvelopeGit([string]$Path,[string[]]$Arguments){Invoke-FixtureGit $Path $Arguments}
+    try {
+        $seed=New-EnvelopeAdmissionPreparedFixture -Root $fixtureRoot -RepositoryRoot (Split-Path $PSScriptRoot -Parent) -TransitionLedgerModule $ledgerModule -OwnerProducedPreparation
+        $seed.admission_template.unit|Add-Member -NotePropertyName guard_profile -NotePropertyValue locked -Force
+        $ws=$seed.workspace;$source=$seed.source_repository;$map=Join-Path $ws 'repository-map.json';$admit=Join-Path $fixtureRoot 'admit.json';Write-Json $admit $seed.admission_template
+        Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $ws -DevelopmentUnitAdmission $admit -ExpectedDevelopmentUnitAdmissionSha256 (Delivery-Hash $admit) -OutPath (Join-Path $ws 'receipts/u002-admission.json') -Execute|Out-Null
+        foreach($action in @('Ready','Claim')){Invoke-MorphospaceWorkUnitAutomation -Action $action -WorkspaceRoot $ws -UnitId u002 -RepoMapPath $map -ValidationTier standard -Execute|Out-Null}
+        $originalBaseline=Git-Value $source @('rev-parse','HEAD')
+        [IO.File]::AppendAllText((Join-Path $source 'morphospace/README.md'),"before genuine extension`n",$encoding);Invoke-FixtureGit $source @('add','morphospace/README.md')|Out-Null;Invoke-FixtureGit $source @('commit','-m','before extension')|Out-Null
+        $extensionHead=Git-Value $source @('rev-parse','HEAD');Assert-Builder ($extensionHead-cne$originalBaseline) 'Fixture did not create a distinct before-extension head.'
+        $extension=New-DeliveryActiveReceiptExtension $ws (Join-Path $fixtureRoot 'extension.json')
+        Invoke-MorphospaceExtendActiveDevelopmentEnvelope -WorkspaceRoot $ws -UnitId u002 -ActiveDevelopmentEnvelopeExtension $extension.request_path -ExpectedActiveDevelopmentEnvelopeExtensionSha256 (Delivery-Hash $extension.request_path) -RepositoryMapPath $map -OutPath $extension.receipt_path -SourceCompositionOutPath $extension.source_path -Execute|Out-Null
+        [void][IO.Directory]::CreateDirectory((Join-Path $source 'delivery-extra'));[IO.File]::WriteAllText((Join-Path $source 'delivery-extra/README.md'),"after genuine extension`n",$encoding);Invoke-FixtureGit $source @('add','delivery-extra/README.md')|Out-Null;Invoke-FixtureGit $source @('commit','-m','after extension')|Out-Null
+        $unit=Read-EnvelopeProtocolJson (Join-Path $ws 'iteration-units/u002.json');$state=Read-EnvelopeProtocolJson (Join-Path $ws 'workspace.state.json');$project=Read-EnvelopeProtocolJson (Join-Path $ws 'project.spec.json');$lock=Read-EnvelopeProtocolJson (Join-Path $ws 'feature.lock.json');$events=Join-Path $ws 'iteration-events.jsonl';$head=Git-Value $source @('rev-parse','HEAD')
+        $freeze=[ordered]@{schema='rusty.morphospace.workflow.candidate_freeze.v1';freeze_id='delivery-active-native';project_id='envelope-test';unit_id='u002';expected=[ordered]@{project_sha256=Get-EnvelopeCanonicalJsonSha256 $project;state_sha256=Get-EnvelopeCanonicalJsonSha256 $state;unit_sha256=Get-EnvelopeCanonicalJsonSha256 $unit;feature_lock_sha256=Get-EnvelopeCanonicalJsonSha256 $lock;source_composition_path=$unit.source_composition.lock_path;source_composition_sha256=Delivery-Hash $extension.source_path;repository_map_path='repository-map.json';repository_map_sha256=Delivery-Hash $map;events_sha256=Delivery-Hash $events;events_length=([IO.FileInfo]$events).Length;event_tail_id=$state.last_event_id};final_repositories=@([ordered]@{repo_id='project-shell';commit=$head;tree=Git-Value $source @('rev-parse','HEAD^{tree}')});changed_paths=@([ordered]@{repo_id='project-shell';paths=@('morphospace/','delivery-extra/')});cleanliness_policy='clean-only';instruction_surfaces=@([ordered]@{path='morphospace/README.md';disposition='reviewed-no-change'});feature_lock=[ordered]@{revision=$lock.revision;sha256=Get-EnvelopeCanonicalJsonSha256 $lock};effects=@($unit.agent_scope_assessment.allowed_effect_categories);permissions=@($unit.agent_scope_assessment.allowed_permission_categories);device_use=@('none');test_matrix=@([ordered]@{test_id='source';command='Fixture source predicate.'});cleanup_evidence=@('Real temporary active-extension owner; modeled source predicate only.');source_composition=[ordered]@{path=$unit.source_composition.lock_path;sha256=Delivery-Hash $extension.source_path};does_not_prove=@('No product, actual provider CI or adoption credit.')}
+        $freezePath=Join-Path $fixtureRoot 'freeze.json';Write-Json $freezePath $freeze
+        Invoke-MorphospaceFreezeCandidate -WorkspaceRoot $ws -UnitId u002 -CandidateFreeze $freezePath -ExpectedCandidateFreezeSha256 (Delivery-Hash $freezePath) -OutPath (Join-Path $ws 'receipts/delivery-active-native.json') -Execute|Out-Null
+        Invoke-MorphospaceWorkUnitAutomation -Action BeginValidation -WorkspaceRoot $ws -UnitId u002 -RepoMapPath $map -ValidationTier standard -Execute|Out-Null
+        $unit=Read-EnvelopeProtocolJson (Join-Path $ws 'iteration-units/u002.json');$inspect=Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $ws -UnitId u002 -RepoMapPath $map -ValidationTier standard
+        $log=Join-Path $ws 'receipts/modeled-source-predicate.log';[IO.File]::WriteAllText($log,'MODELED fixture source predicate; no real CI/product proof.',$encoding)
+        $evidence=[ordered]@{receipt_id='delivery-active-native-pass';tier='standard';result='pass';artifacts=@([ordered]@{artifact_id='source';kind='test-log';path='modeled-source-predicate.log'});criteria=@($unit.acceptance|ForEach-Object{[ordered]@{acceptance_id=$_.acceptance_id;status='pass';command=$_.command;evidence_refs=@('source')}});gates=@($inspect.validation_matrix|Where-Object disposition -CNE forbidden|ForEach-Object{[ordered]@{gate_id=$_.gate_id;status='pass';command=$_.command;evidence_refs=@('source')}});device_validation=$null}
+        $evidencePath=Join-Path $fixtureRoot 'evidence.json';Write-Json $evidencePath $evidence;$receiptPath=Join-Path $ws 'receipts/delivery-active-native-pass.json'
+        foreach($damage in @('source-raw','source-baseline','physical-map','extension-authority')) {
+            $damagedPath=switch($damage){'physical-map'{$map};'extension-authority'{$extension.receipt_path};default{$extension.source_path}}
+            $originalBytes=[IO.File]::ReadAllBytes($damagedPath)
+            try {
+                if($damage -ceq 'source-baseline'){$bad=Read-EnvelopeProtocolJson $damagedPath;$bad.repositories[0].baseline_commit=$extensionHead;Write-Json $damagedPath $bad}
+                else{[IO.File]::AppendAllText($damagedPath," `n",$encoding)}
+                $beforeRefusal=Get-EnvelopeWorkspaceByteInventorySha256 $ws;$refusedPath=Join-Path $ws "receipts/refused-$damage.json"
+                $refused=@(& pwsh -NoProfile -File (Join-Path $PSScriptRoot 'New-ValidationReceipt.ps1') -WorkspaceRoot $ws -UnitId u002 -RepoMapPath $map -EvidencePath $evidencePath -OutPath $refusedPath 2>&1|ForEach-Object{[string]$_})
+                $reason=if($damage -ceq 'extension-authority'){'*Transition ledger committed artifact differs from its intent*'}else{'*candidate-freeze binding*'}
+                Assert-Builder ($LASTEXITCODE -ne 0 -and -not (Test-Path -LiteralPath $refusedPath) -and ($refused -join ' ') -like $reason) "Active producer refusal for $damage did not reach its independently expected guard (exit=$LASTEXITCODE): $($refused -join ' ')"
+                Assert-Builder ((Get-EnvelopeWorkspaceByteInventorySha256 $ws) -ceq $beforeRefusal) 'Refused active receipt producer changed its owner.'
+            } finally {[IO.File]::WriteAllBytes($damagedPath,$originalBytes)}
+        }
+        $activeReceiptModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceValidationReceipt.psm1') -PassThru
+        $receiptGit=&$activeReceiptModule {${function:Invoke-MorphospaceValidationReceiptGit}}
+        $eventBytes=[IO.File]::ReadAllBytes($events);$beforeLate=Get-EnvelopeWorkspaceByteInventorySha256 $ws
+        try {
+            &$activeReceiptModule {param($original,$path) $script:deliveryOriginalReceiptGit=$original;$script:deliveryLedgerDrift=$path
+                function script:Invoke-MorphospaceValidationReceiptGit {param($Repository,$Arguments,[switch]$AllowFailure)
+                    if(($Arguments -join '|') -ceq 'rev-parse|HEAD' -and $null -ne $script:deliveryLedgerDrift){[IO.File]::AppendAllText($script:deliveryLedgerDrift,"`n",[Text.UTF8Encoding]::new($false));$script:deliveryLedgerDrift=$null}
+                    &$script:deliveryOriginalReceiptGit $Repository $Arguments -AllowFailure:$AllowFailure
+                }
+            } $receiptGit $events
+            Assert-Rejected {New-MorphospaceValidationReceiptV1 -WorkspaceRoot $ws -UnitId u002 -RepoMapPath $map -Evidence $evidence -OutPath (Join-Path $ws 'receipts/refused-late-ledger.json')} '*changed*' 'late ledger drift'
+            Assert-Builder (-not (Test-Path -LiteralPath (Join-Path $ws 'receipts/refused-late-ledger.json'))) 'Late ledger drift wrote a receipt.'
+        } finally {
+            &$activeReceiptModule {param($original) Set-Item Function:script:Invoke-MorphospaceValidationReceiptGit $original;Remove-Variable deliveryOriginalReceiptGit,deliveryLedgerDrift -Scope Script -ErrorAction SilentlyContinue} $receiptGit
+            [IO.File]::WriteAllBytes($events,$eventBytes)
+        }
+        Assert-Builder ((Get-EnvelopeWorkspaceByteInventorySha256 $ws) -ceq $beforeLate) 'Late-refusal control changed owner data beyond its restored injected ledger bytes.'
+        $orderScript=Join-Path $fixtureRoot 'receipt-import-order.ps1'
+        [IO.File]::WriteAllText($orderScript,@'
+param($Root,$Workspace,$Map,$EvidencePath,$OutPath,$Order)
+$ErrorActionPreference='Stop'
+$receipt=Join-Path $Root 'scripts/lib/MorphospaceValidationReceipt.psm1'
+$provenance=Join-Path $Root 'scripts/DevelopmentEnvelopeProvenance.psm1'
+if($Order -eq 'receipt-first'){Import-Module $receipt -DisableNameChecking;Import-Module $provenance -DisableNameChecking}else{Import-Module $provenance -DisableNameChecking;Import-Module $receipt -DisableNameChecking}
+$evidence=Get-Content -LiteralPath $EvidencePath -Raw|ConvertFrom-Json -Depth 100 -DateKind String
+New-MorphospaceValidationReceiptV1 -WorkspaceRoot $Workspace -UnitId u002 -RepoMapPath $Map -Evidence $evidence -OutPath $OutPath|Out-Null
+'@,$encoding)
+        foreach($order in @('receipt-first','provenance-first')) {
+            & pwsh -NoProfile -File $orderScript -Root (Split-Path $PSScriptRoot -Parent) -Workspace $ws -Map $map -EvidencePath $evidencePath -OutPath (Join-Path $ws "receipts/import-$order.json") -Order $order
+            Assert-Builder ($LASTEXITCODE -eq 0) "Active producer failed import order $order."
+        }
+        Write-Host 'ACTIVE RECEIPT causal seam: genuine Extend, Freeze and Begin complete; invoking public native producer.'
+        & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'New-ValidationReceipt.ps1') -WorkspaceRoot $ws -UnitId u002 -RepoMapPath $map -EvidencePath $evidencePath -OutPath $receiptPath
+        Assert-Builder ($LASTEXITCODE-eq0-and(Test-Path -LiteralPath $receiptPath)) 'Public active-envelope native receipt producer failed after genuine owning extension.'
+        $receipt=Read-EnvelopeProtocolJson $receiptPath;$revision=@($receipt.repository_revisions|Where-Object repo_id -CEQ 'project-shell')
+        Assert-Builder ($revision.Count-eq1-and$revision[0].base_revision-ceq$originalBaseline-and$revision[0].head_revision-ceq$head-and$revision[0].base_revision-cne$extensionHead) 'Native receipt replaced original baseline with effective extension head.'
+        $actualPaths=@($receipt.changed_paths|Where-Object repo_id -CEQ 'project-shell'|ForEach-Object path|Sort-Object)
+        Assert-Builder (($actualPaths-join'|')-ceq'delivery-extra/README.md|morphospace/README.md') 'Native receipt omitted pre-extension or post-extension source changes.'
+        Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $ws -UnitId u002 -RepoMapPath $map -ValidationTier standard -ValidationResult pass -ValidationReceipt 'receipts/delivery-active-native-pass.json' -Execute|Out-Null
+        Invoke-MorphospaceWorkUnitAutomation -Action Accept -WorkspaceRoot $ws -UnitId u002 -RepoMapPath $map -ValidationTier standard -Execute|Out-Null
+        Assert-Builder ((Read-EnvelopeProtocolJson (Join-Path $ws 'iteration-units/u002.json')).status-ceq'accepted') 'Real temporary active-envelope receipt did not reach acceptance.'
+        Write-Host 'Active-envelope native receipt controls passed: real extension and public producer/Record/Accept, literal original baseline and both source intervals.'
+    } finally {
+        $full=[IO.Path]::GetFullPath($fixtureRoot);$parent=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')
+        if([IO.Path]::GetDirectoryName($full).Equals($parent,[StringComparison]::OrdinalIgnoreCase)-and[IO.Path]::GetFileName($full).StartsWith('source-delivery-active-receipt-',[StringComparison]::Ordinal)){if(Test-Path -LiteralPath $full){Remove-Item -LiteralPath $full -Recurse -Force}}else{throw 'Unsafe active receipt fixture cleanup root.'}
+    }
+}
+
+
+function Invoke-ReviewedIntegrationNativeControls {
+    $root=Join-Path ([IO.Path]::GetTempPath()) ('source-integration-native-'+[guid]::NewGuid().ToString('N'))
+    [IO.Directory]::CreateDirectory($root)|Out-Null
+    $nativeControlsPassed=$false
+    try {
+        $repo=Join-Path $root 'source';[IO.Directory]::CreateDirectory($repo)|Out-Null
+        Invoke-FixtureGit $repo @('init','--initial-branch=main')|Out-Null
+        Invoke-FixtureGit $repo @('config','user.email','fixture@example.invalid')|Out-Null;Invoke-FixtureGit $repo @('config','user.name','Fixture')|Out-Null
+        $overlapPaths=@('scripts/SourceOnlyPublicationInputs.psm1','scripts/lib/MorphospaceValidationReceipt.psm1','scripts/ActiveUnitRetirement.psm1')
+        foreach($name in $overlapPaths){[IO.Directory]::CreateDirectory((Split-Path -Parent (Join-Path $repo $name)))|Out-Null;[IO.File]::WriteAllText((Join-Path $repo $name),"anchor0`nline1=base`nanchor2`nanchor3`nline4=base`nanchor5`n",$encoding)}
+        Invoke-FixtureGit $repo @('add','.')|Out-Null;Invoke-FixtureGit $repo @('commit','-m','base')|Out-Null;$base=Git-Value $repo @('rev-parse','HEAD')
+        foreach($name in $overlapPaths){[IO.File]::WriteAllText((Join-Path $repo $name),"anchor0`nline1=accepted`nanchor2`nanchor3`nline4=base`nanchor5`n",$encoding)}
+        Invoke-FixtureGit $repo @('commit','-am','accepted')|Out-Null;$accepted=Git-Value $repo @('rev-parse','HEAD')
+        Invoke-FixtureGit $repo @('checkout','-b','published',$base)|Out-Null
+        foreach($name in $overlapPaths){[IO.File]::WriteAllText((Join-Path $repo $name),"anchor0`nline1=base`nanchor2`nanchor3`nline4=published`nanchor5`n",$encoding)}
+        Invoke-FixtureGit $repo @('commit','-am','published')|Out-Null;$published=Git-Value $repo @('rev-parse','HEAD')
+        $before=Git-Value $repo @('rev-parse','HEAD');$beforeStatus=@(Invoke-FixtureGit $repo @('status','--porcelain=v1','--untracked-files=all')) -join "`n"
+        $result=&$module {
+            param($r,$s,$p,$o)
+            $savedCopy=${function:Start-SourceDeliveryIntegrationCopy}
+            try {
+                foreach($fault in @('copy-start','copy-completion')) {
+                    $script:integrationCopyFault=$fault;$script:integrationCopyCalls=0
+                    function script:Start-SourceDeliveryIntegrationCopy([IO.Stream]$Source,[IO.Stream]$Destination) {
+                        $script:integrationCopyCalls++
+                        if($script:integrationCopyCalls -eq 1) {
+                            if($script:integrationCopyFault -ceq 'copy-start'){throw 'Literal injected first-copy start failure.'}
+                            return [Threading.Tasks.Task]::FromException([IO.IOException]::new('Literal injected first-copy completion failure.'))
+                        }
+                        if($script:integrationCopyCalls -eq 3){throw 'Literal injected fallback-copy start failure.'}
+                        return $Source.CopyToAsync($Destination)
+                    }
+                    $faultOut=Join-Path (Split-Path -Parent $o) $fault
+                    $refused=$false
+                    try {Invoke-SourceDeliveryIntegrationComputation -Root $r -Accepted $s -Published $p -OutputDirectory $faultOut|Out-Null} catch {$refused=$true}
+                    if(-not $refused){throw 'Faulted stream observation returned a computation result.'}
+                    $diagnostic=Join-Path $faultOut '001-Version/native.json'
+                    if(-not [IO.File]::Exists($diagnostic)){throw 'Issued native child has no retained settled diagnostic after fallback-copy failure.'}
+                    $record=Read-MorphospaceProtocolJson $diagnostic
+                    if($record.process_reaped -cne $true -or $record.exit_code -ne 0 -or $record.stdout_eof -cne $false -or $record.stderr_eof -cne $false -or @($record.observer_errors).Count -lt 2 -or ($record.observer_errors -join '|') -cnotlike '*Literal injected fallback-copy start failure*'){throw 'Faulted child diagnostic lost actual exit, refusal, partial-stream or settlement facts.'}
+                }
+            } finally {Set-Item Function:script:Start-SourceDeliveryIntegrationCopy $savedCopy;Remove-Variable integrationCopyFault,integrationCopyCalls -Scope Script -ErrorAction SilentlyContinue}
+            Invoke-SourceDeliveryIntegrationComputation -Root $r -Accepted $s -Published $p -OutputDirectory $o
+        } $repo $accepted $published (Join-Path $root 'clean-computation')
+        Assert-Builder ($result.merge_base -ceq $base) 'Native integration did not use the real unique common ancestor.'
+        foreach($name in $overlapPaths) {
+            $actual=@($result.result_entries|Where-Object path -CEQ $name)[0].blob
+            $literal=$encoding.GetBytes("anchor0`nline1=accepted`nanchor2`nanchor3`nline4=published`nanchor5`n");$header=$encoding.GetBytes("blob $($literal.Length)"+[char]0);$expected=[Convert]::ToHexString([Security.Cryptography.SHA1]::HashData([byte[]]($header+$literal))).ToLowerInvariant();Assert-Builder ($actual -ceq $expected) 'Independent literal both-side content differs.'
+        }
+        Assert-Builder ((Git-Value $repo @('rev-parse','HEAD')) -ceq $before -and (@(Invoke-FixtureGit $repo @('status','--porcelain=v1','--untracked-files=all')) -join "`n") -ceq $beforeStatus) 'Computation changed its source.'
+        $marker=Join-Path $root 'MUST-NOT-RUN.txt';$infoAttributes=Join-Path $repo '.git/info/attributes'
+        Invoke-FixtureGit $repo @('config','merge.evil.driver',"cmd /c echo bad>$marker")|Out-Null
+        [IO.File]::WriteAllText($infoAttributes,"*.psm1 merge=evil`n",$encoding)
+        $isolated=&$module {param($r,$s,$p,$o) Invoke-SourceDeliveryIntegrationComputation -Root $r -Accepted $s -Published $p -OutputDirectory $o} $repo $accepted $published (Join-Path $root 'source-driver-isolated')
+        Assert-Builder ($isolated.result_tree -ceq $result.result_tree -and -not (Test-Path -LiteralPath $marker)) 'Source merge driver/info attributes escaped the isolated computation.'
+        [IO.File]::WriteAllText($infoAttributes,"*.psm1 filter=evil`n",$encoding)
+        Invoke-FixtureGit $repo @('config','filter.evil.clean',"cmd /c echo bad>$marker")|Out-Null
+        $file=Join-Path $repo 'scripts/SourceOnlyPublicationInputs.psm1';$raw=[IO.File]::ReadAllBytes($file)
+        [IO.File]::WriteAllText($file,"dirty tracked input`n",$encoding)
+        Assert-Rejected {&$module {param($r,$s,$p,$o) Invoke-SourceDeliveryIntegrationComputation -Root $r -Accepted $s -Published $p -OutputDirectory $o} $repo $accepted $published (Join-Path $root 'dirty-filter-refusal')} '*dirty*' 'dirty source with hostile clean filter'
+        Assert-Builder (-not (Test-Path -LiteralPath $marker)) 'Safe source observation ran a clean driver.'
+        [IO.File]::WriteAllBytes($file,$raw);[IO.File]::Delete($infoAttributes)
+        Invoke-FixtureGit $repo @('config','--unset','filter.evil.clean')|Out-Null;Invoke-FixtureGit $repo @('config','--unset','merge.evil.driver')|Out-Null
+        $oldAttrSource=[Environment]::GetEnvironmentVariable('GIT_ATTR_SOURCE');$oldAttrSourcePresent=Test-Path Env:GIT_ATTR_SOURCE
+        try {
+            [Environment]::SetEnvironmentVariable('GIT_ATTR_SOURCE',$base)
+            Assert-Rejected {&$module {param($r,$s,$p,$o) Invoke-SourceDeliveryIntegrationComputation -Root $r -Accepted $s -Published $p -OutputDirectory $o} $repo $accepted $published (Join-Path $root 'ambient-attribute-refusal')} '*Ambient GIT_ATTR_SOURCE*' 'ambient source-observation selector'
+            Assert-Builder (-not (Test-Path -LiteralPath (Join-Path $root 'ambient-attribute-refusal'))) 'Ambient selector refusal wrote output.'
+        } finally {if($oldAttrSourcePresent){[Environment]::SetEnvironmentVariable('GIT_ATTR_SOURCE',$oldAttrSource)}else{Remove-Item Env:GIT_ATTR_SOURCE -ErrorAction SilentlyContinue}}
+        foreach($damage in @('conflict','mode','deletion','attribute-addition','multiple-bases','add-add')) {
+            Invoke-FixtureGit $repo @('checkout','-B',"damage-$damage",$base)|Out-Null
+            $badAccepted=$accepted
+            switch($damage) {
+                'conflict' {[IO.File]::WriteAllText($file,"anchor0`nline1=conflicting-published`nanchor2`nanchor3`nline4=base`nanchor5`n",$encoding);Invoke-FixtureGit $repo @('add','.')|Out-Null}
+                'mode' {Invoke-FixtureGit $repo @('update-index','--chmod=+x','scripts/SourceOnlyPublicationInputs.psm1')|Out-Null}
+                'deletion' {Invoke-FixtureGit $repo @('rm','scripts/SourceOnlyPublicationInputs.psm1')|Out-Null}
+                'attribute-addition' {[IO.File]::WriteAllText((Join-Path $repo '.gitattributes'),"*.psm1 merge=union`n",$encoding);Invoke-FixtureGit $repo @('add','.')|Out-Null}
+                'multiple-bases' {
+                    $baseTree=Git-Value $repo @('rev-parse',"$base^{tree}")
+                    $one=Git-Value $repo @('commit-tree',$baseTree,'-p',$accepted,'-p',$published,'-m','criss-one');$two=Git-Value $repo @('commit-tree',$baseTree,'-p',$published,'-p',$accepted,'-m','criss-two')
+                    $badAccepted=Git-Value $repo @('commit-tree',$baseTree,'-p',$one,'-m','child-one');$badPublished=Git-Value $repo @('commit-tree',$baseTree,'-p',$two,'-m','child-two')
+                }
+                'add-add' {
+                    [IO.File]::WriteAllText((Join-Path $repo 'extra.txt'),"accepted addition`n",$encoding);Invoke-FixtureGit $repo @('add','.')|Out-Null;Invoke-FixtureGit $repo @('commit','-m','accepted-add')|Out-Null;$badAccepted=Git-Value $repo @('rev-parse','HEAD')
+                    Invoke-FixtureGit $repo @('checkout','-B','damage-addadd-published',$base)|Out-Null;[IO.File]::WriteAllText((Join-Path $repo 'extra.txt'),"published addition`n",$encoding);Invoke-FixtureGit $repo @('add','.')|Out-Null;Invoke-FixtureGit $repo @('commit','-m','published-add')|Out-Null;$badPublished=Git-Value $repo @('rev-parse','HEAD')
+                }
+            }
+            if($damage -cnotin @('multiple-bases','add-add')){Invoke-FixtureGit $repo @('commit','-m',$damage)|Out-Null;$badPublished=Git-Value $repo @('rev-parse','HEAD')}
+            $pattern=switch($damage){'conflict'{'*conflicting*'};'attribute-addition'{'*attribute inventory*'};'multiple-bases'{'*unique merge base*'};'add-add'{'*add/add*'};default{'*deletion, rename or mode*'}}
+            Assert-Rejected {&$module {param($r,$s,$p,$o) Invoke-SourceDeliveryIntegrationComputation -Root $r -Accepted $s -Published $p -OutputDirectory $o} $repo $badAccepted $badPublished (Join-Path $root "refused-$damage")} $pattern $damage
+            if($damage -ceq 'conflict') {
+                $native=Read-MorphospaceProtocolJson (Join-Path $root 'refused-conflict/012-Merge/native.json')
+                Assert-Builder ($native.exit_code -eq 1 -and [IO.File]::ReadAllText($native.stdout.path) -cmatch '^[0-9a-f]{40}' -and [IO.File]::ReadAllBytes($native.stderr.path).Length -eq 0) 'Conflict control did not retain its actual nonzero/tree-prefix/empty-stderr distinction.'
+            }
+        }
+        $nativeControlsPassed=$true
+        'Reviewed integration native controls passed: three real overlaps/literal both-side blobs; unique base; source driver isolation; dirty clean-filter/ambient selector no-write refusals; conflict with tree-prefix/empty-stderr, mode, deletion and attribute-inventory refusal.'
+    } finally {
+        $full=[IO.Path]::GetFullPath($root);$temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')
+        if([IO.Path]::GetDirectoryName($full).Equals($temp,[StringComparison]::OrdinalIgnoreCase) -and [IO.Path]::GetFileName($full).StartsWith('source-integration-native-',[StringComparison]::Ordinal)){if($nativeControlsPassed){Remove-Item -LiteralPath $full -Recurse -Force}else{Write-Host "Failed native control retained at $full"}}else{throw 'Unsafe native fixture cleanup.'}
+    }
+}
+
+if ($ReviewedIntegrationNativeOnly) { Invoke-ReviewedIntegrationNativeControls; return }
+if ($ReviewedIntegrationOnly) { Invoke-DeliveryContractControls; return }
+if ($ActiveEnvelopeReceiptOnly) { Invoke-ActiveEnvelopeReceiptControls; return }
 Invoke-FixedSourcePathControls
 if ($FixedSourcePathOnly) { return }
-if ($DispositionOnly) { Invoke-DeliveryContractControls; return }
+if ($DispositionOnly) { Invoke-ReviewedIntegrationNativeControls; Invoke-ActiveEnvelopeReceiptControls; Invoke-DeliveryContractControls; return }
+Invoke-ReviewedIntegrationNativeControls
+Invoke-ActiveEnvelopeReceiptControls
 Invoke-DeliveryContractControls
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceValidationReceipt.psm1') -Force
