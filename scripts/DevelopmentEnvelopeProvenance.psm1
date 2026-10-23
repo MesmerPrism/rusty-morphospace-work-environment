@@ -590,11 +590,11 @@ function Get-PreparationProvenanceNativeBootstrap {
  $ready=@($events|Where-Object{[string]$_.unit_id-ceq$UnitId-and[string]$_.event_id-cmatch('^'+[regex]::Escape($UnitId)+'-ready-[0-9]{4,}$')})
  $claimed=@($events|Where-Object{[string]$_.unit_id-ceq$UnitId-and[string]$_.event_id-cmatch('^'+[regex]::Escape($UnitId)+'-claimed-[0-9]{4,}$')})
  if($ready.Count-ne1-or$claimed.Count-ne1-or[int]$claimed[0].sequence-ne([int]$ready[0].sequence+1)){throw 'Native bootstrap requires one exact ordinary Ready and direct Claim.'}
+ $historyOwner=Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1') -PassThru
  $proofs=@(foreach($event in @($ready[0],$claimed[0])){
   # A recovering extension may already have installed its projections while
   # Claim remains the event tail. Authenticate the owner's historical proof;
   # exact Claim endpoint and extension v6 preimages are checked independently.
-  $historyOwner=Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1') -PassThru
   $proof=&$historyOwner {param($w,$id)Get-ActiveRetirementPlanningTransition $w $id -HistoricalProjection} $Workspace "$($event.event_id)-transition"
   if([string]$proof.intent.state.path-cne'workspace.state.json'-or[string]$proof.intent.unit.path-cne"iteration-units/$UnitId.json"-or[string]$proof.intent.events.path-cne'iteration-events.jsonl'-or(Get-MorphospaceCanonicalJsonSha256 $event)-cne(Get-MorphospaceCanonicalJsonSha256 $proof.intent.event)-or[string]$event.project_id-cne[string]$Project.project_id-or[string]$event.event_type-cne'state-transition'-or@($event.receipts).Count-ne0-or@($proof.intent.artifacts).Count-ne0){throw 'Native bootstrap lifecycle event or artifact identity is detached.'};$proof
  })
