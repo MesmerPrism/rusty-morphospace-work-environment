@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([switch]$SelfTest, [switch]$DispositionOnly, [switch]$FixedSourcePathOnly, [switch]$ActiveEnvelopeReceiptOnly, [switch]$ReviewedIntegrationNativeOnly, [switch]$ReviewedIntegrationOnly, [switch]$ProjectSourceDomainOnly)
+param([switch]$SelfTest, [switch]$DispositionOnly, [switch]$FixedSourcePathOnly, [switch]$ActiveEnvelopeReceiptOnly, [switch]$ReviewedIntegrationNativeOnly, [switch]$ReviewedIntegrationOnly, [switch]$ProjectSourceDomainOnly, [switch]$SourceOnlyPublishedParentOnly)
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
@@ -10,6 +10,7 @@ Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationReceipt.psm1') -Force
 
+$currentReaderExtra=[string[]]@(if($SourceOnlyPublishedParentOnly){@('-CurrentWorkspaceOnly')}else{@()})
 $encoding = [Text.UTF8Encoding]::new($false)
 $gitExecutable = (Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 function Assert-Builder([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
@@ -51,22 +52,31 @@ function Publish-SyntheticProviderMerge([object]$Source, [string]$Root) {
     return [pscustomobject]@{ final = Git-Value $merger @('rev-parse', 'HEAD'); artifact = $artifactPath }
 }
 
+function Invoke-InputOwner {
+    param([scriptblock]$Body)
+    & $module $Body @args
+}
+function Read-InputTestJson([string]$Path){Invoke-InputOwner {param($p)Read-MorphospaceProtocolJson $p} $Path}
+function Get-InputTestInventory([string]$Root){
+    $rows=@(Get-ChildItem -LiteralPath $Root -File -Force -Recurse|Sort-Object FullName|ForEach-Object{"$([IO.Path]::GetRelativePath($Root,$_.FullName).Replace('\','/'))|$($_.Length)|$((Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant())"})
+    [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.UTF8Encoding]::new($false).GetBytes(($rows-join"`n")))).ToLowerInvariant()
+}
 function New-SyntheticOperationEvidence([object]$Start, [object]$Published, [string]$FinishedAt, [string]$OutPath) {
     # Only called after this harness's checked, non-force Git push completed.
     $document = [pscustomobject][ordered]@{
         schema = 'rusty.morphospace.workflow.source_only_publication_operation_evidence.v1'
-        operation_start_sha256 = Get-MorphospaceFileSha256 $Start.path
+        operation_start_sha256 = (Invoke-InputOwner {param($p)Get-MorphospaceFileSha256 $p} $Start.path)
         provider = [pscustomobject][ordered]@{ repo_id = $Start.document.repo_id; executor_id = 'synthetic-provider' }
         outcome = [pscustomobject][ordered]@{ operation_finished_at = $FinishedAt; push_mode = 'fast-forward'; force_used = $false; result = 'pass' }
-        artifact = [pscustomobject][ordered]@{ path = [IO.Path]::GetFileName($Published.artifact); sha256 = Get-MorphospaceFileSha256 $Published.artifact }
+        artifact = [pscustomobject][ordered]@{ path = [IO.Path]::GetFileName($Published.artifact); sha256 = (Invoke-InputOwner {param($p)Get-MorphospaceFileSha256 $p} $Published.artifact) }
     }
     Write-Json $OutPath $document
-    return [pscustomobject]@{ path = $OutPath; sha256 = Get-MorphospaceFileSha256 $OutPath; document = $document }
+    return [pscustomobject]@{ path = $OutPath; sha256 = (Invoke-InputOwner {param($p)Get-MorphospaceFileSha256 $p} $OutPath); document = $document }
 }
 
-function New-RehearsalFixture([string]$Root, [switch]$ProjectPlanningMember, [switch]$OmitReadOnlyDeclaration) {
+function New-RehearsalFixture([string]$Root, [switch]$ProjectPlanningMember, [switch]$OmitReadOnlyDeclaration, [object]$ProviderSeed=$null, [switch]$UntrackedEvidence) {
     [IO.Directory]::CreateDirectory($Root) | Out-Null
-    $provider = New-SyntheticSource $Root 'provider-source' 'provider.txt' 'SYNTHETIC-CONTENT-ONE'
+    $provider = if($null-ne$ProviderSeed){$ProviderSeed}else{New-SyntheticSource $Root 'provider-source' 'provider.txt' 'SYNTHETIC-CONTENT-ONE'}
     $consumer = New-SyntheticSource $Root 'consumer-source' 'consumer.txt' 'SYNTHETIC-CONTENT-TWO'
     $readonly = New-SyntheticSource $Root 'reference-source' 'reference.txt' 'SYNTHETIC-CONTENT-THREE'
     Invoke-FixtureGit $readonly.repo @('push', 'origin', 'main') | Out-Null
@@ -75,20 +85,20 @@ function New-RehearsalFixture([string]$Root, [switch]$ProjectPlanningMember, [sw
     & $gitExecutable init --initial-branch=main $planning 2>&1 | Out-Null; Invoke-FixtureGit $planning @('config', 'user.email', 'fixture@example.invalid') | Out-Null; Invoke-FixtureGit $planning @('config', 'user.name', 'Fixture') | Out-Null; Invoke-FixtureGit $planning @('config', 'core.autocrlf', 'false') | Out-Null
     $example = Join-Path (Split-Path $PSScriptRoot -Parent) 'examples\hello-morphospace-v2\morphospace'
     $project = Get-Content -Raw (Join-Path $example 'project.spec.json') | ConvertFrom-Json -Depth 64 -DateKind String
-    $project.project_id = 'publication-rehearsal'; $project.purpose = 'Synthetic source-only publication builder rehearsal.'; $project.authority_map[0].owner = 'provider-source'
+    $project.project_id = 'publication-rehearsal'; $project.purpose = 'Synthetic source-only publication builder rehearsal.'; $project.authority_map[0].owner = $provider.id
     $project.repositories = @(
-        [pscustomobject][ordered]@{ repo_id = 'provider-source'; role = 'core'; path = '<provider-source>'; allowed_paths = @('provider.txt') },
+        [pscustomobject][ordered]@{ repo_id = $provider.id; role = 'core'; path = '<provider-source>'; allowed_paths = @([string]$provider.path) },
         [pscustomobject][ordered]@{ repo_id = 'consumer-source'; role = 'application'; path = '<consumer-source>'; allowed_paths = @('consumer.txt') },
         [pscustomobject][ordered]@{ repo_id = 'reference-source'; role = 'core'; path = '<reference-source>'; allowed_paths = @('reference.txt') }
     )
     if ($ProjectPlanningMember) { $project.repositories += [pscustomobject][ordered]@{ repo_id = 'planning-owner'; role = 'planning'; path = '<planning-owner>'; allowed_paths = @('morphospace/') } }
     $project.validation_profiles = @([pscustomobject][ordered]@{ profile_id = 'snapshot'; commands = @('synthetic snapshot validation') })
-    $lock = Get-Content -Raw (Join-Path $example 'feature.lock.json') | ConvertFrom-Json -Depth 64 -DateKind String; $lock.project_id = 'publication-rehearsal'; $lock.lock_fingerprint = Get-MorphospaceFeatureLockFingerprint $lock
+    $lock = Get-Content -Raw (Join-Path $example 'feature.lock.json') | ConvertFrom-Json -Depth 64 -DateKind String; $lock.project_id = 'publication-rehearsal'; $lock.lock_fingerprint = Invoke-InputOwner {param($value)Get-MorphospaceFeatureLockFingerprint $value} $lock
     $unit = [pscustomobject][ordered]@{
         schema = 'rusty.morphospace.workflow.iteration_unit.v1'; unit_id = 'snapshot-unit'; project_id = 'publication-rehearsal'; status = 'validating'; objective = 'Validate an unchanged source snapshot before source-only publication.'
         work_mode = 'validation-only'; guard_profile = 'fast'; change_categories = @('validation'); instruction_impact = 'review'
         instruction_surfaces = @([pscustomobject][ordered]@{ surface_kind = 'agents'; path = 'AGENTS.md'; owner = 'fixture-owner'; change_reason = 'Review only.'; action = 'review-no-change'; status = 'complete'; validation = 'synthetic instruction review'; skill_id = $null }); instruction_none_justification = $null
-        prerequisites = @(); allowed_repositories = @([pscustomobject][ordered]@{ repo_id = 'provider-source'; allowed_paths = @() }, [pscustomobject][ordered]@{ repo_id = 'consumer-source'; allowed_paths = @() })
+        prerequisites = @(); allowed_repositories = @([pscustomobject][ordered]@{ repo_id = $provider.id; allowed_paths = @() }, [pscustomobject][ordered]@{ repo_id = 'consumer-source'; allowed_paths = @() })
         read_only_dependencies = @([pscustomobject][ordered]@{ repo_id = 'reference-source'; paths = @('reference.txt'); purpose = 'Synthetic pinned reference.'; verification = 'Exact candidate revision.' })
         claim_requirements = [pscustomobject][ordered]@{ minimum_free_disk_mib = 0; required_tools = @(); product_inputs = @() }
         non_scope = @('Source mutation.', 'Planning publication.', 'Runtime or wearer claims.'); acceptance = @([pscustomobject][ordered]@{ acceptance_id = 'source-review'; proof = 'Synthetic source snapshot is reviewed.'; command = 'synthetic source review' })
@@ -119,20 +129,21 @@ function New-RehearsalFixture([string]$Root, [switch]$ProjectPlanningMember, [sw
             [pscustomobject][ordered]@{ gate_id = 'instruction-synchronization'; status = 'pass'; command = 'Verify every declared instruction surface is complete and validated.'; evidence_refs = @('validation-evidence') }
         ); device_validation = $null
     }
+    if($UntrackedEvidence){[IO.File]::AppendAllText((Join-Path $planning '.git/info/exclude'),"`n/morphospace/receipts/validation-evidence.txt`n",$encoding)}
     $receiptPath = Join-Path $workspace 'receipts\snapshot-unit-pass-validation.json'
     $map = [pscustomobject][ordered]@{ schema = 'rusty.morphospace.workflow.repository_map.v1'; repositories = @(
-        [pscustomobject][ordered]@{ repo_id = 'provider-source'; path = $provider.repo; role = 'source' }, [pscustomobject][ordered]@{ repo_id = 'consumer-source'; path = $consumer.repo; role = 'source' },
+        [pscustomobject][ordered]@{ repo_id = $provider.id; path = $provider.repo; role = 'source' }, [pscustomobject][ordered]@{ repo_id = 'consumer-source'; path = $consumer.repo; role = 'source' },
         [pscustomobject][ordered]@{ repo_id = 'reference-source'; path = $readonly.repo; role = 'source' }, [pscustomobject][ordered]@{ repo_id = 'planning-owner'; path = $planning; role = 'planning' },
         [pscustomobject][ordered]@{ repo_id = 'skill-surfaces'; path = $inputs; role = 'source' }
     ) }
     $mapPath = Join-Path $inputs 'repository-map.json'; Write-Json $mapPath $map
-    New-MorphospaceValidationReceiptV1 -WorkspaceRoot $workspace -UnitId 'snapshot-unit' -RepoMapPath $mapPath -Evidence $evidence -OutPath $receiptPath -CreatedAt '2026-09-08T09:01:00.0000000Z' | Out-Null
+    Invoke-InputOwner {param($w,$m,$e,$o)New-MorphospaceValidationReceiptV1 -WorkspaceRoot $w -UnitId 'snapshot-unit' -RepoMapPath $m -Evidence $e -OutPath $o -CreatedAt '2026-09-08T09:01:00.0000000Z'} $workspace $mapPath $evidence $receiptPath | Out-Null
     Invoke-FixtureGit $planning @('add', 'morphospace') | Out-Null; Invoke-FixtureGit $planning @('commit', '-m', 'validating snapshot') | Out-Null
     return [pscustomobject]@{ root = $Root; planning = $planning; workspace = $workspace; inputs = $inputs; map = $mapPath; provider = $provider; consumer = $consumer; readonly = $readonly; receipt = $receiptPath }
 }
 
 function Assert-CurrentWork([object]$Fixture, [string]$Phase) {
-    $output = @(& pwsh -NoProfile -File (Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1') -RepoRoot (Split-Path $PSScriptRoot -Parent) -WorkspaceRoot $Fixture.workspace -RepositoryMapPath $Fixture.map -CurrentWorkOnly -SkipOwnerSelfTests 2>&1 | ForEach-Object { [string]$_ })
+    $output = @(& pwsh -NoProfile -File (Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1') -RepoRoot (Split-Path $PSScriptRoot -Parent) -WorkspaceRoot $Fixture.workspace -RepositoryMapPath $Fixture.map -CurrentWorkOnly -SkipOwnerSelfTests @currentReaderExtra 2>&1 | ForEach-Object { [string]$_ })
     if ($LASTEXITCODE -ne 0) { throw "Current-work validation failed after $Phase`: $($output -join ' ')" }
 }
 
@@ -227,7 +238,7 @@ function Delivery-Ref([string]$Path){[pscustomobject][ordered]@{path=[IO.Path]::
 
 function Invoke-FixedSourcePathControls {
     # Pure fixed-query contract: no Git, owner, filesystem or provider effects.
-    & $module {
+    Invoke-InputOwner {
         $root=[IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) 'source-delivery-fixed-query'))
         $argv=@('git','--no-optional-locks','--no-pager','--no-replace-objects','-C',$root,'status','--porcelain=v2','--branch','--untracked-files=all')
         Assert-SourceDeliveryFixedQueryArguments $argv $root
@@ -279,7 +290,104 @@ function Invoke-DeliveryComputeOriginal([string]$Root,[string]$Workspace,[string
     } finally {$child.Dispose();$stdout.Dispose();$stderr.Dispose()}
 }
 
+function New-DeliverySourceOnlyPublishedParent {
+    param([scriptblock]$ActualGit,[scriptblock]$ActualRemote,[switch]$Relocate)
+    $priorGit=&$module { ${function:Get-SourceOnlyInputGitValue} };$priorRemote=&$module { ${function:Get-SourceOnlyInputRemoteReadback} }
+    Invoke-InputOwner {param($g,$r)Set-Item Function:script:Get-SourceOnlyInputGitValue $g;Set-Item Function:script:Get-SourceOnlyInputRemoteReadback $r} $ActualGit $ActualRemote
+    try {
+    # Real native source-only ownership/accounting and local Git transport.
+    # The existing provider observations for the NEW integration Landing remain
+    # explicitly MODELED; none are substituted for this parent Record.
+    $branch=Git-Value $source @('symbolic-ref','--short','HEAD');$remote=Join-Path $deliveryRoot 'source-only-parent.git'
+    Invoke-FixtureGit $source @('init','--bare','--initial-branch=main',$remote)|Out-Null
+    Invoke-FixtureGit $source @('remote','add','origin',$remote)|Out-Null
+    Invoke-FixtureGit $source @('push',$remote,"$($seed.source_commit):refs/heads/main")|Out-Null
+    Invoke-FixtureGit $source @('checkout','-b','native-source-only-parent',$seed.source_commit)|Out-Null
+    $baselineContent=[IO.File]::ReadAllText((Join-Path $source 'morphospace/README.md'))
+    [IO.File]::WriteAllText((Join-Path $source 'morphospace/README.md'),"# independently published heading`n"+$baselineContent,$encoding)
+    Invoke-FixtureGit $source @('commit','-am','independent parent source')|Out-Null
+    $candidate=Git-Value $source @('rev-parse','HEAD');$tree=Git-Value $source @('rev-parse','HEAD^{tree}')
+    # A distinct retained original-parent clone stays at its accepted candidate
+    # while the integration consumer later selects a different physical clone.
+    $original=Join-Path $deliveryRoot 'retained-original-parent-source'
+    Invoke-FixtureGit $source @('clone','--no-hardlinks',$source,$original)|Out-Null
+    Invoke-FixtureGit $original @('remote','set-url','origin',$remote)|Out-Null
+    Invoke-FixtureGit $original @('fetch',$remote,'main:refs/remotes/origin/main')|Out-Null
+    Invoke-FixtureGit $original @('branch','--set-upstream-to','origin/main')|Out-Null
+    $github='https://github.com/Example/ported-source.git';$alias='fixture-source-only://parent'
+    # Git's single longest-prefix rewrite makes get-url report the fixture's
+    # declared GitHub identity; ls-remote of that URL resolves to a local bare
+    # provider. Every actual push/fetch below names a literal local path.
+    Invoke-FixtureGit $original @('remote','set-url','origin',$alias)|Out-Null
+    Invoke-FixtureGit $original @('config',"url.$github.insteadOf",$alias)|Out-Null
+    Invoke-FixtureGit $original @('config',"url.$remote.insteadOf",$github)|Out-Null
+    Assert-Builder ((Git-Value $original @('remote','get-url','origin'))-ceq$github) 'Local transport identity rewrite differs.'
+    $ownerRoot=Join-Path $deliveryRoot 'native-source-only-owner'
+    $provider=[pscustomobject]@{id='project-shell';repo=$original;remote=$remote;path='morphospace/README.md';old=$seed.source_commit;candidate=$candidate}
+    $f=New-RehearsalFixture $ownerRoot -ProviderSeed $provider -UntrackedEvidence:$Relocate
+    foreach($action in @('RecordValidation','Accept')){Invoke-MorphospaceWorkUnitAutomation -Action $action -WorkspaceRoot $f.workspace -UnitId snapshot-unit -RepoMapPath $f.map -ValidationReceipt $f.receipt -ValidationTier standard -Execute|Out-Null}
+    Invoke-FixtureGit $f.planning @('add','morphospace')|Out-Null;Invoke-FixtureGit $f.planning @('commit','-m','accepted parent owner')|Out-Null
+    if($Relocate){
+        $local=Join-Path $f.workspace 'local/retained-parent-validation';[IO.Directory]::CreateDirectory($local)|Out-Null
+        [IO.File]::Copy((Join-Path $f.workspace 'receipts/validation-evidence.txt'),(Join-Path $local 'validation-evidence.txt'))
+        [IO.File]::AppendAllText((Join-Path $f.planning '.git/info/exclude'),"`n/morphospace/local/retained-parent-validation/`n",$encoding)
+        $relocationOwner=Import-Module (Join-Path $PSScriptRoot 'AcceptedValidationEvidenceRelocation.psm1') -PassThru
+        $relocationInput=Join-Path $f.inputs 'relocation-input.json';$at=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')
+        $relocated=&$relocationOwner {param($w,$t,$o)New-MorphospaceAcceptedEvidenceRelocationInput -WorkspaceRoot $w -UnitId snapshot-unit -LocalDirectory 'local/retained-parent-validation' -CreatedAt $t -OutPath $o} $f.workspace $at $relocationInput
+        &$relocationOwner {param($w,$p,$h,$o)Invoke-MorphospaceRelocateAcceptedValidationEvidence -WorkspaceRoot $w -RelocationInput $p -ExpectedInputSha256 $h -OutPath $o -Execute} $f.workspace $relocated.path $relocated.sha256 (Join-Path $f.workspace "receipts/$($relocated.relocation_id).json")|Out-Null
+        Invoke-FixtureGit $f.planning @('add','morphospace')|Out-Null;Invoke-FixtureGit $f.planning @('commit','-m','native accepted evidence relocation')|Out-Null
+        $script:sourceOnlyBridgeRelocationReceipt=Join-Path $f.workspace "receipts/$($relocated.relocation_id).json"
+    }
+    $planPath=Join-Path $f.inputs 'parent-plan.json';$publication='native-recorded-parent'
+    New-MorphospaceSourceOnlyPublicationPlan -WorkspaceRoot $f.workspace -UnitId snapshot-unit -RepoMapPath $f.map -PublicationId $publication -OutPath $planPath|Out-Null
+    $plan=Get-Content -Raw -LiteralPath $planPath|ConvertFrom-Json -Depth 100 -DateKind String
+    Invoke-MorphospacePrepareSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId snapshot-unit -RepoMapPath $f.map -SourceOnlyPublicationPlan $planPath -ExpectedSourceOnlyPublicationPlanSha256 (Delivery-Hash $planPath) -OutPath (Join-Path $f.workspace "receipts/$publication-plan.json") -Execute|Out-Null
+    Invoke-FixtureGit $f.planning @('add','morphospace')|Out-Null;Invoke-FixtureGit $f.planning @('commit','-m','exact native Prepare checkpoint')|Out-Null
+    $observations=@();$selected=$null
+    foreach($row in $plan.source_repositories){
+        $startPath=Join-Path $f.inputs ($row.repo_id+'-start.json');$start=Start-MorphospaceSourceOnlyPublicationOperation -PlanPath (Join-Path $f.workspace "receipts/$publication-plan.json") -RepoId $row.repo_id -OutPath $startPath
+        $toPublish=if($row.repo_id-ceq'project-shell'){[pscustomobject]@{id='parent-original';repo=$source;remote=$remote;candidate=$candidate}}else{$f.consumer}
+        $published=Publish-SyntheticProviderMerge $toPublish $ownerRoot
+        if($row.repo_id-ceq'project-shell'){$selected=$published;Invoke-FixtureGit $original @('fetch',$remote,'main:refs/remotes/origin/main')|Out-Null}
+        $evidencePath=Join-Path $f.inputs ($row.repo_id+'-operation.json')
+        New-SyntheticOperationEvidence $start $published ([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')) $evidencePath|Out-Null
+        $observationPath=Join-Path $f.inputs ($row.repo_id+'-observation.json')
+        Complete-MorphospaceSourceOnlyPublicationOperationObservation -PlanPath (Join-Path $f.workspace "receipts/$publication-plan.json") -OperationStartPath $startPath -OperationEvidencePath $evidencePath -ExpectedOperationEvidenceSha256 (Delivery-Hash $evidencePath) -RepoMapPath $f.map -OutPath $observationPath|Out-Null
+        $observations+=,$observationPath
+    }
+    $execution=Join-Path $f.inputs 'parent-execution.json'
+    New-MorphospaceSourceOnlyPublicationExecution -PlanPath (Join-Path $f.workspace "receipts/$publication-plan.json") -OperationObservationPaths $observations -RepoMapPath $f.map -OutPath $execution|Out-Null
+    $record=Join-Path $f.workspace "receipts/$publication-execution.json"
+    Invoke-MorphospaceRecordSourceOnlyPublication -WorkspaceRoot $f.workspace -UnitId snapshot-unit -RepoMapPath $f.map -SourceOnlyPublicationExecution $execution -ExpectedSourceOnlyPublicationExecutionSha256 (Delivery-Hash $execution) -OutPath $record -Execute|Out-Null
+    Invoke-FixtureGit $f.planning @('add','morphospace')|Out-Null;Invoke-FixtureGit $f.planning @('commit','-m','recorded source-only parent')|Out-Null
+    # A genuine later ordinary transition proves Record need not remain the
+    # live tail. Original accepted unit/receipt and Record artifacts stay exact.
+    $next=Copy-Document (Read-InputTestJson (Join-Path $f.workspace 'iteration-units/snapshot-unit.json'))
+    $next.unit_id='parent-next-unit';$next.status='proposed';$next.prerequisites=@('snapshot-unit')
+    $next.instruction_impact='review';$next.instruction_none_justification=$null
+    foreach($surface in @($next.instruction_surfaces)){
+        $surface.path='<skill-surfaces>/'+[string]$surface.path;$surface.status='planned';$surface.action='review-no-change'
+    }
+    [IO.File]::WriteAllText((Join-Path $f.inputs 'AGENTS.md'),"Disposable fixture ownership instructions.`n",$encoding)
+    [IO.File]::WriteAllText((Join-Path $f.inputs 'README.md'),"Disposable fixture validation-only continuation.`n",$encoding)
+    foreach($skill in @('rusty-morphospace','system-engineering')){
+        $target=Join-Path $f.inputs "skills/$skill/SKILL.md";[IO.Directory]::CreateDirectory((Split-Path $target -Parent))|Out-Null
+        [IO.File]::Copy((Join-Path (Split-Path $PSScriptRoot -Parent) "skills/$skill/SKILL.md"),$target)
+    }
+    Write-Json (Join-Path $f.workspace 'iteration-units/parent-next-unit.json') $next
+    Invoke-FixtureGit $f.planning @('add','morphospace')|Out-Null;Invoke-FixtureGit $f.planning @('commit','-m','declare independent next fixture unit')|Out-Null
+    Invoke-MorphospaceWorkUnitAutomation -Action Ready -WorkspaceRoot $f.workspace -UnitId parent-next-unit -RepoMapPath $f.map -Execute|Out-Null
+    Invoke-FixtureGit $f.planning @('add','morphospace')|Out-Null;Invoke-FixtureGit $f.planning @('commit','-m','native next fixture Ready')|Out-Null
+    $descriptor=Join-Path $deliveryRoot 'source-only-published-parent.json'
+    Write-Json $descriptor ([ordered]@{schema='rusty.morphospace.workflow.source_delivery_disposition.v1';kind='source-only-published-parent';repo_id='project-shell';workspace_root=$f.workspace;unit_id='snapshot-unit';repository_map=Delivery-Ref $f.map;plan=Delivery-Ref (Join-Path $f.workspace "receipts/$publication-plan.json");execution=Delivery-Ref $record;record_intent=Delivery-Ref (Join-Path $f.workspace "receipts/transactions/$publication-source-publication-recorded-transition.intent.json");record_completion=Delivery-Ref (Join-Path $f.workspace "receipts/transactions/$publication-source-publication-recorded-transition.completion.json")})
+    $script:sourceOnlyBridgeFixture=$f;$script:sourceOnlyBridgeOriginal=$original;$script:sourceOnlyBridgeDescriptor=$descriptor
+    Invoke-FixtureGit $source @('checkout',$branch)|Out-Null;Invoke-FixtureGit $source @('remote','remove','origin')|Out-Null
+    [pscustomobject]@{landing=Delivery-Ref $descriptor;commit=$selected.final;tree=$tree;baseline_content=$baselineContent;remote=$remote}
+    } finally {Invoke-InputOwner {param($g,$r)Set-Item Function:script:Get-SourceOnlyInputGitValue $g;Set-Item Function:script:Get-SourceOnlyInputRemoteReadback $r} $priorGit $priorRemote}
+}
+
 function New-DeliveryIntegrationPublishedParent {
+    if($SourceOnlyPublishedParentOnly){return New-DeliverySourceOnlyPublishedParent $savedGit $savedRemote}
     # This is an independent ordinary bounded source subject. Its provider
     # observations remain explicitly MODELED; owner/Git and later Compute are real.
     $branch=Git-Value $source @('symbolic-ref','--short','HEAD')
@@ -317,12 +425,97 @@ function New-DeliveryIntegrationPublishedParent {
     [pscustomobject]@{landing=Delivery-Ref $landed.path;commit=$published.final;tree=$tree;baseline_content=$baselineContent;remote=$remote}
 }
 
+
+function Read-TestSourceOnlyParent($Reference){Invoke-InputOwner {param($r)Get-SourceDeliveryPublishedIntegrationParent $r (New-SourceDeliveryObservation)} $Reference}
+
+function Assert-SourceOnlyParentControls($Published) {
+    $descriptorPath=$script:sourceOnlyBridgeDescriptor;$descriptor=Read-InputTestJson $descriptorPath
+
+    $parent=Read-TestSourceOnlyParent $Published.landing
+    Assert-Builder ($parent.provenance_kind-ceq'recorded-source-only-publication'-and$parent.merge_commit-ceq$Published.commit-and$parent.merge_tree-ceq$Published.tree) 'Native source-only parent identity is not exact.'
+    $f=$script:sourceOnlyBridgeFixture
+    foreach($damage in @('execution-substitute','unknown-kind','extra-flag','map-pin','wrong-repo','wrong-unit','alternate-record')){
+        $bad=Copy-Document $descriptor
+        switch($damage){
+            'execution-substitute' {$bad=Read-InputTestJson $descriptor.execution.path}
+            'unknown-kind' {$bad.kind='source-only-published-parent-unknown'}
+            'extra-flag' {$bad|Add-Member caller_pass $true}
+            'map-pin' {$bad.repository_map.sha256='1'*64}
+            'wrong-repo' {$bad.repo_id='readonly-dependency'}
+            'wrong-unit' {$bad.unit_id='not-the-original-unit'}
+            'alternate-record' {$copy=Join-Path $deliveryRoot 'alternate-record-completion.json';[IO.File]::Copy($descriptor.record_completion.path,$copy);$bad.record_completion=Delivery-Ref $copy}
+        }
+        $path=Join-Path $deliveryRoot "refused-parent-$damage.json";Write-Json $path $bad
+        $before=Get-InputTestInventory $deliveryRoot
+        Assert-Rejected {Read-TestSourceOnlyParent (Delivery-Ref $path)} '*' "source-only parent $damage"
+        Assert-Builder ((Get-InputTestInventory $deliveryRoot)-ceq$before) 'Parent refusal wrote original owner/source bytes.'
+    }
+    $receipt=Read-InputTestJson $f.receipt
+    $artifactPath=[IO.Path]::GetFullPath((Join-Path (Join-Path $f.workspace 'receipts') ([string]$receipt.artifacts[0].path)))
+    foreach($path in @($descriptor.record_completion.path,$descriptor.record_intent.path,$descriptor.execution.path,$descriptor.plan.path,$artifactPath)){
+        $bytes=[IO.File]::ReadAllBytes($path)
+        try {
+            [IO.File]::AppendAllText($path,' ',[Text.UTF8Encoding]::new($false));$before=Get-InputTestInventory $deliveryRoot
+            Assert-Rejected {Read-TestSourceOnlyParent $Published.landing} '*' 'source-only parent nested raw damage'
+            Assert-Builder ((Get-InputTestInventory $deliveryRoot)-ceq$before) 'Parent nested refusal wrote fixture bytes.'
+        } finally {[IO.File]::WriteAllBytes($path,$bytes)}
+    }
+    $completionBytes=[IO.File]::ReadAllBytes($descriptor.record_completion.path)
+    try {
+        [IO.File]::Delete($descriptor.record_completion.path);$before=Get-InputTestInventory $deliveryRoot
+        Assert-Rejected {Read-TestSourceOnlyParent $Published.landing} '*' 'source-only parent missing committed Record'
+        Assert-Builder ((Get-InputTestInventory $deliveryRoot)-ceq$before) 'Missing Record refusal wrote fixture bytes.'
+    } finally {[IO.File]::WriteAllBytes($descriptor.record_completion.path,$completionBytes)}
+    $dirt=Join-Path $script:sourceOnlyBridgeOriginal 'unrelated-parent-source.txt'
+    try {
+        [IO.File]::WriteAllText($dirt,'unowned',[Text.UTF8Encoding]::new($false));$before=Get-InputTestInventory $deliveryRoot
+        Assert-Rejected {Read-TestSourceOnlyParent $Published.landing} '*dirty*' 'source-only parent source dirt'
+        Assert-Builder ((Get-InputTestInventory $deliveryRoot)-ceq$before) 'Dirty parent refusal wrote fixture bytes.'
+    } finally {[IO.File]::Delete($dirt)}
+    Write-Host 'Source-only native parent controls passed; exact recorded owner/descriptor/nested raw/source guards and no-write refusals.'
+}
+
+
+function Invoke-RecordedParentRelocationControls {
+    $deliveryRoot=Join-Path ([IO.Path]::GetTempPath()) ('source-delivery-relocation-'+[guid]::NewGuid().ToString('N'))
+    [IO.Directory]::CreateDirectory($deliveryRoot)|Out-Null
+    try {
+        $source=Join-Path $deliveryRoot 'source';[IO.Directory]::CreateDirectory((Join-Path $source 'morphospace'))|Out-Null
+        Invoke-FixtureGit $source @('init','--initial-branch=main')|Out-Null
+        Invoke-FixtureGit $source @('config','user.email','fixture@example.invalid')|Out-Null;Invoke-FixtureGit $source @('config','user.name','Fixture')|Out-Null;Invoke-FixtureGit $source @('config','core.autocrlf','false')|Out-Null
+        [IO.File]::WriteAllText((Join-Path $source 'morphospace/README.md'),"baseline portable source`n",$encoding)
+        Invoke-FixtureGit $source @('add','morphospace')|Out-Null;Invoke-FixtureGit $source @('commit','-m','baseline portable source')|Out-Null
+        $seed=[pscustomobject]@{source_commit=Git-Value $source @('rev-parse','HEAD')}
+        $actualGit=Invoke-InputOwner {${function:Get-SourceOnlyInputGitValue}};$actualRemote=Invoke-InputOwner {${function:Get-SourceOnlyInputRemoteReadback}}
+        $parent=New-DeliverySourceOnlyPublishedParent $actualGit $actualRemote -Relocate
+        $observation=&$module {New-SourceDeliveryObservation}
+        $proof=Invoke-InputOwner {param($r,$o)Get-SourceDeliveryPublishedIntegrationParent $r $o} $parent.landing $observation
+        Assert-Builder ($proof.provenance_kind-ceq'recorded-source-only-publication'-and$proof.merge_commit-ceq$parent.commit) 'Relocated native parent did not authenticate exact Record.'
+        $relocation=[IO.Path]::GetFullPath($script:sourceOnlyBridgeRelocationReceipt)
+        Assert-Builder ($observation.ContainsKey($relocation)) 'Native parent omitted its consumed accepted relocation receipt.'
+        $tail=Read-InputTestJson (Join-Path $script:sourceOnlyBridgeFixture.workspace 'workspace.state.json')
+        Assert-Builder ([string]$tail.last_event_id-cmatch'^parent-next-unit-ready-') 'Native later Ready did not replace Record as current tail.'
+        $bytes=[IO.File]::ReadAllBytes($relocation)
+        try {
+            [IO.File]::AppendAllText($relocation,' ',$encoding);$before=Get-InputTestInventory $deliveryRoot
+            Assert-Rejected {Invoke-InputOwner {param($o)Assert-SourceDeliveryObservation $o} $observation} '*Evidence drifted before publication*' 'late relocation receipt damage after native parent validation'
+            Assert-Builder ((Get-InputTestInventory $deliveryRoot)-ceq$before) 'Late relocation refusal changed fixture bytes.'
+        } finally {[IO.File]::WriteAllBytes($relocation,$bytes)}
+        Write-Host 'Recorded parent relocation controls passed: real native accepted relocation/Prepare/Record/later Ready; consumed receipt retained; late raw damage refused without writes.'
+    } finally {
+        $full=[IO.Path]::GetFullPath($deliveryRoot);$temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')
+        if(-not[IO.Path]::GetDirectoryName($full).Equals($temp,[StringComparison]::OrdinalIgnoreCase)-or-not[IO.Path]::GetFileName($full).StartsWith('source-delivery-relocation-',[StringComparison]::Ordinal)){throw 'Unsafe relocation parent fixture cleanup.'}
+        if(Test-Path -LiteralPath $full){Remove-Item -LiteralPath $full -Recurse -Force}
+    }
+}
+
 function Invoke-DeliveryAcceptedIntegrationControls($Published) {
     Invoke-FixtureGit $source @('checkout','-b','accepted-reviewed-integration',$acceptedRequest.source_reference.commit)|Out-Null
     Invoke-FixtureGit $source @('merge','--no-ff','--no-edit',$Published.commit)|Out-Null
     $candidate=Git-Value $source @('rev-parse','HEAD');$tree=Git-Value $source @('rev-parse','HEAD^{tree}')
     $literal="# independently published heading`n"+$Published.baseline_content+"delivery consumer source`n"
     Assert-Builder ([IO.File]::ReadAllText((Join-Path $source 'morphospace/README.md')) -ceq $literal) 'Real overlapping owner/published merge lost independently expected content.'
+    if($SourceOnlyPublishedParentOnly){Assert-SourceOnlyParentControls $Published}
     $cr=[ordered]@{schema='rusty.morphospace.workflow.source_delivery_disposition.v1';kind='integration-computation-request';consumer=Copy-Document $acceptedRequest.consumer;source_reference=Copy-Document $acceptedRequest.source_reference;publication_subject=Copy-Document $acceptedRequest.publication_subject;publication_map=Copy-Document $acceptedRequest.publication_map;published_landing=$Published.landing}
     $cr.consumer.boundary_kind='accepted-source-owner-reviewed-integration';$cr.publication_subject.base_commit=$Published.commit;$cr.publication_subject.base_tree=$Published.tree;$cr.publication_subject.candidate_commit=$candidate;$cr.publication_subject.candidate_tree=$tree
     $cp=Join-Path $deliveryRoot 'computation-request.json';Write-Json $cp $cr;$out=Join-Path $deliveryRoot 'computation.json'
@@ -386,7 +579,7 @@ function Invoke-DeliveryAcceptedIntegrationControls($Published) {
         finally {if($damage -ceq 'substituted-computation'){[IO.File]::WriteAllBytes($out,$savedComputation)}}
         Assert-Builder ((Get-EnvelopeWorkspaceByteInventorySha256 $ws) -ceq $beforeOwner) 'Refused integration changed owner history.'
     }
-    $remote=Join-Path $deliveryRoot 'integrated-publication.git';Invoke-FixtureGit $source @('init','--bare','--initial-branch=main',$remote)|Out-Null
+    $remote=if($SourceOnlyPublishedParentOnly){$Published.remote}else{Join-Path $deliveryRoot 'integrated-publication.git'};if(-not$SourceOnlyPublishedParentOnly){Invoke-FixtureGit $source @('init','--bare','--initial-branch=main',$remote)|Out-Null}
     Invoke-FixtureGit $source @('remote','set-url','origin',$remote)|Out-Null;Invoke-FixtureGit $source @('push','origin',"$($Published.commit):refs/heads/main")|Out-Null
     $statusArgs=@($gitExecutable,'--no-optional-locks','--no-pager','--no-replace-objects','-C',$source,'status','--porcelain=v2','--branch','--untracked-files=all');$status=(Invoke-FixtureGit $source @('status','--porcelain=v2','--branch','--untracked-files=all')) -join "`n"
     $pre=New-DeliveryFixtureOriginal $deliveryRoot 'integrated-before' $statusArgs $source $status 30
@@ -394,6 +587,7 @@ function Invoke-DeliveryAcceptedIntegrationControls($Published) {
     $check=New-DeliveryFixtureOriginal $deliveryRoot 'integrated-check' $integrated.source_check_commands[0] $source '' 31
     $post=New-DeliveryFixtureOriginal $deliveryRoot 'integrated-after' $statusArgs $source $status 32
     $normal=Publish-SyntheticProviderMerge ([pscustomobject]@{id='integrated';repo=$source;remote=$remote;candidate=$candidate}) $deliveryRoot
+    if($SourceOnlyPublishedParentOnly){Invoke-FixtureGit $script:sourceOnlyBridgeOriginal @('fetch',$Published.remote,'main:refs/remotes/origin/main')|Out-Null}
     $merge=New-DeliveryFixtureOriginal $deliveryRoot 'integrated-merge' @($providerOrigin,'pr','merge','10','--repo','Example/ported-source','--merge','--match-head-commit',$candidate) $source '' 33
     $checks=New-DeliveryFixtureOriginal $deliveryRoot 'integrated-required-checks' @($providerOrigin,'pr','checks','10','--repo','Example/ported-source','--required','--json','name,state,link') $source '[{"name":"fresh-integrated-source","state":"SUCCESS","link":"https://example.invalid/MODELED-integrated"}]' 34
     $prText=[ordered]@{number=10;state='closed';merged=$true;merged_at='2026-10-21T01:33:01Z';merge_commit_sha=$normal.final;head=[ordered]@{sha=$candidate;repo=[ordered]@{full_name='Example/ported-source'}};base=[ordered]@{ref='main';repo=[ordered]@{full_name='Example/ported-source'}}}|ConvertTo-Json -Depth 10
@@ -401,6 +595,7 @@ function Invoke-DeliveryAcceptedIntegrationControls($Published) {
     $landingRequest=Copy-Document $ownerLandingRequest;$landingRequest.disposition=Delivery-Ref $disposition.path;$landingRequest.source_checks=@($check);$landingRequest.source_before_original=$pre;$landingRequest.source_after_original=$post;$landingRequest.pull_request_number=10;$landingRequest.pull_request_original=$pr;$landingRequest.required_checks_original=$checks;$landingRequest.merge_original=$merge
     $lp=Join-Path $deliveryRoot 'integrated-landing-request.json';Write-Json $lp $landingRequest
     $landed=New-MorphospaceSourceDeliveryLanding -RequestPath $lp -ExpectedRequestSha256 (Delivery-Hash $lp) -RepoMapPath $ownerMap -OutPath (Join-Path $deliveryRoot 'integrated-landing.json')
+    if($SourceOnlyPublishedParentOnly){Invoke-FixtureGit $script:sourceOnlyBridgeOriginal @('fetch',$Published.remote,'main:refs/remotes/origin/main')|Out-Null}
     # Native execution and its private object database are unnecessary on retained
     # reads. Existing Git object observation remains read-only and available.
     $isolated=[IO.Path]::GetFullPath($out+'.native/isolated');$expected=[IO.Path]::GetFullPath((Join-Path ($out+'.native') 'isolated'))
@@ -422,7 +617,7 @@ function Invoke-DeliveryContractControls {
     $ledgerModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1') -PassThru
     . (Join-Path $PSScriptRoot 'test-support/DevelopmentAdmissionFixture.ps1')
     function Invoke-EnvelopeGit([string]$Path,[string[]]$Arguments){Invoke-FixtureGit $Path $Arguments}
-    $savedGit=&$module { ${function:Get-SourceOnlyInputGitValue} };$savedRemote=&$module { ${function:Get-SourceOnlyInputRemoteReadback} }
+    $savedGit=Invoke-InputOwner { ${function:Get-SourceOnlyInputGitValue} };$savedRemote=Invoke-InputOwner { ${function:Get-SourceOnlyInputRemoteReadback} }
     try {
         $seed=New-EnvelopeAdmissionPreparedFixture -Root $deliveryRoot -RepositoryRoot (Split-Path $PSScriptRoot -Parent) -TransitionLedgerModule $ledgerModule -OwnerProducedPreparation
         $seed.admission_template.unit|Add-Member -NotePropertyName guard_profile -NotePropertyValue locked -Force
@@ -512,7 +707,7 @@ function Invoke-DeliveryContractControls {
         [IO.File]::WriteAllText($providerOrigin,'MODELED later installed provider changed; original bytes remain retained.',$encoding)
         Assert-Builder (Test-MorphospaceSourceDeliveryLanding -LandingPath $landing.path -ExpectedLandingSha256 $landing.sha256 -WorkspaceRoot $ws -UnitId u002 -RepositoryMap $map) 'Already-landed source incorrectly required a second publication delta.'
         $workflowLog=Join-Path $deliveryRoot 'consumer-workflow.log'
-        $workflowOutput=@(& pwsh -NoProfile -File (Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1') -WorkspaceRoot $ws -RepositoryMapPath $map -CurrentWorkOnly -SkipOwnerSelfTests 2>&1|ForEach-Object{[string]$_})
+        $workflowOutput=@(& pwsh -NoProfile -File (Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1') -WorkspaceRoot $ws -RepositoryMapPath $map -CurrentWorkOnly -SkipOwnerSelfTests @currentReaderExtra 2>&1|ForEach-Object{[string]$_})
         Assert-Builder ($LASTEXITCODE -eq 0) "Consumer workflow predicate failed: $($workflowOutput -join ' ')"
         [IO.File]::WriteAllText($workflowLog,($workflowOutput -join "`n"),$encoding)
         $inspect=Invoke-MorphospaceWorkUnitAutomation -Action Inspect -WorkspaceRoot $ws -UnitId u002 -RepoMapPath $map -ValidationTier standard
@@ -543,7 +738,7 @@ function Invoke-DeliveryContractControls {
             [IO.File]::WriteAllBytes($package,$packageBytes)
         }
         $duplicate=Join-Path $deliveryRoot 'duplicate.txt';[IO.File]::WriteAllText($duplicate,'one',$encoding);$first=Delivery-Ref $duplicate
-        $observation=&$module {New-SourceDeliveryObservation};[void](&$module {param($r,$o) Read-SourceDeliveryReference $r $o -Bytes} $first $observation)
+        $observation=Invoke-InputOwner {New-SourceDeliveryObservation};[void](&$module {param($r,$o) Read-SourceDeliveryReference $r $o -Bytes} $first $observation)
         [IO.File]::WriteAllText($duplicate,'two',$encoding);$second=Delivery-Ref $duplicate
         Assert-Rejected {&$module {param($r,$o) Read-SourceDeliveryReference $r $o -Bytes} $second $observation} '*rebound during*' 'same-locator observation rebinding'
         $receiptPath=Join-Path $ws 'receipts/delivery-consumer-validation.json'
@@ -551,7 +746,7 @@ function Invoke-DeliveryContractControls {
         Invoke-MorphospaceWorkUnitAutomation -Action RecordValidation -WorkspaceRoot $ws -UnitId u002 -RepoMapPath $map -ValidationTier standard -ValidationResult pass -ValidationReceipt 'receipts/delivery-consumer-validation.json' -Timestamp '2026-10-21T02:01:00.0000000Z' -Execute|Out-Null
         Invoke-MorphospaceWorkUnitAutomation -Action Accept -WorkspaceRoot $ws -UnitId u002 -RepoMapPath $map -ValidationTier standard -ValidationReceipt 'receipts/delivery-consumer-validation.json' -Timestamp '2026-10-21T02:02:00.0000000Z' -Execute|Out-Null
         Assert-Builder (Test-MorphospaceSourceDeliveryLanding -LandingPath $landing.path -ExpectedLandingSha256 $landing.sha256 -WorkspaceRoot $ws -UnitId u002 -RepositoryMap $map) 'Accepted continuation lost the earlier source binding.'
-        $fresh=@(& pwsh -NoProfile -File (Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1') -WorkspaceRoot $ws -RepositoryMapPath $map -CurrentWorkOnly -SkipOwnerSelfTests 2>&1|ForEach-Object{[string]$_})
+        $fresh=@(& pwsh -NoProfile -File (Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1') -WorkspaceRoot $ws -RepositoryMapPath $map -CurrentWorkOnly -SkipOwnerSelfTests @currentReaderExtra 2>&1|ForEach-Object{[string]$_})
         Assert-Builder ($LASTEXITCODE -eq 0) "Fresh accepted continuation failed: $($fresh -join ' ')"
         # A locked source owner has earned its own acceptance. It needs neither
         # a downstream adoption pass nor a planning-role/Git-layout fiction.
@@ -862,6 +1057,7 @@ function Invoke-ReviewedIntegrationNativeControls {
 
 if ($ProjectSourceDomainOnly) { Invoke-ProjectSourceDomainControls; return }
 if ($ReviewedIntegrationNativeOnly) { Invoke-ReviewedIntegrationNativeControls; return }
+if ($SourceOnlyPublishedParentOnly) { Invoke-DeliveryContractControls; return }
 if ($ReviewedIntegrationOnly) { Invoke-DeliveryContractControls; return }
 if ($ActiveEnvelopeReceiptOnly) { Invoke-ActiveEnvelopeReceiptControls; return }
 Invoke-FixedSourcePathControls
@@ -871,6 +1067,9 @@ if ($DispositionOnly) { Invoke-ReviewedIntegrationNativeControls; Invoke-ActiveE
 Invoke-ReviewedIntegrationNativeControls
 Invoke-ActiveEnvelopeReceiptControls
 Invoke-DeliveryContractControls
+$SourceOnlyPublishedParentOnly=$true;$currentReaderExtra=[string[]]@('-CurrentWorkspaceOnly')
+try{Invoke-DeliveryContractControls}finally{$SourceOnlyPublishedParentOnly=$false;$currentReaderExtra=[string[]]@()}
+Invoke-RecordedParentRelocationControls
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceValidationReceipt.psm1') -Force
 

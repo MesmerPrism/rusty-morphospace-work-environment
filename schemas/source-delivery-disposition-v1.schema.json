@@ -21,6 +21,9 @@
     },
     {
       "$ref": "#/$defs/computation"
+    },
+    {
+      "$ref": "#/$defs/source_only_published_parent"
     }
   ],
   "$defs": {
@@ -1045,6 +1048,57 @@
         },
         "native": {
           "$ref": "#/$defs/native_computation"
+        }
+      }
+    },
+    "source_only_published_parent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "kind",
+        "repo_id",
+        "workspace_root",
+        "unit_id",
+        "repository_map",
+        "plan",
+        "execution",
+        "record_intent",
+        "record_completion"
+      ],
+      "properties": {
+        "schema": {
+          "const": "rusty.morphospace.workflow.source_delivery_disposition.v1"
+        },
+        "kind": {
+          "const": "source-only-published-parent"
+        },
+        "repo_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+        },
+        "workspace_root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "unit_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+        },
+        "repository_map": {
+          "$ref": "#/$defs/raw"
+        },
+        "plan": {
+          "$ref": "#/$defs/raw"
+        },
+        "execution": {
+          "$ref": "#/$defs/raw"
+        },
+        "record_intent": {
+          "$ref": "#/$defs/raw"
+        },
+        "record_completion": {
+          "$ref": "#/$defs/raw"
         }
       }
     }
