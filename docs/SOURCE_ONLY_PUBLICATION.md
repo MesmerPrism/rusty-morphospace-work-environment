@@ -339,3 +339,12 @@ It supplies no Landing, historical premerge checks, successor acceptance, produc
 adoption or device success. Original source-map custody and the separate clean
 integration checkout remain distinct. The existing strict Landing branch, accepted
 successor delta, native merge computation and later verification remain mandatory.
+
+Reviewed integration retains the exact ordered `check-attr -z` merge-attribute
+triples for M, S and P. The three streams must agree on every path. Uniform
+`unspecified` remains supported; uniform `unset` is supported only for a regular
+file present with identical mode and blob in all three inputs. This permits an
+unchanged binary file declared by ordinary tracked attributes without selecting
+a merge driver. Changed or absent binary inputs, custom/union/set drivers, and
+attribute-inventory changes remain outside this contract. The producer and
+retained computation reader apply the same predicate to the original streams.

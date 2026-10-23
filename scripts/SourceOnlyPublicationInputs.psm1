@@ -928,6 +928,35 @@ function Assert-SourceDeliveryIntegrationAttributeInventory($Inventories) {
     }
 }
 
+function Assert-SourceDeliveryIntegrationMergeAttributes([string[]]$Paths,$Inventories,[string[]]$AttributeTexts) {
+    Assert-SourceDelivery ($Inventories.Count -eq 3 -and $AttributeTexts.Count -eq 3 -and $Paths.Count -gt 0) 'Native merge attribute input shape differs.'
+    $maps=@();$streams=@()
+    foreach($inventory in $Inventories) {
+        $map=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+        foreach($entry in @($inventory.entries)){Assert-SourceDelivery (-not $map.ContainsKey($entry.path)) 'Native merge attribute inventory repeats a path.';$map.Add($entry.path,$entry)}
+        $maps+=,$map
+    }
+    foreach($text in $AttributeTexts) {
+        $parts=$text.Split([char]0)
+        Assert-SourceDelivery ($parts.Count -eq 3*$Paths.Count+1 -and $parts[-1] -ceq '') 'Native merge attribute triples are not closed.'
+        for($i=0;$i -lt $Paths.Count;$i++){Assert-SourceDelivery ($parts[3*$i] -ceq $Paths[$i] -and $parts[3*$i+1] -ceq 'merge') 'Native merge attribute triples differ from the ordered path inventory.'}
+        $streams+=,$parts
+    }
+    for($i=0;$i -lt $Paths.Count;$i++) {
+        $state=$streams[0][3*$i+2]
+        Assert-SourceDelivery ($streams[1][3*$i+2] -ceq $state -and $streams[2][3*$i+2] -ceq $state) 'Native merge attribute states differ across inputs.'
+        if($state -ceq 'unspecified'){continue}
+        Assert-SourceDelivery ($state -ceq 'unset') 'Native merge attribute driver is outside this contract.'
+        $path=$Paths[$i];$expected=$null
+        foreach($map in $maps) {
+            Assert-SourceDelivery ($map.ContainsKey($path)) 'Native unset merge attribute requires a path present in every input.'
+            $entry=$map[$path]
+            Assert-SourceDelivery ($entry.mode -cin @('100644','100755') -and $entry.blob -cmatch '^[0-9a-f]{40}$') 'Native unset merge attribute requires a regular blob.'
+            if($null -eq $expected){$expected=$entry}else{Assert-SourceDelivery ($entry.mode -ceq $expected.mode -and $entry.blob -ceq $expected.blob) 'Native unset merge attribute requires unchanged mode and blob across inputs.'}
+        }
+    }
+}
+
 function Assert-SourceDeliveryIntegrationEntryCompatibility($Inventories) {
     $base=@{};foreach($entry in @($Inventories[0].entries)){$base[$entry.path]=$entry}
     foreach($path in $base.Keys){foreach($side in @(1,2)){$found=@($Inventories[$side].entries|Where-Object path -CEQ $path);Assert-SourceDelivery ($found.Count -eq 1 -and $found[0].mode -ceq $base[$path].mode) 'Integration deletion, rename or mode change is outside this contract.'}}
@@ -1003,11 +1032,13 @@ function Invoke-SourceDeliveryIntegrationComputation {
     Assert-SourceDeliveryIntegrationEntryCompatibility $inventories
     $paths=@(Get-SourceOnlyInputSortedPaths @($inventories|ForEach-Object{$_.entries}|ForEach-Object{$_.path}|Select-Object -Unique) 'Integration attribute paths')
     $stdin=$utf8.GetBytes(($paths -join [char]0)+[char]0)
+    $attributeTexts=@()
     foreach($commit in @($mergeBase,$Accepted,$Published)) {
         $attrs=Invoke-SourceDeliveryIntegrationGit $context Attributes $commit $stdin
-        $expected=($paths|ForEach-Object{$_+[char]0+'merge'+[char]0+'unspecified'+[char]0}) -join ''
-        Assert-SourceDelivery ($attrs.record.exit_code -eq 0 -and $attrs.text -ceq $expected) 'Integration merge attributes must all be unspecified.'
+        Assert-SourceDelivery ($attrs.record.exit_code -eq 0) 'Integration merge attribute observation failed.'
+        $attributeTexts+=,$attrs.text
     }
+    Assert-SourceDeliveryIntegrationMergeAttributes $paths $inventories $attributeTexts
     $merged=Invoke-SourceDeliveryIntegrationGit $context Merge
     Assert-SourceDelivery ($merged.record.exit_code -eq 0 -and $merged.text -cmatch '^[0-9a-f]{40}\n$') 'Native integration is conflicting or did not return exactly one tree.'
     $treeId=$merged.text.TrimEnd("`n")
@@ -1115,8 +1146,8 @@ function Read-SourceDeliveryIntegrationNative($Computation,[Collections.IDiction
     Assert-SourceDeliveryIntegrationOriginalDelta $inventories $AcceptedPaths
     $paths=@(Get-SourceOnlyInputSortedPaths @($inventories|ForEach-Object{$_.entries}|ForEach-Object{$_.path}|Select-Object -Unique) 'Native merged paths')
     $expectedIn=[Text.UTF8Encoding]::new($false).GetBytes(($paths -join [char]0)+[char]0)
-    $expectedOut=($paths|ForEach-Object{$_+[char]0+'merge'+[char]0+'unspecified'+[char]0}) -join ''
-    foreach($i in @(8,9,10)){Assert-SourceDelivery ([Convert]::ToBase64String((Read-SourceDeliveryReference $records[$i].stdin $Observed -Bytes)) -ceq [Convert]::ToBase64String($expectedIn) -and $texts[$i] -ceq $expectedOut) 'Native merge attribute policy differs.'}
+    foreach($i in @(8,9,10)){Assert-SourceDelivery ([Convert]::ToBase64String((Read-SourceDeliveryReference $records[$i].stdin $Observed -Bytes)) -ceq [Convert]::ToBase64String($expectedIn)) 'Native merge attribute stdin differs.'}
+    Assert-SourceDeliveryIntegrationMergeAttributes $paths $inventories @($texts[8],$texts[9],$texts[10])
     $result=@(ConvertFrom-SourceDeliveryTreeEntries $texts[12])
     Assert-SourceDelivery ((ConvertTo-MorphospaceCanonicalJson $result) -ceq (ConvertTo-MorphospaceCanonicalJson $n.result_entries)) 'Native computed tree inventory differs.'
     foreach($entry in $result){Assert-SourceDelivery ($paths -ccontains $entry.path) 'Computed tree contains an unexplained path.'}
