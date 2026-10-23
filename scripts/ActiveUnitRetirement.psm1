@@ -249,6 +249,60 @@ function Set-ActiveRetirementInstructionRepositoryProjection {
     $State.dirty_repositories=@($dirty.Keys|Sort-Object)
 }
 
+function Set-ActiveRetirementFrozenBeginRepositoryProjection {
+    param([string]$Workspace,[object]$State,[object]$Unit,[object]$Freeze)
+    # A committed Freeze authenticates the original authority and final writable
+    # commits. Begin refreshes their clean observations after deriving its action.
+    # Never borrow observations or other state from the Begin target, nor today's
+    # project: historical tooling upgrades can outlive that project revision.
+    $bindings=@($Freeze.intent.artifacts|Where-Object{[string]$_.path-ceq[string]$Unit.candidate_freeze.receipt_path})
+    if($bindings.Count-ne1-or[string]$bindings[0].sha256-cne[string]$Unit.candidate_freeze.receipt_sha256){throw 'Active retirement frozen Begin receipt binding is detached.'}
+    $bytes=[Convert]::FromBase64String([string]$bindings[0].bytes_base64)
+    if((Get-MorphospaceSha256Bytes $bytes)-cne[string]$bindings[0].sha256){throw 'Active retirement frozen Begin receipt bytes drifted.'}
+    $receipt=ConvertFrom-MorphospaceProtocolJsonBytes $bytes
+    if([string]$receipt.freeze_id-cne[string]$Unit.candidate_freeze.freeze_id-or[string]$receipt.project_id-cne[string]$Unit.project_id-or[string]$receipt.unit_id-cne[string]$Unit.unit_id-or[string]$Freeze.intent.event.event_id-cne"$([string]$receipt.freeze_id)-recorded"){throw 'Active retirement frozen Begin original closure is detached.'}
+    # Declared dirty summaries do not contain the porcelain needed to derive a
+    # fingerprint. They retain the previous strict whole-state comparison.
+    if([string]$receipt.cleanliness_policy-cne'clean-only'-or[string]$State.schema-cne'rusty.morphospace.workflow.workspace_state.v2'){return}
+    $fences=@($Freeze.intent.additional_projections)
+    Assert-ActiveRetirementEqual @('feature.lock.json','project.spec.json') @($fences|ForEach-Object{[string]$_.path}|Sort-Object -CaseSensitive) 'frozen Begin authority fence inventory'
+    foreach($fence in $fences){
+        $name=if([string]$fence.path-ceq'project.spec.json'){'project_sha256'}else{'feature_lock_sha256'}
+        if([string]$fence.pre_sha256-cne[string]$receipt.expected.$name-or[string]$fence.target_sha256-cne[string]$receipt.expected.$name-or(Get-MorphospaceCanonicalJsonSha256 $fence.document)-cne[string]$receipt.expected.$name){throw 'Active retirement frozen Begin original authority fence drifted.'}
+    }
+    $project=@($fences|Where-Object path -CEQ 'project.spec.json')[0].document
+    $feature=@($fences|Where-Object path -CEQ 'feature.lock.json')[0].document
+    $projectSchema=switch -CaseSensitive ([string]$project.schema){'rusty.morphospace.workflow.project_spec.v1'{'project-spec.schema.json'};'rusty.morphospace.workflow.project_spec.v2'{'project-spec-v2.schema.json'};default{throw 'Active retirement frozen Begin project context is unsupported.'}}
+    $featureSchema=switch -CaseSensitive ([string]$feature.schema){'rusty.morphospace.workflow.feature_lock.v1'{'feature-lock.schema.json'};'rusty.morphospace.workflow.feature_lock.v2'{'feature-lock-v2.schema.json'};default{throw 'Active retirement frozen Begin feature context is unsupported.'}}
+    Assert-ActiveRetirementSchema $project $projectSchema;Assert-ActiveRetirementSchema $feature $featureSchema
+    if([string]$project.project_id-cne[string]$Unit.project_id-or[string]$feature.project_id-cne[string]$Unit.project_id-or([string]$feature.schema-ceq'rusty.morphospace.workflow.feature_lock.v2'-and[int]$feature.project_revision-ne[int]$project.revision)){throw 'Active retirement frozen Begin authority identity is detached.'}
+    $mapPath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$receipt.expected.repository_map_path) -RequireLeaf
+    if((Get-MorphospaceFileSha256 $mapPath)-cne[string]$receipt.expected.repository_map_sha256){throw 'Active retirement frozen Begin repository map bytes drifted.'}
+    $map=Read-MorphospaceProtocolJson $mapPath;Assert-ActiveRetirementSchema $map 'repository-map.schema.json'
+    $declared=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal);$mapped=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($row in @($project.repositories)){if(-not$declared.Add([string]$row.repo_id)){throw 'Active retirement frozen Begin project repeats a repository.'}}
+    foreach($row in @($map.repositories)){if(-not$mapped.Add([string]$row.repo_id)){throw 'Active retirement frozen Begin map repeats a repository.'}}
+    $heads=@{};foreach($row in @($State.repository_heads)){
+        $id=[string]$row.repo_id
+        if(-not$declared.Contains($id)-or-not$mapped.Contains($id)-or$heads.ContainsKey($id)){throw 'Active retirement frozen Begin prior observations repeat or add a repository.'}
+        $heads[$id]=$row
+    }
+    $ids=@($Unit.allowed_repositories|ForEach-Object{[string]$_.repo_id}|Sort-Object -CaseSensitive)
+    if(@($ids|Sort-Object -Unique -CaseSensitive).Count-ne$ids.Count){throw 'Active retirement frozen Begin writable scope repeats a repository.'}
+    Assert-ActiveRetirementEqual $ids @($receipt.final_repositories|ForEach-Object{[string]$_.repo_id}|Sort-Object -CaseSensitive) 'frozen Begin writable observation inventory'
+    foreach($final in @($receipt.final_repositories)){
+        $id=[string]$final.repo_id
+        if(-not$heads.ContainsKey($id)-or[string]$final.commit-cnotmatch'^[0-9a-f]{40}$'-or[string]$final.tree-cnotmatch'^[0-9a-f]{40}$'){throw 'Active retirement frozen Begin lacks an exact frozen writable observation.'}
+        $heads[$id].head=[string]$final.commit
+        $heads[$id].dirty_fingerprint=Get-MorphospaceSha256Bytes ([byte[]]::new(0))
+    }
+    $State.repository_heads=@($heads.Values|Sort-Object repo_id)
+    $State.dirty_repositories=@($State.dirty_repositories|Where-Object{$ids-cnotcontains[string]$_}|Sort-Object)
+    if([string]$feature.schema-ceq'rusty.morphospace.workflow.feature_lock.v2'){
+        $State.module_registry=[pscustomobject][ordered]@{lock_revision=[int]$feature.revision;lock_fingerprint=[string]$feature.lock_fingerprint;modules=@($project.modules|Where-Object{$_.selected-eq$true}|Sort-Object module_id|ForEach-Object{[pscustomobject][ordered]@{module_id=[string]$_.module_id;owner_repo=[string]$_.source_repo;maturity=[string]$_.maturity;contract=[string]$_.contract;contract_revision=[string]$_.contract_revision}})}
+    }
+}
+
 function Assert-ActiveRetirementRetainedLifecycle {
     param([string]$Workspace,[object]$Event,[object]$Transition,[switch]$SupersessionLineage,[object]$SupersessionProject=$null,[object]$SupersessionFeatureLock=$null)
     $intent=$Transition.intent;$unitId=[string]$Event.unit_id
@@ -297,7 +351,11 @@ function Assert-ActiveRetirementRetainedLifecycle {
         $pointer=[pscustomobject]@{freeze_id=[string]$receipt.freeze_id;receipt_path=[string]$binding.path;receipt_sha256=[string]$binding.sha256}
         $unit|Add-Member -NotePropertyName candidate_freeze -NotePropertyValue $pointer
     }elseif([string]$Event.event_id-cmatch('^'+[regex]::Escape($unitId)+'-validating-[0-9]{4,}$')){
-        if([string]$unit.status-cne'active'-or[string]$state.current_unit-cne$unitId-or$unit.PSObject.Properties.Name-cnotcontains'candidate_freeze'-or@($intent.artifacts).Count-ne0-or@($Event.receipts).Count-ne0-or[string]$Event.summary-cne'Entered validation with a deterministic command, instruction, graph, and device-impact plan.'){throw 'Active retirement BeginValidation is not the exact frozen active transition.'};$unit.status='validating'
+        if([string]$unit.status-cne'active'-or[string]$state.current_unit-cne$unitId-or$unit.PSObject.Properties.Name-cnotcontains'candidate_freeze'-or@($intent.artifacts).Count-ne0-or@($Event.receipts).Count-ne0-or[string]$Event.summary-cne'Entered validation with a deterministic command, instruction, graph, and device-impact plan.'){throw 'Active retirement BeginValidation is not the exact frozen active transition.'}
+        if(-not$SupersessionLineage-and[string]$prior.intent.event.event_id-ceq"$([string]$unit.candidate_freeze.freeze_id)-recorded"){
+            Set-ActiveRetirementFrozenBeginRepositoryProjection -Workspace $Workspace -State $state -Unit $unit -Freeze $prior
+        }
+        $unit.status='validating'
     }elseif([string]$Event.event_id-cmatch('^'+[regex]::Escape($unitId)+'-validation-(fail|partial|blocked)-return-[0-9]{4,}$')){
         $result=$Matches[1]
         $workMode=if($unit.PSObject.Properties.Name-ccontains'work_mode'){[string]$unit.work_mode}else{'feature'}

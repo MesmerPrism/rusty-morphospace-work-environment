@@ -1,9 +1,10 @@
-param([switch]$ExecutorPreflightOnly,[switch]$ArtifactSelectionOnly,[string]$ActualIntentPath='', [string]$ExpectedActualIntentSha256='', [switch]$SelfTest,[switch]$Child,[switch]$KeepFailedFixture,[switch]$KeepFixture,[string]$OldCommit='',[string]$NewCommit='',[string]$HarnessRoot='',[ValidateSet('all','lifecycle','recovery','product-negative','provenance-negative','instruction-context','ready-lifecycle','post-nonpass','validating-upgrade','declared-tier-active')][string]$Scenario='all',[ValidateSet('all','after-intent','after-artifact','after-projection','after-event')][string]$RecoveryFault='all')
+param([switch]$ExecutorPreflightOnly,[switch]$ArtifactSelectionOnly,[string]$ActualIntentPath='', [string]$ExpectedActualIntentSha256='', [switch]$SelfTest,[switch]$Child,[switch]$KeepFailedFixture,[switch]$KeepFixture,[string]$OldCommit='',[string]$NewCommit='',[string]$HarnessRoot='',[ValidateSet('all','lifecycle','recovery','product-negative','provenance-negative','instruction-context','ready-lifecycle','post-nonpass','validating-upgrade','validating-observation','declared-tier-active')][string]$Scenario='all',[ValidateSet('all','after-intent','after-artifact','after-projection','after-event')][string]$RecoveryFault='all')
 Set-StrictMode -Version 2.0
 $ErrorActionPreference='Stop'
 $script:TestClosurePaths=$null
 $script:ToolingTestClock=[Diagnostics.Stopwatch]::StartNew()
-$declaredTierFixture=$Scenario-in@('validating-upgrade','declared-tier-active')
+$declaredTierFixture=$Scenario-in@('validating-upgrade','validating-observation','declared-tier-active')
+$validatingUpgradeFixture=$Scenario-in@('validating-upgrade','validating-observation')
 function Write-TCPhase([string]$Name){[Console]::Error.WriteLine(('tooling_context_phase={0}; elapsed_seconds={1:N1}' -f $Name,$script:ToolingTestClock.Elapsed.TotalSeconds))}
 if(-not$SelfTest){throw 'Test-ToolingContext requires -SelfTest.'}
 trap { [Console]::Error.WriteLine("$($_.Exception.Message)`n$($_.ScriptStackTrace)"); exit 1 }
@@ -385,15 +386,15 @@ $admission=Clone $seed.admission_template;
 if(-not$declaredTierFixture){$admission.unit.instruction_surfaces+=,[pscustomobject][ordered]@{surface_kind='agents';path='<project-shell>/AGENTS.md';owner='project-owner';change_reason='Review the nearest fixture planning instructions.';action='review-no-change';status='complete';validation='Read the fixture AGENTS.md before owner admission.';skill_id=$null}}
 # Leave the declared set pending before admission so the later real completion
 # observes and completes it; no admitted unit projection is edited by the test.
-if($Scenario-in@('validating-upgrade','instruction-context')){foreach($surface in @($admission.unit.instruction_surfaces)){$surface.status='planned'}}
+if($Scenario-in@('validating-upgrade','validating-observation','instruction-context')){foreach($surface in @($admission.unit.instruction_surfaces)){$surface.status='planned'}}
 if($nestedPlanning){
  # The existing self-hosted fixture rewrites generic surfaces to its dependency
  # README; author an actual nearest agents declaration before admission.
  foreach($surface in @($admission.unit.instruction_surfaces|Where-Object{$_.surface_kind-ceq'agents'-and$_.path-ceq'<read-only-dependency>/dependency/README.md'})){$surface.path='<project-shell>/morphospace/AGENTS.md';$surface.owner='project-shell';$surface.action='review-no-change'}
 }
-if($Scenario-ceq'validating-upgrade'){$admission.admission_id='u002-original-admission';$admission.unit_id='u002-original';$admission.unit.unit_id='u002-original'}
-if($admission.PSObject.Properties.Name-cnotcontains'admission_kind'){$admission|Add-Member -NotePropertyName admission_kind -NotePropertyValue 'ordinary'};if($admission.preparation.PSObject.Properties.Name-cnotcontains'preparation_kind'){$admission.preparation|Add-Member -NotePropertyName preparation_kind -NotePropertyValue 'ordinary'};if($Scenario-ceq'validating-upgrade'){$originalConsumerPlan=Clone $admission};$admissionPath=Join-Path $HarnessRoot 'admission.json';Write-TC $admissionPath $admission;Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (FileHash $admissionPath) -OutPath (Join-Path $workspace "receipts/$($admission.admission_id).json") -Timestamp '2026-09-15T08:10:00.0000000Z' -Execute|Out-Null
-if($Scenario-ceq'validating-upgrade'){
+if($validatingUpgradeFixture){$admission.admission_id='u002-original-admission';$admission.unit_id='u002-original';$admission.unit.unit_id='u002-original'}
+if($admission.PSObject.Properties.Name-cnotcontains'admission_kind'){$admission|Add-Member -NotePropertyName admission_kind -NotePropertyValue 'ordinary'};if($admission.preparation.PSObject.Properties.Name-cnotcontains'preparation_kind'){$admission.preparation|Add-Member -NotePropertyName preparation_kind -NotePropertyValue 'ordinary'};if($validatingUpgradeFixture){$originalConsumerPlan=Clone $admission};$admissionPath=Join-Path $HarnessRoot 'admission.json';Write-TC $admissionPath $admission;Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (FileHash $admissionPath) -OutPath (Join-Path $workspace "receipts/$($admission.admission_id).json") -Timestamp '2026-09-15T08:10:00.0000000Z' -Execute|Out-Null
+if($validatingUpgradeFixture){
  # One genuine proposed original and named replacement, retaining the same producer preparation.
  $run=Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1'
  $retire=@{WorkspaceRoot=$workspace;UnitId='u002-original';ReplacementUnitId='u002';RetirementReason='contract-invalid';OutPath=(Join-Path $workspace 'receipts/u002-original-retired.json');Timestamp='2026-09-15T08:10:10.0000000Z'}
@@ -472,21 +473,31 @@ if($Scenario-in@('all','lifecycle','instruction-context')){
   return
  }
 }
-if($Scenario-in@('post-nonpass','validating-upgrade','declared-tier-active')){
+if($Scenario-in@('post-nonpass','validating-upgrade','validating-observation','declared-tier-active')){
  $nonpassWorkspace=Join-Path $HarnessRoot 'post-nonpass';Copy-Item -LiteralPath $workspace -Destination $nonpassWorkspace -Recurse
  & git -C $nonpassWorkspace init --initial-branch=main|Out-Null;& git -C $nonpassWorkspace config user.name 'Nonpass Fixture';& git -C $nonpassWorkspace config user.email 'fixture@example.invalid';& git -C $nonpassWorkspace config commit.gpgsign false;& git -C $nonpassWorkspace config core.autocrlf false
  [IO.File]::AppendAllText((Join-Path $nonpassWorkspace '.git/info/exclude'),"`nlocal/`n")
  & git -C $nonpassWorkspace add --all;& git -C $nonpassWorkspace commit -qm 'Checkpoint authentic admitted fixture'
+ if($validatingUpgradeFixture){
+  # A real committed source correction after Claim is legal before Freeze. Begin
+  # must refresh this observation without granting any other target-state field.
+  $claimedHead=GitScalar $seed.source_repository @('rev-parse','HEAD')
+  [IO.File]::AppendAllText((Join-Path $seed.source_repository 'morphospace/README.md'),"`nA clean post-Claim fixture correction.`n",[Text.UTF8Encoding]::new($false))
+  & git -C $seed.source_repository add morphospace/README.md|Out-Null;if($LASTEXITCODE-ne0){throw 'Fixture source staging failed.'}
+  & git -C $seed.source_repository commit -qm 'Post-Claim source correction before frozen validation'|Out-Null;if($LASTEXITCODE-ne0){throw 'Fixture source commit failed.'}
+  $frozenHead=GitScalar $seed.source_repository @('rev-parse','HEAD')
+  Assert-TC ($claimedHead-cne$frozenHead) 'genuine post-Claim source commit differs'
+ }
  $nonpassMap=Join-Path $nonpassWorkspace 'repository-map.json';$nonpassFreeze=Join-Path $HarnessRoot 'post-nonpass-freeze.json';$null=New-RetirementNonpassFreezeRequest $nonpassWorkspace $nonpassMap $nonpassFreeze
  $run=Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1';$lifecycle=@{WorkspaceRoot=$nonpassWorkspace;UnitId='u002';RepoMapPath=$nonpassMap;ValidationTier=$(if($declaredTierFixture){'standard'}else{'quick'})}
  $null=&$run @lifecycle -Action FreezeCandidate -CandidateFreeze $nonpassFreeze -ExpectedCandidateFreezeSha256 (FileHash $nonpassFreeze) -OutPath (Join-Path $nonpassWorkspace 'receipts/u002-extension-freeze.json') -Timestamp '2026-09-15T08:20:00.0000000Z' -Execute
- if($declaredTierFixture){
+ if($declaredTierFixture-and$Scenario-cne'validating-observation'){
   $directWorkspace=$nonpassWorkspace
-  if($Scenario-ceq'validating-upgrade'){$directWorkspace=Join-Path $HarnessRoot 'declared-tier-active';Copy-Item -LiteralPath $nonpassWorkspace -Destination $directWorkspace -Recurse}
+  if($validatingUpgradeFixture){$directWorkspace=Join-Path $HarnessRoot 'declared-tier-active';Copy-Item -LiteralPath $nonpassWorkspace -Destination $directWorkspace -Recurse}
   $directResult=Invoke-TCDeclaredTierActiveProducer $directWorkspace 'u002-direct-standard'
   if($Scenario-ceq'declared-tier-active'){$directResult|ConvertTo-Json -Compress;return}
  }
- if($Scenario-ceq'validating-upgrade'){
+ if($validatingUpgradeFixture){
   # Independent copied Freeze prefix; the real public Begin authenticates and
   # binds this selector. No supplied state DTO substitutes for owner history.
   $selectorWorkspace=Join-Path $HarnessRoot 'validating-bound-selector';Copy-Item -LiteralPath $nonpassWorkspace -Destination $selectorWorkspace -Recurse
@@ -520,7 +531,7 @@ function New-Case([string]$Name){$case=Join-Path $HarnessRoot $Name;Copy-Item -L
 
 
 
-if($Scenario-ceq'validating-upgrade'){
+if($validatingUpgradeFixture){
  Assert-TCValidatingSelectorRefused $selectorWorkspace
  $validatingFixture=[pscustomobject]@{workspace=$nonpassWorkspace}
  $stateBefore=Read-TC (Join-Path $nonpassWorkspace 'workspace.state.json');$unitBefore=Read-TC (Join-Path $nonpassWorkspace 'iteration-units/u002.json')
@@ -550,6 +561,8 @@ if($Scenario-ceq'validating-upgrade'){
  }finally{[IO.File]::WriteAllBytes($freezePath,$originalFreezeBytes)}
  Write-TCPhase 'validating-closed-slot-negatives-complete'
  $request=New-UpgradeRequest $nonpassWorkspace 'upgrade-validating';$requestPath=Save-Request $HarnessRoot $request 'upgrade-validating.json'
+ $dry=Invoke-MorphospaceUpgradeToolingContext -WorkspaceRoot $nonpassWorkspace -UnitId u002 -ToolingContextUpgrade $requestPath -OutPath (Join-Path $nonpassWorkspace 'receipts/upgrade-validating-tooling-context-upgrade-request.json') -Timestamp '2026-09-15T09:00:00.0000000Z'
+ Assert-TC (-not$dry.executed-and$dry.status_before-ceq'validating') 'public validating upgrade dry observes genuine refreshed source'
  $done=Invoke-Upgrade $validatingFixture $requestPath
  Assert-TC ($done.executed-and[string]$done.status_before-ceq'validating'-and[string]$done.status_after-ceq'validating'-and[string]$done.current_unit_before-ceq'u002'-and[string]$done.current_unit_after-ceq'u002') 'validating upgrade automation receipt and ownership'
  Write-TCPhase 'validating-compatible-upgrade-complete'
@@ -573,6 +586,10 @@ if($Scenario-ceq'validating-upgrade'){
  Assert-TC (@($current.instruction_surfaces).Count-eq7-and@($current.instruction_surfaces|Where-Object status -CNE 'complete').Count-eq0) 'actual seven instruction completions'
  Assert-TC ([bool](&$candidateModule {param($w,$u)Test-MorphospaceFrozenCandidate $w $u} $nonpassWorkspace $current)) 'frozen projection remains valid after mandatory instruction completion'
  Test-MorphospaceHistoricalToolingContextUpgrade $nonpassWorkspace $upgradeEvent|Out-Null
+ if($Scenario-ceq'validating-observation'){
+  [pscustomobject]@{result='pass';scenario=$Scenario;claimed_head=$claimedHead;frozen_head=$frozenHead;actual_public_freeze_begin_upgrade_dry_execute=$true;original_freeze_retained=$true;completed_instructions=7;later_historical_read=$true;standard_producer_record_accept_executed=$false;device_calls=0}|ConvertTo-Json -Compress
+  return
+ }
  # Bind the actual post-completion unit and its unchanged original frozen command.
  $matrix=@(&$automationModule {param($u)New-MorphospaceValidationMatrix -Unit $u -DeviceSerials @()} $current)
  Assert-TC (@($current.acceptance).Count-eq4-and@($matrix|Where-Object disposition -CNE 'forbidden').Count-eq4) 'all four criteria and four required gates retained'
