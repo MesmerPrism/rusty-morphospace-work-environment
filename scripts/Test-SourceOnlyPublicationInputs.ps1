@@ -10,7 +10,7 @@ Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationReceipt.psm1') -Force
 
-$currentReaderExtra=[string[]]@(if($SourceOnlyPublishedParentOnly){@('-CurrentWorkspaceOnly')}else{@()})
+$currentReaderExtra=[string[]]@(if($SourceOnlyPublishedParentOnly-or$ReviewedIntegrationOnly){@('-CurrentWorkspaceOnly')}else{@()})
 $encoding = [Text.UTF8Encoding]::new($false)
 $gitExecutable = (Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 function Assert-Builder([bool]$Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
@@ -539,8 +539,8 @@ function Invoke-DeliveryAcceptedIntegrationControls($Published) {
     $actualOuter=[pscustomobject]@{completion=$actualCompletion;intent=Read-EnvelopeProtocolJson $actualCompletion.intent.path}
     # Isolate the exact private native-reader predicates using genuine child
     # records. These altered DTOs are NOT public Compute/Disposition authority.
-    foreach($damage in @('nonzero-tree-prefix','no-eof','string-eof','unknown-field','extra-option','reversed-time','wrong-stdin','custom-config','attribute-environment')) {
-        $nativeCase=Copy-Document $actualComputation;$index=if($damage -ceq 'wrong-stdin'){8}else{11}
+    foreach($damage in @('nonzero-tree-prefix','no-eof','string-eof','unknown-field','extra-option','reversed-time','wrong-stdin','custom-config','attribute-environment','attribute-missing','attribute-duplicate','attribute-order','attribute-key','attribute-state','attribute-unclosed','attribute-extra')) {
+        $nativeCase=Copy-Document $actualComputation;$index=if($damage -ceq 'wrong-stdin' -or $damage -like 'attribute-*' -and $damage -cne 'attribute-environment'){8}else{11}
         $record=Read-EnvelopeProtocolJson $nativeCase.native.commands[$index].path
         switch($damage) {
             'nonzero-tree-prefix' {$record.exit_code=1}
@@ -552,6 +552,20 @@ function Invoke-DeliveryAcceptedIntegrationControls($Published) {
             'wrong-stdin' {$stdin=Join-Path $deliveryRoot 'wrong-native-stdin.bin';[IO.File]::WriteAllBytes($stdin,$encoding.GetBytes("unrelated.txt"+[char]0));$record.stdin=Delivery-Ref $stdin}
             'custom-config' {$config=Join-Path $deliveryRoot 'wrong-native-config.bin';[IO.File]::WriteAllText($config,"[core]`nrepositoryformatversion = 0`nbare = true`n[merge]`ndefault = forbidden`n",$encoding);$nativeCase.native.config=Delivery-Ref $config}
             'attribute-environment' {$envCase=Read-EnvelopeProtocolJson $nativeCase.native.environment.path;$envCase|Add-Member GIT_ATTR_SOURCE $seed.source_commit;$envPath=Join-Path $deliveryRoot 'wrong-native-environment.json';Write-Json $envPath $envCase;$nativeCase.native.environment=Delivery-Ref $envPath}
+        }
+        if($damage -like 'attribute-*' -and $damage -cne 'attribute-environment') {
+            $parts=[IO.File]::ReadAllText($record.stdout.path).Split([char]0)
+            $triples=@();for($i=0;$i -lt $parts.Count-1;$i+=3){$triples+=,(@($parts[$i],$parts[$i+1],$parts[$i+2]) -join [char]0)}
+            switch($damage) {
+                'attribute-missing' {$triples=@($triples|Select-Object -Skip 1)}
+                'attribute-duplicate' {$triples[1]=$triples[0]}
+                'attribute-order' {$swap=$triples[0];$triples[0]=$triples[1];$triples[1]=$swap}
+                'attribute-key' {$triples[0]=$parts[0]+[char]0+'diff'+[char]0+$parts[2]}
+                'attribute-state' {$triples[0]=$parts[0]+[char]0+'merge'+[char]0+'unset'}
+                'attribute-extra' {$triples+=,('extra.txt'+[char]0+'merge'+[char]0+'unspecified')}
+            }
+            $text=($triples -join [char]0)+[char]0;if($damage -ceq 'attribute-unclosed'){$text=$text.Substring(0,$text.Length-1)}
+            $stdoutPath=Join-Path $deliveryRoot "wrong-native-$damage.bin";[IO.File]::WriteAllBytes($stdoutPath,$encoding.GetBytes($text));$record.stdout=Delivery-Ref $stdoutPath
         }
         $recordPath=Join-Path $deliveryRoot "wrong-native-$damage.json";Write-Json $recordPath $record;$nativeCase.native.commands[$index]=Delivery-Ref $recordPath
         Assert-Rejected {&$module {param($c,$o) Read-SourceDeliveryIntegrationNative $c (New-SourceDeliveryObservation) $o @('morphospace/README.md')} $nativeCase $actualOuter} '*Native*' "private native $damage"
@@ -611,15 +625,29 @@ function Invoke-DeliveryAcceptedIntegrationControls($Published) {
 
 function Invoke-DeliveryContractControls {
     $deliveryRoot=Join-Path ([IO.Path]::GetTempPath()) ('source-delivery-contract-'+[guid]::NewGuid().ToString('N'))
+    $deliveryControlsPassed=$false
     $ownerModule=Import-Module (Join-Path $PSScriptRoot 'DevelopmentUnitAdmission.psm1') -PassThru
     $freezeModule=Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1') -PassThru
     $protocolModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -PassThru
     $ledgerModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1') -PassThru
     . (Join-Path $PSScriptRoot 'test-support/DevelopmentAdmissionFixture.ps1')
-    function Invoke-EnvelopeGit([string]$Path,[string[]]$Arguments){Invoke-FixtureGit $Path $Arguments}
+    # Seed immutable binary bytes BEFORE the existing native preparation/source
+    # lock is produced. The accepted delta remains only the later README edit.
+    $script:deliveryBinarySeedCount=0
+    function Invoke-EnvelopeGit([string]$Path,[string[]]$Arguments){
+        if(($Arguments -join '|') -ceq 'commit|-m|source-fixture'){
+            Assert-Builder ([IO.Path]::GetFullPath($Path) -ceq [IO.Path]::GetFullPath((Join-Path $deliveryRoot 'source-repo')) -and $script:deliveryBinarySeedCount -eq 0) 'Unexpected binary fixture seed boundary.'
+            [IO.File]::WriteAllText((Join-Path $Path '.gitattributes'),"morphospace/unchanged.opaque binary`n",$encoding)
+            [IO.File]::WriteAllBytes((Join-Path $Path 'morphospace/unchanged.opaque'),[byte[]]@(0,255,13,10,0,65))
+            Invoke-FixtureGit $Path @('add','--','.gitattributes','morphospace/unchanged.opaque')|Out-Null
+            $script:deliveryBinarySeedCount++
+        }
+        Invoke-FixtureGit $Path $Arguments
+    }
     $savedGit=Invoke-InputOwner { ${function:Get-SourceOnlyInputGitValue} };$savedRemote=Invoke-InputOwner { ${function:Get-SourceOnlyInputRemoteReadback} }
     try {
         $seed=New-EnvelopeAdmissionPreparedFixture -Root $deliveryRoot -RepositoryRoot (Split-Path $PSScriptRoot -Parent) -TransitionLedgerModule $ledgerModule -OwnerProducedPreparation
+        Assert-Builder ($script:deliveryBinarySeedCount -eq 1) 'Immutable binary baseline was not seeded before native preparation.'
         $seed.admission_template.unit|Add-Member -NotePropertyName guard_profile -NotePropertyValue locked -Force
         $ws=$seed.workspace;$map=Join-Path $ws 'repository-map.json';$source=$seed.source_repository
         $admit=Join-Path $deliveryRoot 'admit.json';Write-Json $admit $seed.admission_template
@@ -826,11 +854,12 @@ function Invoke-DeliveryContractControls {
         $historyBefore=Get-EnvelopeWorkspaceByteInventorySha256 $ws
         Assert-Rejected {New-MorphospaceSourceDeliveryDisposition @acceptedArgs -OutPath (Join-Path $deliveryRoot 'stale-accepted-disposition.json')} '*current acceptance tail*' 'stale accepted-owner creation'
         Assert-Builder ((Get-EnvelopeWorkspaceByteInventorySha256 $ws) -ceq $historyBefore) 'Stale accepted-owner creation changed history.'
+        $deliveryControlsPassed=$true
         'Source delivery controls passed: real prepared owner Freeze/Begin; separate port map/source; zero-credit disposition; actual temp Git merge; MODELED finite provider originals; retained earlier landing; no consumer writes; false-equivalence, coherently rebound nonzero/noEOF/not-reaped/string flags, failed required CI, detached consumer, map drift and late-stream drift refusal.'
     } finally {
         &$module {param($g,$r) Set-Item Function:script:Get-SourceOnlyInputGitValue $g;Set-Item Function:script:Get-SourceOnlyInputRemoteReadback $r;Remove-Variable deliverySavedGit,deliveryBare -Scope Script -ErrorAction SilentlyContinue} $savedGit $savedRemote
         $full=[IO.Path]::GetFullPath($deliveryRoot);$parent=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')
-        if([IO.Path]::GetDirectoryName($full).Equals($parent,[StringComparison]::OrdinalIgnoreCase) -and [IO.Path]::GetFileName($full).StartsWith('source-delivery-contract-',[StringComparison]::Ordinal)){if(Test-Path -LiteralPath $full){Remove-Item -LiteralPath $full -Recurse -Force}}else{throw 'Unsafe delivery fixture cleanup root.'}
+        if([IO.Path]::GetDirectoryName($full).Equals($parent,[StringComparison]::OrdinalIgnoreCase) -and [IO.Path]::GetFileName($full).StartsWith('source-delivery-contract-',[StringComparison]::Ordinal)){if($deliveryControlsPassed){if(Test-Path -LiteralPath $full){Remove-Item -LiteralPath $full -Recurse -Force}}else{Write-Warning "Retained failed source-delivery fixture: $full"}}else{throw 'Unsafe delivery fixture cleanup root.'}
     }
 }
 
@@ -952,6 +981,39 @@ New-MorphospaceValidationReceiptV1 -WorkspaceRoot $Workspace -UnitId u002 -RepoM
 }
 
 
+function Invoke-UnchangedBinaryIntegrationControls([string]$Root) {
+    foreach($case in @('binary','explicit-unset','custom-driver','union-driver','set-driver','changed-accepted','changed-published','changed-both','absent-base')) {
+        $repo=Join-Path $Root "binary-$case";[IO.Directory]::CreateDirectory($repo)|Out-Null
+        Invoke-FixtureGit $repo @('init','--initial-branch=main')|Out-Null
+        Invoke-FixtureGit $repo @('config','user.email','fixture@example.invalid')|Out-Null;Invoke-FixtureGit $repo @('config','user.name','Fixture')|Out-Null
+        $attribute=switch($case){'custom-driver'{'merge=forbidden-driver'};'union-driver'{'merge=union'};'set-driver'{'merge'};'explicit-unset'{'-merge'};default{'binary'}}
+        [IO.File]::WriteAllText((Join-Path $repo '.gitattributes'),"opaque.dat $attribute`n",$encoding)
+        if($case -cne 'absent-base'){[IO.File]::WriteAllBytes((Join-Path $repo 'opaque.dat'),[byte[]]@(0,255,13,10,0,65))}
+        [IO.File]::WriteAllText((Join-Path $repo 'accepted.txt'),"base`n",$encoding);[IO.File]::WriteAllText((Join-Path $repo 'published.txt'),"base`n",$encoding)
+        Invoke-FixtureGit $repo @('add','.')|Out-Null;Invoke-FixtureGit $repo @('commit','-m','base')|Out-Null;$base=Git-Value $repo @('rev-parse','HEAD')
+        [IO.File]::WriteAllText((Join-Path $repo 'accepted.txt'),"accepted`n",$encoding)
+        if($case -cin @('changed-accepted','changed-both')){[IO.File]::WriteAllBytes((Join-Path $repo 'opaque.dat'),[byte[]]@(0,255,13,10,0,66))}
+        Invoke-FixtureGit $repo @('add','.')|Out-Null;Invoke-FixtureGit $repo @('commit','-m','accepted')|Out-Null;$accepted=Git-Value $repo @('rev-parse','HEAD')
+        Invoke-FixtureGit $repo @('checkout','-b','published',$base)|Out-Null
+        [IO.File]::WriteAllText((Join-Path $repo 'published.txt'),"published`n",$encoding)
+        if($case -cin @('changed-published','changed-both','absent-base')){[IO.File]::WriteAllBytes((Join-Path $repo 'opaque.dat'),[byte[]]@(0,255,13,10,0,67))}
+        Invoke-FixtureGit $repo @('add','.')|Out-Null;Invoke-FixtureGit $repo @('commit','-m','published')|Out-Null;$published=Git-Value $repo @('rev-parse','HEAD')
+        $beforeHead=Git-Value $repo @('rev-parse','HEAD');$beforeStatus=@(Invoke-FixtureGit $repo @('status','--porcelain=v1','--untracked-files=all')) -join "`n"
+        $output=Join-Path $Root "binary-result-$case"
+        $invoke={Invoke-InputOwner {param($r,$s,$p,$o)Invoke-SourceDeliveryIntegrationComputation -Root $r -Accepted $s -Published $p -OutputDirectory $o} $repo $accepted $published $output}
+        if($case -cin @('binary','explicit-unset')) {
+            $result=&$invoke
+            $expected=Git-Value $repo @('rev-parse',"${base}:opaque.dat")
+            Assert-Builder (@($result.result_entries|Where-Object{$_.path -ceq 'opaque.dat' -and $_.mode -ceq '100644' -and $_.blob -ceq $expected}).Count -eq 1) "Unchanged unset binary was not retained: $case"
+        } else {
+            $pattern=if($case -ceq 'absent-base'){'*present in every input*'}elseif($case -like 'changed-*'){'*unchanged mode and blob*'}else{'*driver is outside*'}
+            Assert-Rejected $invoke $pattern "real Git unset/driver $case"
+        }
+        Assert-Builder ((Git-Value $repo @('rev-parse','HEAD')) -ceq $beforeHead -and (@(Invoke-FixtureGit $repo @('status','--porcelain=v1','--untracked-files=all')) -join "`n") -ceq $beforeStatus) "Binary control changed source: $case"
+    }
+    'Unchanged binary controls passed: native binary macro and explicit unset; custom/union/set drivers, changed blobs and absent-base refusals.'
+}
+
 function Invoke-ReviewedIntegrationNativeControls {
     $root=Join-Path ([IO.Path]::GetTempPath()) ('source-integration-native-'+[guid]::NewGuid().ToString('N'))
     [IO.Directory]::CreateDirectory($root)|Out-Null
@@ -1047,6 +1109,7 @@ function Invoke-ReviewedIntegrationNativeControls {
                 Assert-Builder ($native.exit_code -eq 1 -and [IO.File]::ReadAllText($native.stdout.path) -cmatch '^[0-9a-f]{40}' -and [IO.File]::ReadAllBytes($native.stderr.path).Length -eq 0) 'Conflict control did not retain its actual nonzero/tree-prefix/empty-stderr distinction.'
             }
         }
+        Invoke-UnchangedBinaryIntegrationControls $root
         $nativeControlsPassed=$true
         'Reviewed integration native controls passed: three real overlaps/literal both-side blobs; unique base; source driver isolation; dirty clean-filter/ambient selector no-write refusals; conflict with tree-prefix/empty-stderr, mode, deletion and attribute-inventory refusal.'
     } finally {
