@@ -213,11 +213,20 @@ function New-MorphospaceValidationReceiptV1 {
     $baseByRepo = @{}
     $sourceLockPresent = $false
     $activeEnvelopeFiles = @{}
+    $bootstrapAuthority = $null
     if (($unit.PSObject.Properties.Name -contains 'source_composition') -and $null -ne $unit.source_composition.lock_path) {
         $sourceLockPresent = $true
-        if (-not ($unit.PSObject.Properties.Name -contains 'candidate_freeze')) { throw 'Validation receipt generation requires the candidate-freeze binding for a source-composition lock.' }
         $lockRelative = ([string]$unit.source_composition.lock_path).Replace('\','/')
         $lockPath = Resolve-MorphospaceValidationReceiptWorkspacePath $workspace $lockRelative -RequireLeaf
+        $lockSha256 = Get-MorphospaceValidationReceiptFileHash $lockPath
+        if (-not ($unit.PSObject.Properties.Name -contains 'candidate_freeze')) {
+            try {
+                Import-Module (Join-Path $PSScriptRoot 'MorphospaceBootstrapValidation.psm1') -DisableNameChecking
+                $bootstrapAuthority = Get-MorphospaceBootstrapValidationAuthority -WorkspaceRoot $workspace -UnitId $UnitId -RepoMapPath $mapPath
+            } catch {
+                throw "Validation receipt generation requires the candidate-freeze binding unless bootstrap authority is authenticated: $($_.Exception.Message)"
+            }
+        } else {
         $freezeRelative = ([string]$unit.candidate_freeze.receipt_path).Replace('\','/')
         $freezePath = Resolve-MorphospaceValidationReceiptWorkspacePath $workspace $freezeRelative -RequireLeaf
         $freezeSha256 = Get-MorphospaceValidationReceiptFileHash $freezePath
@@ -236,6 +245,7 @@ function New-MorphospaceValidationReceiptV1 {
         if ([string]$freeze.expected.source_composition_path -cne $lockRelative -or [string]$freeze.source_composition.path -cne $lockRelative -or [string]$freeze.expected.source_composition_sha256 -cne $lockSha256 -or [string]$freeze.source_composition.sha256 -cne $lockSha256) { throw 'Validation receipt source-composition lock does not match the candidate-freeze binding.' }
         $expectedMapPath = Resolve-MorphospaceValidationReceiptWorkspacePath $workspace ([string]$freeze.expected.repository_map_path) -RequireLeaf
         if (-not $expectedMapPath.Equals($mapPath,$script:MorphospaceValidationReceiptPathComparison) -or [string]$freeze.expected.repository_map_sha256 -cne $mapSha256) { throw 'Validation receipt repository map does not match the candidate-freeze binding.' }
+        }
 
         $lockJson = Get-Content -LiteralPath $lockPath -Raw
         try { $lock = $lockJson | ConvertFrom-Json -Depth 100 -DateKind String -ErrorAction Stop } catch { throw "Validation receipt source-composition lock is not valid JSON: $($_.Exception.Message)" }
@@ -330,11 +340,15 @@ function New-MorphospaceValidationReceiptV1 {
 
     $artifacts = [Collections.Generic.List[object]]::new()
     foreach ($artifact in @($Evidence.artifacts)) {
+        if ($null -ne $bootstrapAuthority -and [string]$artifact.artifact_id -cin @('bootstrap-source-lock','bootstrap-repository-map','bootstrap-begin-intent')) { throw 'Bootstrap validation reserved artifact ID is caller supplied.' }
         $properties = @($artifact.PSObject.Properties.Name | Sort-Object)
         if (('artifact_id|kind|path') -cne ($properties -join '|')) { throw 'Each validation artifact input must contain exactly artifact_id, kind, and path; SHA-256 is observed by the builder.' }
         $artifactPath = if ([IO.Path]::IsPathRooted([string]$artifact.path)) { [IO.Path]::GetFullPath([string]$artifact.path) } else { [IO.Path]::GetFullPath((Join-Path $outputDirectory ([string]$artifact.path))) }
         if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) { throw "Validation artifact does not exist: $([string]$artifact.path)" }
         $artifacts.Add([pscustomobject][ordered]@{ artifact_id=[string]$artifact.artifact_id; kind=[string]$artifact.kind; path=[string]$artifact.path; sha256=(Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant() }) | Out-Null
+    }
+    if ($null -ne $bootstrapAuthority) {
+        foreach ($artifact in @($bootstrapAuthority.artifacts)) { $artifacts.Add($artifact) | Out-Null }
     }
 
     if (-not $CreatedAt) { $CreatedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ') }
@@ -348,6 +362,7 @@ function New-MorphospaceValidationReceiptV1 {
     foreach ($path in $activeEnvelopeFiles.Keys) {
         if ((Get-MorphospaceValidationReceiptFileHash $path) -cne [string]$activeEnvelopeFiles[$path]) { throw 'Active-envelope validation receipt authority changed during generation.' }
     }
+    if ($null -ne $bootstrapAuthority) { Assert-MorphospaceBootstrapValidationObservation -Authority $bootstrapAuthority }
     [IO.Directory]::CreateDirectory($outputDirectory) | Out-Null
     Assert-MorphospaceValidationReceiptNoReparseAncestry $workspace $output
     $temporary = "$output.tmp-$([guid]::NewGuid().ToString('N'))"

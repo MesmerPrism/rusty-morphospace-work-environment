@@ -14,9 +14,9 @@ function Invoke-ProfileNative([string]$Script,[string[]]$Arguments){$output=@(&$
 function Snapshot-Profile([string]$Root){@((Get-ChildItem -LiteralPath $Root -Recurse -File|Sort-Object FullName|ForEach-Object{"$($_.FullName.Substring($Root.Length)) $(Get-MorphospaceFileSha256 $_.FullName)"}))-join"`n"}
 function Assert-ProfileRefusal([scriptblock]$Action,[string]$Reason,[string]$Workspace){$before=Snapshot-Profile $Workspace;$refused=$false;try{&$Action|Out-Null}catch{$refused=$_.Exception.Message.Contains($Reason,[StringComparison]::Ordinal)};Assert-ProfileTest $refused "Expected refusal containing '$Reason'";Assert-ProfileTest ((Snapshot-Profile $Workspace)-ceq$before) 'Refusal wrote owner files'}
 function Invoke-ProfileAcceptedPrefixProbe([string]$CorrectedRoot,[string]$MapPath,[string]$Destination){
-    # Existing standard-v1 test-fixture receipt semantics: the PASS rows below
-    # are modeled inputs, not executed validation or product acceptance claims.
-    # Real public owner transitions exercise the reader's accepted-prefix branch.
+    # Product PASS rows remain explicitly modeled and do not execute the
+    # historical command strings. The real public producer owns the receipt,
+    # exact bootstrap source/correction witness and native artifact bindings.
     if(Test-Path -LiteralPath $Destination){throw 'Accepted-prefix probe destination must be new.'}
     $originalBefore=Snapshot-Profile $CorrectedRoot
     [void][IO.Directory]::CreateDirectory($Destination)
@@ -35,13 +35,50 @@ function Invoke-ProfileAcceptedPrefixProbe([string]$CorrectedRoot,[string]$MapPa
     }
     $modeledPath=Join-Path $accepted 'receipts/modeled-acceptance-input.txt'
     [IO.File]::WriteAllText($modeledPath,"Synthetic standard-v1 receipt input for a host-only transition/reader test. Profile command strings were NOT executed; this grants no product/source qualification or real-owner acceptance.`n",[Text.UTF8Encoding]::new($false))
-    $receipt=[pscustomobject]@{schema='rusty.morphospace.workflow.validation_receipt.v1';receipt_id='initial-profile-modeled-pass';project_id=[string]$unit.project_id;unit_id=[string]$unit.unit_id;created_at=[DateTime]::UtcNow.ToString('o');tier='quick';result='pass';repository_revisions=$revisions;changed_paths=@();artifacts=@([pscustomobject]@{artifact_id='modeled-fixture-input';kind='host-control';path='modeled-acceptance-input.txt';sha256=(Get-MorphospaceFileSha256 $modeledPath)});criteria=@($unit.acceptance|ForEach-Object{[pscustomobject]@{acceptance_id=[string]$_.acceptance_id;status='pass';command=[string]$_.command;evidence_refs=@('modeled-fixture-input')}});gates=@($unit.validation|ForEach-Object{[pscustomobject]@{gate_id="validation-$([string]$_.profile_id)";status='pass';command=[string]$_.command;evidence_refs=@('modeled-fixture-input')}});device_validation=$null}
-    Write-ProfileJson (Join-Path $accepted 'receipts/modeled-pass-validation.json') $receipt
+    $evidence=[pscustomobject]@{receipt_id='initial-profile-modeled-pass';tier='quick';result='pass';artifacts=@([pscustomobject]@{artifact_id='modeled-fixture-input';kind='host-control';path=$modeledPath});criteria=@($unit.acceptance|ForEach-Object{[pscustomobject]@{acceptance_id=[string]$_.acceptance_id;status='pass';command=[string]$_.command;evidence_refs=@('modeled-fixture-input')}});gates=@($unit.validation|ForEach-Object{[pscustomobject]@{gate_id="validation-$([string]$_.profile_id)";status='pass';command=[string]$_.command;evidence_refs=@('modeled-fixture-input')}});device_validation=$null}
+    $evidencePath=Join-Path $Destination 'modeled-product-evidence.json';Write-ProfileJson $evidencePath $evidence
+    $receiptPath=Join-Path $accepted 'receipts/modeled-pass-validation.json'
+    Assert-ProfileTest (-not(Test-Path -LiteralPath $receiptPath)) 'Public producer output must be fresh'
+    $producer=Join-Path $PSScriptRoot 'New-ValidationReceipt.ps1'
+    $producerArgs=@('-WorkspaceRoot',$accepted,'-UnitId','initial-profile-001','-RepoMapPath',$MapPath,'-EvidencePath',$evidencePath,'-OutPath',$receiptPath)
+    $producerOutput=@(Invoke-ProfileNative $producer $producerArgs)
+    Write-ProfileJson (Join-Path $Destination 'public-producer-observation.json') ([pscustomobject]@{argv=@($pwsh,'-NoProfile','-NonInteractive','-File',$producer)+$producerArgs;stdout_and_stderr=@($producerOutput|ForEach-Object{[string]$_});native_public_receipt=$true;profile_commands_executed=$false;product_or_source_qualification=$false})
+    $receipt=Read-ProfileJson $receiptPath
+    Assert-ProfileTest ([string]$receipt.schema-ceq'rusty.morphospace.workflow.validation_receipt.v1'-and[string]$receipt.receipt_id-ceq'initial-profile-modeled-pass'-and[string]$receipt.unit_id-ceq[string]$unit.unit_id-and[string]$receipt.result-ceq'pass') 'Public producer receipt identity differs'
+    foreach($revision in $revisions){
+        $actual=@($receipt.repository_revisions|Where-Object{[string]$_.repo_id-ceq[string]$revision.repo_id})
+        Assert-ProfileTest ($actual.Count-eq1-and[string]$actual[0].base_revision-ceq[string]$revision.base_revision-and[string]$actual[0].head_revision-ceq[string]$revision.head_revision-and[string]$actual[0].branch-ceq[string]$revision.branch) 'Public producer did not retain the exact initial locked source baseline'
+    }
+    Assert-ProfileTest (@($receipt.changed_paths).Count-eq0-and@($receipt.repository_revisions).Count-eq$revisions.Count) 'Public producer changed the unchanged-source fixture closure'
+    foreach($reserved in @('bootstrap-source-lock','bootstrap-repository-map','bootstrap-begin-intent')){Assert-ProfileTest (@($receipt.artifacts|Where-Object{[string]$_.artifact_id-ceq$reserved}).Count-eq1) "Public bootstrap producer omitted or repeated $reserved"}
+    $lockedArtifact=@($receipt.artifacts|Where-Object{[string]$_.artifact_id-ceq'bootstrap-source-lock'})[0]
+    Assert-ProfileTest ([string]$lockedArtifact.sha256-ceq(Get-MorphospaceFileSha256 (Join-Path $accepted ([string]$unit.source_composition.lock_path)))) 'Public producer failed to bind the exact native correction source-lock bytes'
     $entry=Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1'
+    $producerReceiptRaw=Get-MorphospaceFileSha256 $receiptPath
     Invoke-ProfileNative $entry @('-Action','RecordValidation','-WorkspaceRoot',$accepted,'-UnitId','initial-profile-001','-RepoMapPath',$MapPath,'-ValidationTier','quick','-ValidationResult','pass','-ValidationReceipt','receipts/modeled-pass-validation.json','-Execute')|Out-Null
+    $recordedState=Read-ProfileJson (Join-Path $accepted 'workspace.state.json')
+    $recordedReceiptRelative=[string]$recordedState.validation_checkpoint.receipt
+    Assert-ProfileTest (-not[string]::IsNullOrWhiteSpace($recordedReceiptRelative)-and$recordedReceiptRelative-cne'receipts/modeled-pass-validation.json'-and[string]$recordedState.validation_checkpoint.result-ceq'pass') 'Record must select its new native-owned retained receipt copy'
+    $recordedReceiptPath=Join-Path $accepted $recordedReceiptRelative
+    Assert-ProfileTest ((Split-Path ([IO.Path]::GetFullPath($recordedReceiptPath)) -Parent)-ceq(Split-Path ([IO.Path]::GetFullPath($receiptPath)) -Parent)-and(Test-Path -LiteralPath $recordedReceiptPath -PathType Leaf)) 'Native retained receipt must exist in the producer receipt directory'
+    Assert-ProfileTest ((Get-MorphospaceFileSha256 $recordedReceiptPath)-ceq$producerReceiptRaw-and(Get-MorphospaceFileSha256 $receiptPath)-ceq$producerReceiptRaw) 'Record changed producer bytes or retained a different receipt'
     Invoke-ProfileNative $entry @('-Action','Accept','-WorkspaceRoot',$accepted,'-UnitId','initial-profile-001','-RepoMapPath',$MapPath,'-Execute')|Out-Null
     $state=Read-ProfileJson (Join-Path $accepted 'workspace.state.json')
-    Assert-ProfileTest ($null-eq$state.current_unit-and[string]$state.last_accepted_receipt-ceq'receipts/modeled-pass-validation.json'-and[string](Read-ProfileJson (Join-Path $accepted 'iteration-units/initial-profile-001.json')).status-ceq'accepted') 'Public modeled-input acceptance has no authentic endpoint'
+    $acceptedReceiptRelative=[string]$state.last_accepted_receipt
+    $acceptedReceiptPath=Join-Path $accepted $acceptedReceiptRelative
+    $acceptedEventId=[string]$state.last_event_id
+    $expectedAcceptedReceiptRelative=((Split-Path $recordedReceiptRelative -Parent).Replace('\','/')+'/'+$acceptedEventId+'-retained-validation.json')
+    Assert-ProfileTest ($null-eq$state.current_unit-and$acceptedReceiptRelative-ceq$expectedAcceptedReceiptRelative-and$acceptedReceiptRelative-cne$recordedReceiptRelative-and[string]$state.validation_checkpoint.receipt-ceq$acceptedReceiptRelative-and[string](Read-ProfileJson (Join-Path $accepted 'iteration-units/initial-profile-001.json')).status-ceq'accepted') 'Public modeled-input acceptance did not select its new event-derived final receipt copy'
+    Assert-ProfileTest ((Split-Path ([IO.Path]::GetFullPath($acceptedReceiptPath)) -Parent)-ceq(Split-Path ([IO.Path]::GetFullPath($receiptPath)) -Parent)-and(Test-Path -LiteralPath $acceptedReceiptPath -PathType Leaf)) 'Accept final receipt must exist in the producer and Record receipt directory'
+    Assert-ProfileTest ((Get-MorphospaceFileSha256 $acceptedReceiptPath)-ceq$producerReceiptRaw-and(Get-MorphospaceFileSha256 $recordedReceiptPath)-ceq$producerReceiptRaw-and(Get-MorphospaceFileSha256 $receiptPath)-ceq$producerReceiptRaw) 'Accept changed producer or Record input bytes or retained a different final receipt'
+    $acceptTransactionId=$acceptedEventId+'-transition'
+    $acceptIntentRelative="receipts/transactions/$acceptTransactionId.intent.json"
+    $acceptIntent=Read-ProfileJson (Join-Path $accepted $acceptIntentRelative)
+    $acceptCompletion=Read-ProfileJson (Join-Path $accepted "receipts/transactions/$acceptTransactionId.completion.json")
+    $acceptEvent=Get-Content -LiteralPath (Join-Path $accepted 'iteration-events.jsonl')|Select-Object -Last 1|ConvertFrom-Json -DateKind String
+    Assert-ProfileTest ([string]$acceptEvent.event_id-ceq$acceptedEventId-and@($acceptEvent.receipts).Count-eq2-and[string]$acceptEvent.receipts[0]-ceq$recordedReceiptRelative-and[string]$acceptEvent.receipts[1]-ceq$acceptedReceiptRelative) 'Accept event must retain the Record input and its new authoritative final receipt'
+    Assert-ProfileTest ([string]$acceptIntent.transaction_id-ceq$acceptTransactionId-and[string]$acceptIntent.event.event_id-ceq$acceptedEventId-and@($acceptIntent.artifacts).Count-eq1-and[string]$acceptIntent.artifacts[0].path-ceq$acceptedReceiptRelative-and[string]$acceptIntent.artifacts[0].sha256-ceq$producerReceiptRaw-and(Get-MorphospaceSha256Bytes ([Convert]::FromBase64String([string]$acceptIntent.artifacts[0].bytes_base64)))-ceq$producerReceiptRaw) 'Accept must own exactly one final receipt artifact with the original producer bytes'
+    Assert-ProfileTest ([string]$acceptCompletion.transaction_id-ceq$acceptTransactionId-and[string]$acceptCompletion.event_id-ceq$acceptedEventId-and[string]$acceptCompletion.status-ceq'committed'-and[string]$acceptCompletion.intent.path-ceq$acceptIntentRelative-and[string]$acceptCompletion.intent.sha256-ceq(Get-MorphospaceFileSha256 (Join-Path $accepted $acceptIntentRelative))) 'Accept completion must bind its actual final-copy intent'
     $consumer=Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1'
     Invoke-ProfileNative $consumer @('-WorkspaceRoot',$accepted,'-RepositoryMapPath',$MapPath,'-CurrentWorkOnly','-SkipOwnerSelfTests','-CurrentWorkspaceOnly')|Out-Null
     $damaged=Join-Path $Destination 'damaged';Copy-Item -LiteralPath $accepted -Destination $damaged -Recurse
@@ -51,9 +88,26 @@ function Invoke-ProfileAcceptedPrefixProbe([string]$CorrectedRoot,[string]$MapPa
     $refused=$LASTEXITCODE-ne0
     Assert-ProfileTest ($refused-and($damageOutput-join"`n")-match'(artifact|correction|profile closure)') 'Accepted-prefix reader accepted or misclassified damaged correction artifact'
     Assert-ProfileTest ((Snapshot-Profile $damaged)-ceq$damageBefore) 'Accepted-prefix damage refusal wrote owner files'
+    $damagedReceipt=Join-Path $Destination 'damaged-receipt';Copy-Item -LiteralPath $accepted -Destination $damagedReceipt -Recurse
+    [IO.File]::AppendAllText((Join-Path $damagedReceipt $acceptedReceiptRelative)," ")
+    $receiptDamageBefore=Snapshot-Profile $damagedReceipt
+    $receiptDamageOutput=@(&$pwsh -NoProfile -NonInteractive -File $consumer -WorkspaceRoot $damagedReceipt -RepositoryMapPath $MapPath -CurrentWorkOnly -SkipOwnerSelfTests -CurrentWorkspaceOnly 2>&1)
+    $receiptDamageExitCode=$LASTEXITCODE
+    $receiptDamageAfter=Snapshot-Profile $damagedReceipt
+    $receiptDamageRawText=$receiptDamageOutput-join"`n"
+    $receiptDamageExpected="Transition ledger committed artifact differs from its intent: $acceptedReceiptRelative"
+    # Native stderr can wrap between the colon and exact artifact path. Retain
+    # the raw display output and normalize only whitespace for this comparison.
+    $receiptDamageNormalized=[regex]::Replace($receiptDamageRawText,'\s+',' ').Trim()
+    $receiptDamageExpectedNormalized=[regex]::Replace($receiptDamageExpected,'\s+',' ').Trim()
+    $receiptDamageMatched=$receiptDamageNormalized.Contains($receiptDamageExpectedNormalized,[StringComparison]::Ordinal)
+    Write-ProfileJson (Join-Path $Destination 'accepted-receipt-drift-observation.json') ([pscustomobject]@{argv=@($pwsh,'-NoProfile','-NonInteractive','-File',$consumer,'-WorkspaceRoot',$damagedReceipt,'-RepositoryMapPath',$MapPath,'-CurrentWorkOnly','-SkipOwnerSelfTests','-CurrentWorkspaceOnly');exit_code=$receiptDamageExitCode;output=@($receiptDamageOutput|ForEach-Object{[string]$_});raw_text=$receiptDamageRawText;expected_exact_error=$receiptDamageExpected;whitespace_normalized_output=$receiptDamageNormalized;whitespace_normalized_error=$receiptDamageExpectedNormalized;exact_error_matched=$receiptDamageMatched;owner_before=$receiptDamageBefore;owner_after=$receiptDamageAfter;owner_unchanged=($receiptDamageAfter-ceq$receiptDamageBefore)})
+    Assert-ProfileTest ($receiptDamageExitCode-ne0) 'Accepted-prefix reader accepted final Accept-owned receipt raw drift; see accepted-receipt-drift-observation.json'
+    Assert-ProfileTest $receiptDamageMatched 'Accepted-prefix reader misclassified final Accept-owned receipt raw drift; see accepted-receipt-drift-observation.json'
+    Assert-ProfileTest ($receiptDamageAfter-ceq$receiptDamageBefore) 'Accepted consumed-receipt refusal wrote owner files'
     Assert-ProfileTest ((Snapshot-Profile $CorrectedRoot)-ceq$originalBefore) 'Accepted-prefix probe changed earned original'
-    Write-ProfileJson (Join-Path $Destination 'OUTCOME.json') ([pscustomobject]@{result='pass';accepted_workspace=$accepted;damaged_workspace=$damaged;model='Synthetic standard-v1 validation receipt input; genuine public Record/Accept/current-work transitions only.';profile_commands_executed=$false;product_or_source_qualification=$false;real_owner_acceptance=$false;original_unchanged=$true;damaged_correction_refused_without_write=$true;damage_output=@($damageOutput|ForEach-Object{[string]$_});accepted_tail=[string]$state.last_event_id})
-    Write-Host 'accepted-prefix current-work and damaged-correction no-write refusal passed using explicitly modeled receipt input'
+    Write-ProfileJson (Join-Path $Destination 'OUTCOME.json') ([pscustomobject]@{result='pass';accepted_workspace=$accepted;damaged_workspace=$damaged;model='Modeled host-only product evidence input; genuine public receipt production and Record/Accept/current-work transitions only.';native_public_receipt=$true;producer_receipt_unchanged=$true;recorded_receipt_unchanged=$true;recorded_receipt=$recordedReceiptRelative;accepted_receipt=$acceptedReceiptRelative;accept_artifact_count=1;profile_commands_executed=$false;product_or_source_qualification=$false;real_owner_acceptance=$false;original_unchanged=$true;damaged_correction_refused_without_write=$true;consumed_receipt_drift_refused_without_write=$true;damage_output=@($damageOutput|ForEach-Object{[string]$_});receipt_damage_output=@($receiptDamageOutput|ForEach-Object{[string]$_});accepted_tail=[string]$state.last_event_id})
+    Write-Host 'accepted-prefix public receipt/current-work and correction/receipt drift refusals passed using explicitly modeled product evidence'
 }
 
 if($HistoricalFixtureRoot-and$Scenario-cnotin@('correction','accepted-prefix','fingerprint')){throw 'Retained historical fixture reuse requires correction, accepted-prefix or fingerprint.'}

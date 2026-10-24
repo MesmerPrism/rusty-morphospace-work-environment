@@ -1179,6 +1179,31 @@ function Resolve-MorphospaceReceiptPath {
     return $candidate
 }
 
+function Test-MorphospaceBootstrapReceiptBindingRequired {
+    param([string]$WorkspaceRoot,[object]$Unit)
+
+    $state = Read-MorphospaceJson -Path (Join-Path $WorkspaceRoot 'workspace.state.json')
+    # Settled historical/terminal reads retain their existing owner contracts.
+    if ([string]$state.current_unit -cne [string]$Unit.unit_id) { return $false }
+    # Neither a mutable lock schema nor an injected marker may select a weaker
+    # receipt path. Derive the current contract from its committed native tail.
+    $step = Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $WorkspaceRoot `
+        -TransactionId "$([string]$state.last_event_id)-transition" `
+        -ExpectedStatePath 'workspace.state.json' `
+        -ExpectedUnitPath "iteration-units/$([string]$Unit.unit_id).json" `
+        -ExpectedEventsPath 'iteration-events.jsonl' -RequireTail
+    $nativeUnit = $step.intent.target.unit.document
+    if ((Get-MorphospaceCanonicalJsonSha256 $Unit) -cne (Get-MorphospaceCanonicalJsonSha256 $nativeUnit) -or
+        (Get-MorphospaceCanonicalJsonSha256 $state) -cne (Get-MorphospaceCanonicalJsonSha256 $step.intent.target.state.document)) {
+        throw 'Validation receipt current unit/state differs from its committed native target.'
+    }
+    if ($nativeUnit.PSObject.Properties.Name -notcontains 'source_composition' -or
+        $null -eq $nativeUnit.source_composition.lock_path) { return $false }
+    if ($nativeUnit.PSObject.Properties.Name -contains 'agent_scope_assessment' -and
+        $nativeUnit.PSObject.Properties.Name -contains 'candidate_freeze') { return $false }
+    return $true
+}
+
 function Test-MorphospaceValidationReceipt {
     param(
         [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
@@ -1190,11 +1215,15 @@ function Test-MorphospaceValidationReceipt {
         [Parameter(Mandatory = $true)][object[]]$ValidationMatrix,
         [Parameter(Mandatory = $true)][string]$ExpectedResult,
         [Parameter(Mandatory = $true)][string]$ExpectedTier,
-        [string]$ExpectedExecutionNonce = ''
+        [string]$ExpectedExecutionNonce = '',
+        [string]$RepoMapPath = '',
+        [ref]$BootstrapAuthority
     )
 
     $receiptPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $WorkspaceRoot -ReceiptReference $ReceiptReference
     $receipt = Assert-MorphospaceValidationReceiptStructure -ReceiptPath $receiptPath
+    if ($PSBoundParameters.ContainsKey('BootstrapAuthority')) { $BootstrapAuthority.Value = $null }
+    $bootstrapObservation = $null
     $receiptSecurityUnit = (
         [string]$Unit.project_id -eq 'morphospace-platform-iteration' -and
         [string]$Unit.unit_id -eq 'wf-005'
@@ -1213,6 +1242,10 @@ function Test-MorphospaceValidationReceipt {
     }
     if ([string]$receipt.result -ne $ExpectedResult -or [string]$receipt.tier -ne $ExpectedTier) {
         throw "Validation receipt result/tier does not match the requested checkpoint."
+    }
+    if (Test-MorphospaceBootstrapReceiptBindingRequired -WorkspaceRoot $WorkspaceRoot -Unit $Unit) {
+        Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceBootstrapValidation.psm1') -DisableNameChecking
+        $bootstrapObservation = Get-MorphospaceBootstrapValidationAuthority -WorkspaceRoot $WorkspaceRoot -UnitId ([string]$Unit.unit_id) -RepoMapPath $RepoMapPath -Receipt $receipt -ReceiptPath $receiptPath
     }
     $requiredDebtBinding = Assert-MorphospaceHistoricalValidationDebtReceiptRequirement -WorkspaceRoot $WorkspaceRoot -CurrentUnit $Unit -Receipt $receipt
     if ($receipt.PSObject.Properties.Name -contains 'historical_validation_debt') {
@@ -1350,6 +1383,13 @@ function Test-MorphospaceValidationReceipt {
         $repositoryFull = [System.IO.Path]::GetFullPath($repositoryPath).TrimEnd("\", "/")
         $workspaceFull = [System.IO.Path]::GetFullPath($WorkspaceRoot).TrimEnd("\", "/")
         $repositoryPrefix = $repositoryFull + [System.IO.Path]::DirectorySeparatorChar
+        $bootstrapRetainedRelative = $null
+        if ($null -ne $bootstrapObservation -and $null -ne $bootstrapObservation.retained_receipt_path) {
+            $retainedPath = [IO.Path]::GetFullPath([string]$bootstrapObservation.retained_receipt_path)
+            if ($retainedPath.StartsWith($repositoryPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+                $bootstrapRetainedRelative = $retainedPath.Substring($repositoryPrefix.Length).Replace('\', '/')
+            }
+        }
         if ($workspaceFull.StartsWith($repositoryPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
             $workspaceRelative = $workspaceFull.Substring($repositoryPrefix.Length).Replace("\", "/").TrimEnd("/")
             $transactionPrefix = "$workspaceRelative/receipts/transactions/"
@@ -1357,7 +1397,8 @@ function Test-MorphospaceValidationReceipt {
         $actualChanged = @(Get-MorphospaceChangedPaths -RepositoryPath $repositoryPath -BaseRevision ([string]$revision.base_revision) | Where-Object {
             $candidatePath = ConvertTo-MorphospaceRelativePath -Path ([string]$_)
             (Test-MorphospacePathAllowed -Path $candidatePath -AllowedPaths @($repo.allowed_paths)) -and
-            (-not $transactionPrefix -or -not $candidatePath.StartsWith($transactionPrefix, [System.StringComparison]::OrdinalIgnoreCase))
+            (-not $transactionPrefix -or -not $candidatePath.StartsWith($transactionPrefix, [System.StringComparison]::OrdinalIgnoreCase)) -and
+            (-not $bootstrapRetainedRelative -or $candidatePath -cne $bootstrapRetainedRelative)
         })
         $recordedChanged = if ($changedByRepo.ContainsKey($repoId)) { @($changedByRepo[$repoId] | Sort-Object -Unique) } else { @() }
         foreach ($path in $recordedChanged) {
@@ -1385,6 +1426,10 @@ function Test-MorphospaceValidationReceipt {
         foreach ($reference in @($receipt.device_validation.evidence_refs)) {
             if (-not $artifactMap.ContainsKey([string]$reference)) { throw "Device validation references unknown artifact '$reference'." }
         }
+    }
+    if ($null -ne $bootstrapObservation) {
+        Assert-MorphospaceBootstrapValidationObservation -Authority $bootstrapObservation
+        if ($PSBoundParameters.ContainsKey('BootstrapAuthority')) { $BootstrapAuthority.Value = $bootstrapObservation }
     }
     return $receipt
 }
@@ -2020,6 +2065,10 @@ function Invoke-MorphospaceWorkUnitAutomation {
     ) { $state.normal_validation_selection } else { $null }
     $releaseTerminalValidationSelection = $false
     $retainedValidationArtifact = $null
+    $bootstrapValidationReceiptArtifact = $null
+    $recordBootstrapAuthority = $null
+    $acceptedBootstrapValidationArtifact = $null
+    $acceptBootstrapAuthority = $null
     $terminalSelectionReleaseProof = $null
     $terminalSelectionReleaseProofReference = ''
     Assert-MorphospaceReadyTerminalReleaseSelectorBinding -Route $terminalReleaseRoute -UnitId $UnitId -Selection $existingValidationSelection
@@ -2156,6 +2205,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                         -Spec $spec `
                         -Unit $selectedUnitEntry.document `
                         -RepositoryMap $repoMap `
+                        -RepoMapPath $RepoMapPath `
                         -RepositoryStates @($terminalRepositoryStates.ToArray()) `
                         -ValidationMatrix @($terminalSelectorResult.validation_matrix) `
                         -ExpectedResult $checkpointResult `
@@ -2626,6 +2676,7 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 -Spec $spec `
                 -Unit $unit `
                 -RepositoryMap $repoMap `
+                -RepoMapPath $RepoMapPath `
                 -RepositoryStates $repoStatesArray `
                 -ValidationMatrix $validationMatrix `
                 -ExpectedResult $ValidationResult `
@@ -2695,11 +2746,13 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 -Spec $spec `
                 -Unit $unit `
                 -RepositoryMap $repoMap `
+                -RepoMapPath $RepoMapPath `
                 -RepositoryStates $repoStatesArray `
                 -ValidationMatrix $validationMatrix `
                 -ExpectedResult $ValidationResult `
                 -ExpectedTier $ValidationTier `
-                -ExpectedExecutionNonce $authorityNonce
+                -ExpectedExecutionNonce $authorityNonce `
+                -BootstrapAuthority ([ref]$recordBootstrapAuthority)
             $validatedReceiptPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $resolvedWorkspace -ReceiptReference $ValidationReceipt
             if((Get-MorphospaceFileSha256 $validatedReceiptPath)-cne$consumedReceiptRaw){throw 'Validation receipt changed while its native predicate ran.'}
             if($null-ne$normalValidationConsumptionArguments){Assert-MorphospaceNormalValidationConsumedReceipt -SelectorArguments $normalValidationConsumptionArguments -ExpectedSelection $selectorResult.state_binding -ReceiptReference $ValidationReceipt -ExpectedReceiptSha256 $consumedReceiptRaw}
@@ -2729,6 +2782,21 @@ function Invoke-MorphospaceWorkUnitAutomation {
                 } else {
                     $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "validation-pass" -Timestamp $Timestamp -EventType "validation" -Summary "Recorded passing validation; acceptance remains a separate explicit transition." -Receipts @($ValidationReceipt)
                 }
+                if ($null -ne $recordBootstrapAuthority) {
+                    # The ledger owns only absent targets. Preserve the producer
+                    # input and make an exact native-owned copy authoritative;
+                    # keeping its directory preserves relative artifact paths.
+                    $receiptDirectory = [IO.Path]::GetDirectoryName($ValidationReceipt)
+                    $retainedPrefix = if ($receiptDirectory) { $receiptDirectory.Replace('\', '/') + '/' } else { '' }
+                    $retainedReference = $retainedPrefix + "$([string]$event.event_id)-retained-validation.json"
+                    $state.validation_checkpoint.receipt = $retainedReference
+                    $event.receipts = @($ValidationReceipt, $retainedReference)
+                    $bootstrapValidationReceiptArtifact = [pscustomobject]@{
+                        source_path = $validatedReceiptPath
+                        path = $retainedReference
+                        sha256 = $consumedReceiptRaw
+                    }
+                }
             }
         }
         "Accept" {
@@ -2744,10 +2812,12 @@ function Invoke-MorphospaceWorkUnitAutomation {
                     -Spec $spec `
                     -Unit $unit `
                     -RepositoryMap $repoMap `
+                    -RepoMapPath $RepoMapPath `
                     -RepositoryStates $repoStatesArray `
                     -ValidationMatrix $validationMatrix `
                     -ExpectedResult "pass" `
-                    -ExpectedTier ([string]$state.validation_checkpoint.tier)
+                    -ExpectedTier ([string]$state.validation_checkpoint.tier) `
+                    -BootstrapAuthority ([ref]$acceptBootstrapAuthority)
                 if((Get-MorphospaceFileSha256 (Resolve-MorphospaceReceiptPath -WorkspaceRoot $resolvedWorkspace -ReceiptReference ([string]$state.validation_checkpoint.receipt)))-cne$consumedReceiptRaw){throw 'Validation receipt changed while its native predicate ran.'}
                 if($null-ne$normalValidationConsumptionArguments){Assert-MorphospaceNormalValidationConsumedReceipt -SelectorArguments $normalValidationConsumptionArguments -ExpectedSelection $selectorResult.state_binding -ReceiptReference ([string]$state.validation_checkpoint.receipt) -ExpectedReceiptSha256 $consumedReceiptRaw}
                 Test-MorphospaceInstructionCompletion -Unit $unit
@@ -2763,6 +2833,24 @@ function Invoke-MorphospaceWorkUnitAutomation {
                     $nextReady = @(Get-MorphospaceNextReadyUnit -UnitMap $unitMap)
                     $state.next_ready_unit = if ($nextReady.Count -gt 0) { [string]$nextReady[0] } else { $null }
                     $event = New-MorphospaceEvent -State $state -Events $events -UnitId $UnitId -ActionSlug "accepted" -Timestamp $Timestamp -EventType "state-transition" -Summary "Accepted the unit after passing validation and instruction synchronization." -Receipts @([string]$state.validation_checkpoint.receipt)
+                    if ($null -ne $acceptBootstrapAuthority) {
+                        # Accepted history authenticates its Accept transaction.
+                        # Bind the final authoritative bytes in that transaction
+                        # while preserving the producer and Record inputs.
+                        $acceptedInputReference = [string]$state.validation_checkpoint.receipt
+                        $acceptedInputPath = Resolve-MorphospaceReceiptPath -WorkspaceRoot $resolvedWorkspace -ReceiptReference $acceptedInputReference
+                        $acceptedDirectory = [IO.Path]::GetDirectoryName($acceptedInputReference)
+                        $acceptedPrefix = if ($acceptedDirectory) { $acceptedDirectory.Replace('\', '/') + '/' } else { '' }
+                        $acceptedReference = $acceptedPrefix + "$([string]$event.event_id)-retained-validation.json"
+                        $state.validation_checkpoint.receipt = $acceptedReference
+                        $state.last_accepted_receipt = $acceptedReference
+                        $event.receipts = @($acceptedInputReference, $acceptedReference)
+                        $acceptedBootstrapValidationArtifact = [pscustomobject]@{
+                            source_path = $acceptedInputPath
+                            path = $acceptedReference
+                            sha256 = $consumedReceiptRaw
+                        }
+                    }
                 }
             }
         }
@@ -3088,6 +3176,12 @@ function Invoke-MorphospaceWorkUnitAutomation {
     if ($Execute -and $Action -ceq 'ReturnToActive' -and $null -ne $retainedValidationArtifact) {
         $transitionArtifacts = @($retainedValidationArtifact)
     }
+    if ($Execute -and $Action -ceq 'RecordValidation' -and $null -ne $bootstrapValidationReceiptArtifact) {
+        $transitionArtifacts = @($bootstrapValidationReceiptArtifact)
+    }
+    if ($Execute -and $Action -ceq 'Accept' -and $null -ne $acceptedBootstrapValidationArtifact) {
+        $transitionArtifacts = @($acceptedBootstrapValidationArtifact)
+    }
     $transitionOwnsOutPath = $false
     if ($Execute -and $event) {
         $state.last_event_id = [string]$event.event_id
@@ -3175,6 +3269,12 @@ function Invoke-MorphospaceWorkUnitAutomation {
             $transitionArguments.ExpectedEventTailId = $transitionEventSnapshot.event_tail_id
             $transitionArguments.ExpectedEventsSha256 = [string]$transitionEventSnapshot.events_sha256
             $transitionArguments.ExpectedEventsLength = [int64]$transitionEventSnapshot.events_length
+        }
+        if ($Action -ceq 'RecordValidation' -and $null -ne $recordBootstrapAuthority) {
+            Assert-MorphospaceBootstrapValidationObservation -Authority $recordBootstrapAuthority
+        }
+        if ($Action -ceq 'Accept' -and $null -ne $acceptBootstrapAuthority) {
+            Assert-MorphospaceBootstrapValidationObservation -Authority $acceptBootstrapAuthority
         }
         Start-MorphospaceTransitionLedger @transitionArguments | Out-Null
     }
