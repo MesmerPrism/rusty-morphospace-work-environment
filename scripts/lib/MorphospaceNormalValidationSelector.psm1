@@ -111,12 +111,20 @@ function Resolve-MorphospaceNormalValidationSelector {
         [Parameter(Mandatory = $true)][object[]]$DeclaredValidationMatrix,
         [Parameter(Mandatory = $true)][string]$Action,
         [Parameter(Mandatory = $true)][string]$ValidationTier,
-        [object]$BoundSelection = $null
+        [object]$BoundSelection = $null,
+        [string]$ConsumedValidationReceipt = '',
+        [string]$ExpectedConsumedValidationReceiptSha256 = ''
     )
 
     $consumptionActions = @('ReturnToActive', 'RecordValidation', 'Accept')
     $evidencePhase = if ($Action -ceq 'BeginValidation') { 'dispatch' } elseif ($Action -cin $consumptionActions) { 'consumption' } else { '' }
     if (-not $evidencePhase) { throw 'A normal-validation selector is valid only for BeginValidation or a receipt-consuming validation lifecycle action.' }
+    if ($ConsumedValidationReceipt -or $ExpectedConsumedValidationReceiptSha256) {
+        if ($evidencePhase -cne 'consumption' -or $null -eq $BoundSelection -or -not $ConsumedValidationReceipt -or
+            $ExpectedConsumedValidationReceiptSha256 -cnotmatch '^[0-9a-f]{64}$') {
+            throw 'Final normal-validation consumption requires the exact native-consumed receipt path/raw binding and selected tuple.'
+        }
+    }
     if ($ExpectedSelectorSha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'Expected normal-validation selector SHA-256 is required in lowercase hexadecimal.' }
     if ($SelectorReference -cnotmatch '^validation-authority/selectors/[a-z0-9][a-z0-9-]{1,127}\.json$') {
         throw 'Normal-validation selectors must be exact files under validation-authority/selectors/.'
@@ -306,6 +314,18 @@ function Resolve-MorphospaceNormalValidationSelector {
         }
     })
 
+    # Dispatch and the fixed producer authenticate live frozen source here.
+    # Consumption first resolves selector/evidence obligations; its native owner
+    # runs the complete receipt predicate before this final exact-file handoff.
+    if ($declaredTier -and ($evidencePhase -ceq 'dispatch' -or $ConsumedValidationReceipt)) {
+        $frozenOwner=Import-Module (Join-Path $PSScriptRoot '../CandidateFreeze.psm1') -PassThru
+        &$frozenOwner {param($w,$u,$selectorReference,$selectorRaw,$receiptReference,$receiptRaw)
+            $candidate=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $w ([string]$u.candidate_freeze.receipt_path) -RequireLeaf)
+            $transition=Get-CandidateRevisionTransition $w "$([string]$candidate.freeze_id)-recorded" ([string]$u.unit_id)
+            $inputs=[pscustomobject]@{selector_path=$selectorReference;selector_sha256=$selectorRaw;consumed_receipt_path=$receiptReference;consumed_receipt_sha256=$receiptRaw}
+            Assert-MorphospaceCandidateRepositoryClosure $w $candidate $u $transition -PlanningInputs $inputs
+        } $workspace $Unit $SelectorReference $selectorSha256 $ConsumedValidationReceipt $ExpectedConsumedValidationReceiptSha256
+    }
     return [pscustomobject][ordered]@{
         selector_id = [string]$selector.selector_id
         selector_path = $SelectorReference
@@ -349,12 +369,6 @@ function Get-MorphospaceDeclaredTierProducer {
     $root = [IO.Path]::GetFullPath([string]$observation.resolver.executor_root)
     $path = Resolve-MorphospaceSelectorWorkspacePath -WorkspaceRoot $root -RelativePath $relative -RequireLeaf
     if ((Get-MorphospaceFileSha256 $path) -cne [string]$entries[0].sha256) { throw 'Declared-tier producer raw bytes drifted.' }
-    $frozenOwner=Import-Module (Join-Path $PSScriptRoot '../CandidateFreeze.psm1') -PassThru
-    &$frozenOwner {param($w,$u,$pointer)
-        $candidate=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $w ([string]$pointer.receipt_path) -RequireLeaf)
-        $transition=Get-CandidateRevisionTransition $w "$([string]$candidate.freeze_id)-recorded" ([string]$u.unit_id)
-        Assert-MorphospaceCandidateRepositoryClosure $w $candidate $u $transition
-    } $WorkspaceRoot $Unit $Unit.candidate_freeze
     return [pscustomobject]@{producer_path=$path;context=$observation.document;binding=$observation.binding;executor_root=$root}
 }
 
