@@ -753,7 +753,11 @@ function Test-MorphospaceFrozenCandidate {
     Assert-MorphospaceFrozenCandidateScope $candidate $liveUnit
     $liveUnit|Add-Member -NotePropertyName candidate_freeze -NotePropertyValue $marker -Force
     $frozenTransition=Get-MorphospaceFrozenCandidateTransition $workspace $candidate $state $liveUnit ([string]$freeze.receipt_path)
-    if([string]$candidate.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v3'){Assert-MorphospaceCandidateRevisionRecoveryBindings $workspace $frozenTransition.intent}
+    # The revision's immutable intent/predecessor/projection proof is shared.
+    # This caller independently checks live authority above and frozen source,
+    # exact prospective selector inputs and ledger tail below. Standalone
+    # recovery/replay keeps its full live, committed-input-only predicate.
+    if([string]$candidate.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v3'){Assert-MorphospaceCandidateRevisionRecoveryBindings $workspace $frozenTransition.intent -Historical}
     if($null-eq$PlanningInputs-and$null-ne$toolingProjection){$PlanningInputs=[pscustomobject]@{selector_path='';selector_sha256='';consumed_receipt_path='';consumed_receipt_sha256=''}}
     Assert-MorphospaceCandidateRepositoryClosure $workspace $candidate $liveUnit $frozenTransition -PlanningInputs $PlanningInputs
     $eventLines=@(Get-Content -LiteralPath (Resolve-MorphospaceWorkspacePath $workspace 'iteration-events.jsonl' -RequireLeaf)|Where-Object{$_})

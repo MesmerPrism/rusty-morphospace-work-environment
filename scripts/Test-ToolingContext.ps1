@@ -294,12 +294,34 @@ function Assert-TCSourceMismatchSandbox([string]$Harness,[string]$Repository){
 }
 function Invoke-Upgrade([object]$Fixture,[string]$RequestPath,[string]$Fault='none',[string]$Timestamp='2026-09-15T09:00:00.0000000Z'){Invoke-MorphospaceUpgradeToolingContext -WorkspaceRoot $Fixture.workspace -UnitId 'u002' -ToolingContextUpgrade $RequestPath -ExpectedToolingContextUpgradeSha256 (FileHash $RequestPath) -OutPath (Join-Path $Fixture.workspace "receipts/$([string](Read-TC $RequestPath).upgrade_id)-tooling-context-upgrade-request.json") -Timestamp $Timestamp -Execute -FaultAfter $Fault}
 function WorkspaceFingerprint([string]$Workspace){Canonical @(Get-ChildItem $Workspace -Recurse -File|Sort-Object FullName|ForEach-Object{[pscustomobject]@{p=$_.FullName.Substring($Workspace.Length).Replace('\','/');h=FileHash $_.FullName}})}
-function Assert-TCNestedPublicRefusal([scriptblock]$Action,[string]$Expected,[string]$Name){
- $before=WorkspaceFingerprint $nonpassWorkspace;$ledgerBefore=FileHash (Join-Path $nonpassWorkspace 'iteration-events.jsonl');$message=''
- try{&$Action|Out-Null}catch{$message=$_.Exception.Message}
- Assert-TC ($message-like$Expected-and$message-notlike'*not recognized*') "nested $Name refuses at its owning guard: $message"
- Assert-TC ((WorkspaceFingerprint $nonpassWorkspace)-ceq$before-and(FileHash (Join-Path $nonpassWorkspace 'iteration-events.jsonl'))-ceq$ledgerBefore) "nested $Name refusal leaves owner bytes and ledger unchanged"
- $script:NestedPublicRefusals++
+function Assert-TCNestedPublicRefusal([scriptblock]$Action,[string]$Expected,[string]$Name,[switch]$DoNotCount){
+ # Diagnostics are sibling harness output, never selected owner/source input.
+ $diagnostics=Join-Path ([IO.Path]::GetFullPath($HarnessRoot)) 'refusal-diagnostics'
+ $comparison=if($IsWindows){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
+ foreach($protectedRoot in @($nonpassWorkspace,$tool)+@((Read-TC $nonpassMap).repositories|ForEach-Object{[string]$_.path})){
+  $protected=[IO.Path]::GetFullPath($protectedRoot).TrimEnd('\','/')
+  Assert-TC (-not$diagnostics.Equals($protected,$comparison)-and-not$diagnostics.StartsWith($protected+[IO.Path]::DirectorySeparatorChar,$comparison)) 'refusal diagnostics remain outside every mapped repository and tool root'
+ }
+ [IO.Directory]::CreateDirectory($diagnostics)|Out-Null
+ $base=Join-Path $diagnostics ([guid]::NewGuid().ToString('N'))
+ $beforeRows=@(Get-ChildItem -LiteralPath $nonpassWorkspace -Recurse -File|Sort-Object FullName|ForEach-Object{[pscustomobject]@{p=$_.FullName.Substring($nonpassWorkspace.Length).Replace('\','/');h=FileHash $_.FullName}})
+ $before=Canonical $beforeRows;$ledgerBefore=FileHash (Join-Path $nonpassWorkspace 'iteration-events.jsonl')
+ $beforePath=$base+'.before.json';Write-TC $beforePath $beforeRows
+ $caught=$null;$message=''
+ try{&$Action|Out-Null}catch{$caught=$_;$message=$_.Exception.Message}
+ # Write bounded primitive error fields before any later observation/assertion.
+ # Reflective ErrorRecord/Exception graphs are deliberately never serialized.
+ $errorPath=$base+'.error.json'
+ Write-TC $errorPath ([ordered]@{name=$Name;expected_pattern=$Expected;refused=($null-ne$caught);actual_message=$message;exception_type=$(if($null-ne$caught){$caught.Exception.GetType().FullName}else{$null});exception_text=$(if($null-ne$caught){$caught.Exception.ToString()}else{$null});script_stack_trace=$(if($null-ne$caught){$caught.ScriptStackTrace}else{$null});position_message=$(if($null-ne$caught){$caught.InvocationInfo.PositionMessage}else{$null});fully_qualified_error_id=$(if($null-ne$caught){$caught.FullyQualifiedErrorId}else{$null});category=$(if($null-ne$caught){$caught.CategoryInfo.ToString()}else{$null})})
+ $afterRows=@(Get-ChildItem -LiteralPath $nonpassWorkspace -Recurse -File|Sort-Object FullName|ForEach-Object{[pscustomobject]@{p=$_.FullName.Substring($nonpassWorkspace.Length).Replace('\','/');h=FileHash $_.FullName}})
+ $after=Canonical $afterRows;$ledgerAfter=FileHash (Join-Path $nonpassWorkspace 'iteration-events.jsonl')
+ $afterPath=$base+'.after.json';Write-TC $afterPath $afterRows
+ Write-TC ($base+'.json') ([ordered]@{name=$Name;expected_pattern=$Expected;refused=($null-ne$caught);actual_message=$message;error=[ordered]@{path=$errorPath;sha256=FileHash $errorPath};before_inventory=[ordered]@{path=$beforePath;sha256=FileHash $beforePath};after_inventory=[ordered]@{path=$afterPath;sha256=FileHash $afterPath};workspace_before=$before;workspace_after=$after;ledger_before=$ledgerBefore;ledger_after=$ledgerAfter})
+ Assert-TC ($null-ne$caught) "nested $Name must refuse; diagnostic: $base.json"
+ Assert-TC ($message-like$Expected-and$message-notlike'*not recognized*') "nested $Name refuses at its owning guard: $message; diagnostic: $base.json"
+ Assert-TC ($after-ceq$before) "nested $Name refusal leaves owner bytes unchanged; diagnostic: $base.json"
+ Assert-TC ($ledgerAfter-ceq$ledgerBefore) "nested $Name refusal leaves ledger unchanged; diagnostic: $base.json"
+ if(-not$DoNotCount){$script:NestedPublicRefusals++}
 }
 
 # Focused producer regression, also consumed by the existing registered
@@ -844,10 +866,8 @@ if($validatingUpgradeFixture){
   }finally{[IO.File]::WriteAllBytes($pendingStatePath,$pendingStateBytes)}
   $pendingNeighbor=Join-Path $nonpassWorkspace 'receipts/pending-neighbor.json'
   try{
-   Write-TC $pendingNeighbor ([ordered]@{scope='Unrelated neighboring control input at genuine interrupted recovery boundary.'})
-   $before=WorkspaceFingerprint $nonpassWorkspace;$message=''
-   try{&$run @validatingArgs -Action FreezeCandidate @revisionArgs -Execute|Out-Null}catch{$message=$_.Exception.Message}
-   Assert-TC ($message-like'*Self-hosted planning*dirt*'-and(WorkspaceFingerprint $nonpassWorkspace)-ceq$before) 'pending linked Freeze rejects neighboring untracked input without writes'
+   Write-TC $pendingNeighbor ([ordered]@{schema='fixture.unrelated-control.v1';scope='Unrelated neighboring control input at genuine interrupted recovery boundary.'})
+   Assert-TCNestedPublicRefusal {&$run @validatingArgs -Action FreezeCandidate @revisionArgs -Execute|Out-Null} '*Self-hosted planning*dirt*' 'pending linked Freeze rejects neighboring untracked input without writes' -DoNotCount
   }finally{if([IO.File]::Exists($pendingNeighbor)){Remove-Item -LiteralPath $pendingNeighbor -Force}}
   $null=&$run @validatingArgs -Action FreezeCandidate @revisionArgs -Execute
   $replayedBefore=WorkspaceFingerprint $nonpassWorkspace;$null=&$run @validatingArgs -Action FreezeCandidate @revisionArgs -Execute
@@ -874,6 +894,13 @@ if($validatingUpgradeFixture){
  Write-TC (Join-Path $nonpassWorkspace $selectorRelative) $selector
  $selectorArgs=@{ValidationSelector=$selectorRelative;ExpectedValidationSelectorSha256=FileHash (Join-Path $nonpassWorkspace $selectorRelative);ValidationEvidencePath=$evidencePath}
  if($nestedPlanning){
+  # A validated prospective selector may be uncommitted for Begin. Direct
+  # completed Freeze replay still admits only committed selection/checkpoint
+  # inputs; it must not borrow Begin's independent input authentication.
+  Assert-TC ((GitScalar $seed.source_repository @('ls-files','--others','--exclude-standard','--',"morphospace/$selectorRelative"))-ceq"morphospace/$selectorRelative") 'genuine prospective selector remains untracked at native active Begin'
+  Assert-TCNestedPublicRefusal {&$run @validatingArgs -Action FreezeCandidate @revisionArgs -Execute|Out-Null} '*Self-hosted planning repository dirt is outside the exact authenticated control closure:*validation-authority/selectors/u002-standard-current.json' 'standalone completed Freeze cannot consume a prospective unbound selector' -DoNotCount
+ }
+ if($nestedPlanning){
   $script:NestedPublicRefusals=0
   Assert-TC ([IO.Path]::GetFullPath($nonpassWorkspace).StartsWith([IO.Path]::GetFullPath($seed.source_repository).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) 'full Standard consumer retains actual nested planning authority'
   $planningRootComparison=if($IsWindows){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
@@ -898,7 +925,7 @@ if($validatingUpgradeFixture){
    try{
     [IO.File]::AppendAllText($damagePath,' ',[Text.UTF8Encoding]::new($false))
     if($damage-ceq'completion-raw'){$bad=Read-TC $damagePath;$bad.intent.sha256='0'*64;Write-TC $damagePath $bad}
-    $pattern=switch($damage){'freeze-raw'{'*freeze*receipt*bytes*drift*'};'compatibility-raw'{'*compatibility receipt*'};default{'*completion*'}}
+    $pattern=switch($damage){'freeze-raw'{'Transition ledger committed artifact differs from its intent: receipts/u002-linked-correction.json'};'compatibility-raw'{'*compatibility receipt*'};default{'*completion*'}}
     Assert-TCNestedPublicRefusal {&$run @validatingArgs @selectorArgs -Action BeginValidation -Timestamp '2026-09-15T09:01:10.0000000Z'} $pattern $damage
    }finally{[IO.File]::WriteAllBytes($damagePath,$original)}
   }
@@ -935,10 +962,11 @@ if($validatingUpgradeFixture){
    foreach($damage in @('missing','failed','command','artifact')){
     $bad=Clone $goodReceipt;$row=@($bad.$collection|Where-Object{[string]$_.$idProperty-ceq$id})[0]
     switch($damage){'missing'{$bad.$collection=@($bad.$collection|Where-Object{[string]$_.$idProperty-cne$id})};'failed'{$row.status='fail'};'command'{$row.command='Caller substitute'};'artifact'{$row.evidence_refs=@('absent-artifact')}}
-    $damagePath=Join-Path $nonpassWorkspace 'receipts/obligation-damage.json';Write-TC $damagePath $bad;$message=''
-    try{&$automationModule {param($w,$u,$matrix)Test-MorphospaceValidationReceipt -WorkspaceRoot $w -ReceiptReference 'receipts/obligation-damage.json' -Spec (Read-MorphospaceProtocolJson (Join-Path $w 'project.spec.json')) -Unit $u -RepositoryMap @{} -RepositoryStates @([pscustomobject]@{repo_id='unreached-negative-fixture';available=$true;is_git=$false}) -ValidationMatrix $matrix -ExpectedResult pass -ExpectedTier standard} $nonpassWorkspace $current $matrix|Out-Null}catch{$message=$_.Exception.Message}
+    $damagePath=Join-Path $nonpassWorkspace 'receipts/obligation-damage.json';Write-TC $damagePath $bad
     $pattern=switch($damage){'missing'{'*does not cover the exact*set*'};'failed'{'*non-passing*'};'command'{'*command drifted*'};'artifact'{'*unknown artifact*'}}
-    try{Assert-TC ($message-like$pattern) "Standard $collection/$id/$damage preserves exact obligation"}finally{if([IO.File]::Exists($damagePath)){Remove-Item -LiteralPath $damagePath -Force}}
+    try{
+     Assert-TCNestedPublicRefusal {&$automationModule {param($w,$u,$matrix)Test-MorphospaceValidationReceipt -WorkspaceRoot $w -ReceiptReference 'receipts/obligation-damage.json' -Spec (Read-MorphospaceProtocolJson (Join-Path $w 'project.spec.json')) -Unit $u -RepositoryMap @{} -RepositoryStates @([pscustomobject]@{repo_id='unreached-negative-fixture';available=$true;is_git=$false}) -ValidationMatrix $matrix -ExpectedResult pass -ExpectedTier standard} $nonpassWorkspace $current $matrix|Out-Null} $pattern "Standard $collection/$id/$damage preserves exact obligation" -DoNotCount
+    }finally{if([IO.File]::Exists($damagePath)){Remove-Item -LiteralPath $damagePath -Force}}
    }
   }
  }
@@ -955,9 +983,8 @@ if($validatingUpgradeFixture){
  }
  $null=&$run @validatingArgs @selectorArgs -Action RecordValidation -ValidationReceipt 'receipts/post-upgrade-pass.json' -ValidationResult pass -Timestamp '2026-09-15T09:03:00.0000000Z' -Execute
  Write-TCPhase 'validating-fresh-validation-recorded'
- $recordedUnit=Read-TC (Join-Path $nonpassWorkspace 'iteration-units/u002.json');$recordedState=Read-TC (Join-Path $nonpassWorkspace 'workspace.state.json');$denied=$false
- try{&$upgradeModule {param($w,$u,$st)Assert-ToolingUpgradeValidatingSlot $w $u $st u002} $nonpassWorkspace $recordedUnit $recordedState|Out-Null}catch{$denied=$true}
- Assert-TC $denied 'recorded validation cannot enter the pre-record upgrade slot'
+ $recordedUnit=Read-TC (Join-Path $nonpassWorkspace 'iteration-units/u002.json');$recordedState=Read-TC (Join-Path $nonpassWorkspace 'workspace.state.json')
+ Assert-TCNestedPublicRefusal {&$upgradeModule {param($w,$u,$st)Assert-ToolingUpgradeValidatingSlot $w $u $st u002} $nonpassWorkspace $recordedUnit $recordedState|Out-Null} 'Validating tooling upgrade requires an immediate same-unit Freeze and BeginValidation before recorded validation.' 'recorded validation cannot enter the pre-record upgrade slot' -DoNotCount
  Test-MorphospaceHistoricalToolingContextUpgrade $nonpassWorkspace $upgradeEvent|Out-Null
  if($nestedPlanning){
   $unrelatedReceipt=Join-Path $nonpassWorkspace 'receipts/unrelated-after-record.json'
