@@ -82,6 +82,69 @@ try {
     Write-Json -Path $projectPath -Value $project
     & (Join-Path $PSScriptRoot "Resolve-FeatureLock.ps1") -ProjectSpecPath $projectPath -DescriptorPaths @($kernelPath, $appPath) -OutPath $lockPath -LockRevision 3 -GeneratedAt "2026-01-02T03:04:05Z" -Execute | Out-Null
     $lock = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
+    # The retained native initial golden lock uses a legacy ordered fingerprint. Public
+    # protocol serialization sorts its object keys but preserves its meaning.
+    $initialPath=Join-Path $RepoRoot 'examples/hello-morphospace-v2/morphospace/feature.lock.json'
+    $initialRaw=Get-MorphospaceFileSha256 $initialPath
+    $initial=Read-MorphospaceProtocolJson $initialPath
+    $initialBefore=$initial|ConvertTo-Json -Depth 48 -Compress
+    Assert-FeatureLock ([string]$initial.lock_fingerprint-ceq'7811b69fc171fd85dc4214da62618bcbdc02ad7d3b1e9eb430317fe4025be8d4'-and($initial.PSObject.Properties.Name-join',')-ceq'$schema,schema,project_id,project_revision,revision,generated_at,resolver_version,lock_fingerprint,default_activation,activation_rule,selected_features,denied_features,features,effect_union') 'initial golden producer identity or field order changed'
+    Assert-FeatureLock (Test-MorphospaceFeatureLockFingerprint $initial) 'initial golden producer fingerprint'
+    $roundtrip=ConvertFrom-MorphospaceProtocolJsonBytes (ConvertTo-MorphospaceProtocolJsonBytes $initial)
+    $roundtripBefore=$roundtrip|ConvertTo-Json -Depth 48 -Compress
+    Assert-FeatureLock ((Get-MorphospaceCanonicalJsonSha256 $roundtrip)-ceq(Get-MorphospaceCanonicalJsonSha256 $initial)) 'initial roundtrip changed canonical identity'
+    Assert-FeatureLock (Test-MorphospaceFeatureLockFingerprint $roundtrip) 'canonical roundtrip of native initial legacy fingerprint'
+    $initialCases=@('fake-hash','schema','project-id','project-revision','revision','timestamp','resolver','activation','selected','denied','features','null-selected','null-effects','missing-root','extra-root','missing-effect','extra-effect')
+    $initialAxes=@('permissions','services','activities','queries','tools','assets','shaders','native_libraries','commands','routes','streams','inputs','scenes','markers')
+    foreach($case in @($initialCases)+@($initialAxes|ForEach-Object{'effect-'+$_})){
+        $damaged=ConvertFrom-MorphospaceProtocolJsonBytes (ConvertTo-MorphospaceProtocolJsonBytes $roundtrip)
+        switch($case){
+            'fake-hash'{$damaged.lock_fingerprint='0'*64}
+            'schema'{$damaged.schema='rusty.morphospace.workflow.feature_lock.v3'}
+            'project-id'{$damaged.project_id='other-initial-project'}
+            'project-revision'{$damaged.project_revision=2}
+            'revision'{$damaged.revision=2}
+            'timestamp'{$damaged.generated_at='1970-01-01T00:00:01Z'}
+            'resolver'{$damaged.resolver_version='rusty-morphospace-feature-resolver/3'}
+            'activation'{$damaged.default_activation='enabled'}
+            'selected'{$damaged.selected_features=@('unexpected-feature')}
+            'denied'{$damaged.denied_features=@('unexpected-feature')}
+            'features'{$damaged.features=@([pscustomobject]@{feature_id='unexpected-feature'})}
+            'null-selected'{$damaged.selected_features=$null}
+            'null-effects'{$damaged.effect_union.permissions=$null}
+            'missing-root'{$damaged.PSObject.Properties.Remove('denied_features')}
+            'extra-root'{$damaged|Add-Member unexpected 'value'}
+            'missing-effect'{$damaged.effect_union.PSObject.Properties.Remove('markers')}
+            'extra-effect'{$damaged.effect_union|Add-Member unexpected @()}
+            default{$damaged.effect_union.($case.Substring(7))=@('unexpected-effect')}
+        }
+        $damageBefore=$damaged|ConvertTo-Json -Depth 48 -Compress
+        Assert-FeatureLock (-not(Test-MorphospaceFeatureLockFingerprint $damaged)) "initial finite codec accepted stale damaged payload: $case"
+        Assert-FeatureLock (($damaged|ConvertTo-Json -Depth 48 -Compress)-ceq$damageBefore) "initial codec mutated rejected input: $case"
+    }
+    foreach($case in @('later-revision','invalid-project-id','null-project-id','numeric-project-id')){
+        $outside=$initial|ConvertTo-Json -Depth 48|ConvertFrom-Json -DateKind String
+        switch($case){
+            'later-revision'{$outside.revision=2}
+            'invalid-project-id'{$outside.project_id='Invalid_ID'}
+            'null-project-id'{$outside.project_id=$null}
+            'numeric-project-id'{$outside.project_id=42}
+        }
+        $outside.lock_fingerprint='0'*64
+        $legacyCopy=$outside|ConvertTo-Json -Depth 48|ConvertFrom-Json
+        $outside.lock_fingerprint=Get-MorphospaceSha256Bytes ([Text.UTF8Encoding]::new($false).GetBytes(($legacyCopy|ConvertTo-Json -Depth 48 -Compress)))
+        Assert-FeatureLock (Test-MorphospaceFeatureLockFingerprint $outside) "existing observed-order legacy verification changed: $case"
+        $sortedOutside=ConvertFrom-MorphospaceProtocolJsonBytes (ConvertTo-MorphospaceProtocolJsonBytes $outside)
+        $outsideBefore=$sortedOutside|ConvertTo-Json -Depth 48 -Compress
+        Assert-FeatureLock (-not(Test-MorphospaceFeatureLockFingerprint $sortedOutside)) "finite initial codec accepted correctly legacy-hashed nonproducer shape: $case"
+        Assert-FeatureLock (($sortedOutside|ConvertTo-Json -Depth 48 -Compress)-ceq$outsideBefore) "finite codec mutated nonproducer shape: $case"
+    }
+    $canonicalNonempty=ConvertFrom-MorphospaceProtocolJsonBytes (ConvertTo-MorphospaceProtocolJsonBytes $initial)
+    $canonicalNonempty.selected_features=@('canonical-feature')
+    $canonicalNonempty.lock_fingerprint=Get-MorphospaceFeatureLockFingerprint $canonicalNonempty
+    Assert-FeatureLock (Test-MorphospaceFeatureLockFingerprint $canonicalNonempty) 'canonical fingerprint behavior outside initial featureless codec changed'
+    Assert-FeatureLock (($roundtrip|ConvertTo-Json -Depth 48 -Compress)-ceq$roundtripBefore-and($initial|ConvertTo-Json -Depth 48 -Compress)-ceq$initialBefore-and(Get-MorphospaceFileSha256 $initialPath)-ceq$initialRaw) 'initial codec mutated input order or native golden producer file'
+
     Assert-FeatureLock ($lock.schema -eq "rusty.morphospace.workflow.feature_lock.v2") "schema"
     Assert-FeatureLock ((@($lock.selected_features) -join ",") -eq "feature-app,feature-kernel") "dependency closure"
     Assert-FeatureLock ($lock.default_activation -eq "disabled" -and $lock.activation_rule -eq "selected-lock-and-runtime-input") "activation rule"

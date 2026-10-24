@@ -149,9 +149,20 @@ function Get-MorphospaceDevelopmentEnvelopeContinuation {
        The preparation reader separately authenticates the immutable origin.
        No caller can supply a substituted origin, projection, or skip predicate. #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$WorkspaceRoot, [Parameter(Mandatory)][object]$Admission, [switch]$ReadOnlyReady)
+    param([Parameter(Mandatory)][string]$WorkspaceRoot, [object]$Admission=$null, [switch]$ReadOnlyReady, [string]$BootstrapUnitId='', [string]$BootstrapRepositoryMapPath='')
     $workspace = [IO.Path]::GetFullPath($WorkspaceRoot)
     $ownerRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $bootstrap=$null
+    if($BootstrapUnitId){
+        if($null-ne$Admission-or$ReadOnlyReady){throw 'Native bootstrap continuation cannot substitute an admission or Ready-only origin.'}
+        $originModule=Import-Module (Join-Path $PSScriptRoot '../DevelopmentEnvelopeProvenance.psm1') -PassThru
+        $bootstrap=&$originModule {param($w,$id,$map)Get-PreparationProvenanceBootstrapOrigin $w $id $map} $workspace $BootstrapUnitId $BootstrapRepositoryMapPath
+        $unitId=$BootstrapUnitId;$projectId=[string]$bootstrap.unit.project_id;$unitPath="iteration-units/$unitId.json"
+        $liveUnit=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace $unitPath -RequireLeaf);$liveState=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'workspace.state.json' -RequireLeaf)
+        $original=$null;$admissionProof=$null;$source=$bootstrap.source;$sourcePath=[string]$bootstrap.binding.path;$sourceSha=[string]$bootstrap.binding.raw_sha256;$mapPath=[string]$bootstrap.binding.repository_map.path;$mapSha=[string]$bootstrap.binding.repository_map.raw_sha256
+        $events=@($bootstrap.events);$admissionIndex=[int]$bootstrap.claim_index;$project=$bootstrap.project;$featureLock=$bootstrap.feature_lock;$previous=$bootstrap.claim_proof.intent;$currentUnit=$previous.target.unit.document
+        $records=@([pscustomobject]@{kind='ready';event=$bootstrap.ready_proof.intent.event;transition=$bootstrap.ready_proof},[pscustomobject]@{kind='claimed';event=$bootstrap.claim_proof.intent.event;transition=$bootstrap.claim_proof})
+    }else{
     if (-not (Test-Json -Json ($Admission | ConvertTo-Json -Depth 100) -SchemaFile (Join-Path $ownerRoot 'schemas/development-unit-admission-v1.schema.json'))) { throw 'Development continuation admission schema is invalid.' }
     $unitId = [string]$Admission.unit_id
     $projectId = [string]$Admission.project_id
@@ -184,6 +195,7 @@ function Get-MorphospaceDevelopmentEnvelopeContinuation {
     $previous = $admissionProof.intent
     $currentUnit = $previous.target.unit.document
     $records = @()
+    }
     $extensions = @()
     $toolingUpgrades = @()
     $frozen = $false

@@ -1,7 +1,7 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
+$script:SourceOnlyTransitionLedger=Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force -PassThru
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceContentObservation.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationReceipt.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'AcceptedValidationEvidenceRelocation.psm1') -Force
@@ -26,7 +26,7 @@ function Invoke-SourceOnlyGit {
     $result=Invoke-MorphospaceBoundProcessBytes -Executable $script:SourceOnlyGitExecutable.path -Arguments $safeArguments -WorkingDirectory $Repository -ExpectedExecutableSha256 $script:SourceOnlyGitExecutable.sha256 -TimeoutSeconds 30 -MaxOutputBytes 1048576 -AllowFailure:$AllowFailure
     $text=[Text.UTF8Encoding]::new($false,$true).GetString($result.stdout)
     $lines=if($text.Length-eq0){@()}else{@($text.TrimEnd("`r","`n").Split("`n")|ForEach-Object{$_.TrimEnd("`r")})}
-    return [pscustomobject]@{ code=$result.exit_code; lines=$lines }
+    return [pscustomobject]@{ code=$result.exit_code; lines=$lines; bytes=$result.stdout }
 }
 
 function Get-SourceOnlyGitValue { param([string]$Repository,[string[]]$Arguments,[string]$Context)
@@ -143,8 +143,57 @@ function Test-SourceOnlyCommittedPredecessorTransition {
     }
 }
 
+function Assert-SourceOnlyPreparedPlanningCheckpoint {
+    param([object]$Context,[object]$Plan,[string]$PlanPath,[string]$PlanningRoot,[string]$Head,[object]$PendingSuccessorIntent)
+    # A single checkpoint of the exact completed Prepare is a distinct finite
+    # branch. The original plan continues to name its accepted Git preimage.
+    $parents=(Get-SourceOnlyGitValue $PlanningRoot @('rev-list','--parents','-n','1',$Head) 'prepared planning checkpoint parents').Split(' ',[StringSplitOptions]::RemoveEmptyEntries)
+    if($parents.Count-ne2-or$parents[0]-cne$Head-or$parents[1]-cne[string]$Plan.planning_owner.head){throw 'Prepared planning checkpoint must be one direct child of the original bound planning head.'}
+    $parentTree=Get-SourceOnlyGitValue $PlanningRoot @('rev-parse',"$($parents[1])^{tree}") 'prepared planning checkpoint parent tree'
+    if($parentTree-cne[string]$Plan.planning_owner.tree){throw 'Prepared planning checkpoint original planning tree drifted.'}
+    $id="$([string]$Plan.publication_id)-source-publication-prepared-transition"
+    $prepared=Test-SourceOnlyCommittedPredecessorTransition -Context $Context -TransactionId $id -PendingSuccessorIntent $PendingSuccessorIntent
+    Assert-SourceOnlyPreparationIntentSemantics $Context $Plan $prepared.intent
+    $workspaceRelative=[IO.Path]::GetRelativePath($PlanningRoot,$Context.workspace).Replace('\','/').TrimEnd('/')
+    if($workspaceRelative-cmatch'(^|/)\.\.(/|$)'){throw 'Prepared planning checkpoint workspace escapes its planning root.'}
+    $relative=@('workspace.state.json','iteration-events.jsonl',"receipts/$([string]$Plan.publication_id)-plan.json","receipts/transactions/$id.intent.json","receipts/transactions/$id.completion.json")
+    $paths=@($relative|ForEach-Object {"$workspaceRelative/$_"})
+    $changed=@((Invoke-SourceOnlyGit $PlanningRoot @('diff','--name-only','--no-renames',$parents[1],$Head,'--') 'prepared planning checkpoint changed paths').lines)
+    Assert-SourceOnlySetEqual $paths $changed 'Prepared planning checkpoint exact native path coverage'
+    foreach($path in $paths){
+        $entry=Get-SourceOnlyGitValue $PlanningRoot @('ls-tree',$Head,'--',$path) 'prepared planning checkpoint file mode'
+        if($entry-cnotmatch('^100644 blob [0-9a-f]{40}'+"`t"+[regex]::Escape($path)+'$')){throw "Prepared planning checkpoint path is not an ordinary regular file: $path"}
+    }
+    # These immutable physical artifacts must be exactly those committed by the
+    # checkpoint, even during later Record projection/interruption/replay.
+    foreach($path in $relative[2..4]){
+        $full=Resolve-MorphospaceWorkspacePath $Context.workspace $path -RequireLeaf
+        $physicalBlob=Get-SourceOnlyGitValue $PlanningRoot @('hash-object','--no-filters','--',$full) 'prepared planning checkpoint physical artifact'
+        $committedBlob=Get-SourceOnlyGitValue $PlanningRoot @('rev-parse',"${Head}:$workspaceRelative/$path") 'prepared planning checkpoint committed artifact'
+        if($physicalBlob-cne$committedBlob){throw "Prepared planning checkpoint immutable artifact differs: $path"}
+    }
+    $artifacts=@($prepared.intent.artifacts)
+    if($artifacts.Count-ne1-or[string]$artifacts[0].path-cne$relative[2]-or[string]$artifacts[0].sha256-cne(Get-MorphospaceFileSha256 $PlanPath)){throw 'Prepared planning checkpoint does not own the exact original plan.'}
+    $encoding=[Text.UTF8Encoding]::new($false,$true)
+    foreach($row in @(@{path='workspace.state.json';hash=[string]$Plan.expected.state_sha256},@{path=$Context.unit_relative;hash=[string]$Plan.expected.unit_sha256},@{path='project.spec.json';hash=[string]$Plan.expected.project_sha256})){
+        $bytes=(Invoke-SourceOnlyGit $PlanningRoot @('cat-file','blob',"$($parents[1]):$workspaceRelative/$($row.path)") 'prepared planning checkpoint original projection').bytes
+        $document=$encoding.GetString([byte[]]$bytes)|ConvertFrom-Json -Depth 100 -DateKind String
+        if((Get-MorphospaceCanonicalJsonSha256 $document)-cne$row.hash){throw "Prepared planning checkpoint original projection differs: $($row.path)"}
+    }
+    $stateBytes=(Invoke-SourceOnlyGit $PlanningRoot @('cat-file','blob',"${Head}:$workspaceRelative/workspace.state.json") 'prepared planning checkpoint state projection').bytes
+    if((Get-MorphospaceSha256Bytes ([byte[]]$stateBytes))-cne(Get-MorphospaceSha256Bytes (ConvertTo-MorphospaceProtocolJsonBytes $prepared.intent.target.state.document))){throw 'Prepared planning checkpoint state bytes differ from the native Prepare target.'}
+    $prefix=[byte[]](Invoke-SourceOnlyGit $PlanningRoot @('cat-file','blob',"$($parents[1]):$workspaceRelative/iteration-events.jsonl") 'prepared planning checkpoint event prefix').bytes
+    if($prefix.LongLength-ne[int64]$Plan.expected.events_length-or(Get-MorphospaceSha256Bytes $prefix)-cne[string]$Plan.expected.events_sha256){throw 'Prepared planning checkpoint original event prefix differs.'}
+    # Use the ledger owner's existing exact event codec, not an alternative
+    # event serialization or caller-provided expected checkpoint hash.
+    $eventBytes=[byte[]](& $script:SourceOnlyTransitionLedger {param($event)Get-MorphospaceLedgerEventLineBytes $event} $prepared.intent.event)
+    $expectedEvents=[byte[]]::new($prefix.Length+$eventBytes.Length);[Array]::Copy($prefix,0,$expectedEvents,0,$prefix.Length);[Array]::Copy($eventBytes,0,$expectedEvents,$prefix.Length,$eventBytes.Length)
+    $committedEvents=(Invoke-SourceOnlyGit $PlanningRoot @('cat-file','blob',"${Head}:$workspaceRelative/iteration-events.jsonl") 'prepared planning checkpoint event append').bytes
+    if((Get-MorphospaceSha256Bytes ([byte[]]$committedEvents))-cne(Get-MorphospaceSha256Bytes $expectedEvents)){throw 'Prepared planning checkpoint event bytes are not the exact native Prepare append.'}
+}
+
 function Assert-SourceOnlyPlan {
-    param([object]$Context,[object]$Plan,[string]$PlanPath,[switch]$AfterPrepare,[switch]$Recovery,[object]$PendingSuccessorIntent)
+    param([object]$Context,[object]$Plan,[string]$PlanPath,[switch]$AfterPrepare,[switch]$Recovery,[object]$PendingSuccessorIntent,[object]$RecordedTransition)
     $c=$Context;$repoRoot=$c.repo_root
     if(-not(Test-Json -Json (Get-Content -Raw -LiteralPath $PlanPath) -SchemaFile (Join-Path $repoRoot 'schemas\source-only-publication-plan-v1.schema.json'))){throw 'Source-only publication plan does not satisfy its schema.'}
     if([string]$Plan.project_id-cne[string]$c.project.project_id-or[string]$Plan.trigger_unit_id-cne[string]$c.unit.unit_id){throw 'Source-only publication plan identity does not match the owner workspace.'}
@@ -186,11 +235,20 @@ function Assert-SourceOnlyPlan {
     $remotes=Invoke-SourceOnlyGit $planningRoot @('remote') 'planning remote observation'
     if(@($remotes.lines).Count-ne0){throw 'Source-only publication requires the bound planning owner to have no configured remotes.'}
     if(-not$AfterPrepare){Assert-SourceOnlyCleanGitRepository $planningRoot 'local-only planning owner'}
-    foreach($check in @(
-      @{n='planning branch';e=$Plan.planning_owner.branch;a=(Get-SourceOnlyGitValue $planningRoot @('branch','--show-current') 'planning branch observation')},
-      @{n='planning head';e=$Plan.planning_owner.head;a=(Get-SourceOnlyGitValue $planningRoot @('rev-parse','HEAD') 'planning head observation')},
-      @{n='planning tree';e=$Plan.planning_owner.tree;a=(Get-SourceOnlyGitValue $planningRoot @('rev-parse','HEAD^{tree}') 'planning tree observation')}
-    )){if([string]$check.e-cne[string]$check.a){throw "Bound $($check.n) drifted."}}
+    $branch=Get-SourceOnlyGitValue $planningRoot @('branch','--show-current') 'planning branch observation'
+    if($branch-cne[string]$Plan.planning_owner.branch){throw 'Bound planning branch drifted.'}
+    $head=Get-SourceOnlyGitValue $planningRoot @('rev-parse','HEAD') 'planning head observation'
+    $tree=Get-SourceOnlyGitValue $planningRoot @('rev-parse','HEAD^{tree}') 'planning tree observation'
+    $headParents=(Get-SourceOnlyGitValue $planningRoot @('rev-list','--parents','-n','1',$head) 'planning head parents').Split(' ',[StringSplitOptions]::RemoveEmptyEntries)
+    $singlePrepareChild=$headParents.Count-eq2-and$headParents[1]-ceq[string]$Plan.planning_owner.head
+    if($null-ne$RecordedTransition-and$head-cne[string]$Plan.planning_owner.head-and-not$singlePrepareChild){
+        if([string]$RecordedTransition.status-cne'committed'-or[string]$RecordedTransition.transaction_id-cne"$([string]$Plan.publication_id)-source-publication-recorded-transition"){throw 'Historical source-only planning proof requires its authenticated completed Record.'}
+        Assert-SourceOnlyCleanGitRepository $planningRoot 'recorded source-only planning owner'
+        [void](Get-SourceOnlyHistoricalPrepareCheckpoint $c $Plan $PlanPath $planningRoot)
+    }elseif($head-cne[string]$Plan.planning_owner.head){
+        if(-not$AfterPrepare){throw 'Bound planning head drifted.'}
+        Assert-SourceOnlyPreparedPlanningCheckpoint $c $Plan $PlanPath $planningRoot $head $PendingSuccessorIntent
+    }elseif($tree-cne[string]$Plan.planning_owner.tree){throw 'Bound planning tree drifted.'}
     if(-not$AfterPrepare){
       foreach($check in @(
         @{n='project';e=$Plan.expected.project_sha256;a=(Get-MorphospaceCanonicalJsonSha256 $c.project)},
@@ -391,7 +449,7 @@ function Assert-SourceOnlyRecoveryResult {
 }
 
 function Assert-SourceOnlyRecoveryExecution {
-    param([object]$Context,[object]$Plan,[object]$Execution)
+    param([object]$Context,[object]$Plan,[object]$Execution,[switch]$RetainedPublishedParent)
     $rows=@($Execution.source_repositories);$planned=@($Plan.source_repositories)
     if($rows.Count-ne$planned.Count){throw 'Source-only recording recovery execution source coverage differs from its plan.'}
     $priorReadback=$null
@@ -400,7 +458,10 @@ function Assert-SourceOnlyRecoveryExecution {
         foreach($name in @('dependency_ordinal','repo_id','publication_mode','old_revision','candidate_revision')){if([string]$row.$name-cne[string]$bound.$name){throw "Source-only recording recovery execution differs at ordinal $($i+1)."}}
         $mapped=@($Context.map.repositories|Where-Object{[string]$_.repo_id-ceq[string]$bound.repo_id});if($mapped.Count-ne1){throw "Source-only recording recovery source '$($bound.repo_id)' map binding drifted."}
         $sourcePath=(Resolve-Path ([string]$mapped[0].path)).Path;$remote=Get-SourceOnlyRemoteReadback $sourcePath ([string]$bound.remote_url) ([string]$bound.target_branch)
-        if([string]$row.remote_readback_revision-cne[string]$row.final_revision-or$remote-cne[string]$row.final_revision){throw "Source-only recording recovery remote readback differs for '$($bound.repo_id)'."}
+        if([string]$row.remote_readback_revision-cne[string]$row.final_revision){throw "Source-only recording recovery remote readback differs for '$($bound.repo_id)'."}
+        if($RetainedPublishedParent){
+            [void](Invoke-SourceOnlyGit $sourcePath @('merge-base','--is-ancestor',[string]$row.final_revision,$remote) 'recorded source-only retained remote ancestry')
+        }elseif($remote-cne[string]$row.final_revision){throw "Source-only recording recovery remote readback differs for '$($bound.repo_id)'."}
         $started=[DateTimeOffset]::Parse([string]$row.operation_started_at);$readback=[DateTimeOffset]::Parse([string]$row.remote_readback_at)
         if($started-lt[DateTimeOffset]::Parse([string]$Execution.started_at)-or$readback-lt$started-or$readback-gt[DateTimeOffset]::Parse([string]$Execution.finished_at)-or($null-ne$priorReadback-and$started-lt$priorReadback)){throw "Source-only recording recovery operation chronology is invalid for '$($bound.repo_id)'."};$priorReadback=$readback
         if([string]$bound.publication_mode-ceq'fast-forward'){if([string]$row.final_revision-cne[string]$bound.candidate_revision){throw "Source-only recording recovery fast-forward final revision differs for '$($bound.repo_id)'."}}
@@ -444,7 +505,9 @@ function Invoke-MorphospaceRecordSourceOnlyPublication {
      if([string]$execution.plan.path-cne"receipts/$([string]$execution.publication_id)-plan.json"-or(Get-MorphospaceFileSha256 $recoveryPlanPath)-cne[string]$execution.plan.sha256){throw 'Source-only recording recovery prepared-plan binding drifted.'}
      $recoveryPlan=Read-MorphospaceProtocolJson $recoveryPlanPath
      if([string]$recoveryPlan.publication_id-cne[string]$execution.publication_id-or[string]$recoveryPlan.project_id-cne[string]$execution.project_id-or[string]$execution.trigger_unit_id-cne$UnitId){throw 'Source-only recording recovery plan identity drifted.'}
-      Assert-SourceOnlyPlan $c $recoveryPlan $recoveryPlanPath -AfterPrepare -Recovery
+       $completedRecord=$null
+       if([IO.File]::Exists($completionPath)){$completedRecord=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $c.workspace -TransactionId $transactionId -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath $c.unit_relative -ExpectedEventsPath 'iteration-events.jsonl'}
+       Assert-SourceOnlyPlan $c $recoveryPlan $recoveryPlanPath -AfterPrepare -Recovery -PendingSuccessorIntent $recovery.intent -RecordedTransition $completedRecord
       Assert-SourceOnlyRecoveryExecution $c $recoveryPlan $execution
       Assert-SourceOnlyRecordingIntentSemantics $c $recoveryPlan $execution $recovery.intent
      if(-not[IO.File]::Exists($completionPath)){Assert-SourceOnlyRecoveryPlanningWorktree $c $recoveryPlan 'recording'}
@@ -488,4 +551,107 @@ function Invoke-MorphospaceRecordSourceOnlyPublication {
  return [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.source_only_publication_automation_receipt.v1';action='RecordSourceOnlyPublication';publication_id=$plan.publication_id;project_id=$plan.project_id;trigger_unit_id=$UnitId;executed=$Execute.IsPresent;plan=$execution.plan;execution=[ordered]@{path=$relative;sha256=$hash};event_id=$(if($Execute){$eventId}else{$null});preservation=$execution.preservation}
 }
 
-Export-ModuleMember -Function Invoke-MorphospacePrepareSourceOnlyPublication,Invoke-MorphospaceRecordSourceOnlyPublication
+function Get-SourceOnlyHistoricalPrepareCheckpoint {
+    param([object]$Context,[object]$Plan,[string]$PlanPath,[string]$PlanningRoot)
+    $head=Get-SourceOnlyGitValue $PlanningRoot @('rev-parse','HEAD') 'recorded parent planning head'
+    $chain=@((Invoke-SourceOnlyGit $PlanningRoot @('rev-list','--first-parent',$head) 'recorded parent first-parent history').lines)
+    $original=[string]$Plan.planning_owner.head
+    $positions=@(for($i=0;$i-lt$chain.Count;$i++){if([string]$chain[$i]-ceq$original){$i}})
+    if($positions.Count-ne1-or$positions[0]-lt1){throw 'Recorded source-only parent has no unique retained first-parent Prepare checkpoint.'}
+    $checkpoint=[string]$chain[$positions[0]-1]
+    Assert-SourceOnlyPreparedPlanningCheckpoint $Context $Plan $PlanPath $PlanningRoot $checkpoint $null
+    return $checkpoint
+}
+
+function Test-MorphospaceRecordedSourceOnlyPublicationParent {
+    [CmdletBinding()]
+    param([Parameter(Mandatory=$true)][string]$DescriptorPath,[Parameter(Mandatory=$true)][string]$ExpectedDescriptorSha256)
+    $observed=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $retain={param([string]$path,[string]$expected='')
+        $full=(Resolve-Path -LiteralPath $path).Path;$hash=Get-MorphospaceFileSha256 $full
+        if($expected-and$hash-cne$expected){throw 'Recorded source-only parent raw reference differs.'}
+        if($observed.ContainsKey($full)-and$observed[$full]-cne$hash){throw 'Recorded source-only parent input changed during validation.'}
+        $observed[$full]=$hash;return $full
+    }
+    $descriptorPath=&$retain $DescriptorPath $ExpectedDescriptorSha256
+    $descriptor=Read-MorphospaceProtocolJson $descriptorPath
+    if(-not(Test-Json -Json (Get-Content -Raw -LiteralPath $descriptorPath) -SchemaFile (Join-Path (Split-Path $PSScriptRoot -Parent) 'schemas/source-delivery-disposition-v1.schema.json'))-or[string]$descriptor.kind-cne'source-only-published-parent'){throw 'Invalid closed source-only published-parent descriptor.'}
+    foreach($path in @($PSCommandPath,(Join-Path (Split-Path $PSScriptRoot -Parent) 'schemas/source-delivery-disposition-v1.schema.json'),(Join-Path (Split-Path $PSScriptRoot -Parent) 'schemas/source-only-publication-plan-v1.schema.json'),(Join-Path (Split-Path $PSScriptRoot -Parent) 'schemas/source-only-publication-execution-v1.schema.json'),(Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1'),(Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1'),(Join-Path $PSScriptRoot 'lib/MorphospaceValidationReceipt.psm1'),(Join-Path $PSScriptRoot 'AcceptedValidationEvidenceRelocation.psm1'))){[void](&$retain $path)}
+    $mapPath=&$retain ([string]$descriptor.repository_map.path) ([string]$descriptor.repository_map.sha256)
+    $c=Get-SourceOnlyContext ([string]$descriptor.workspace_root) ([string]$descriptor.unit_id) $mapPath
+    foreach($path in @($c.project_path,$c.state_path,$c.unit_path,$c.events_path)){[void](&$retain $path)}
+    $planPath=&$retain ([string]$descriptor.plan.path) ([string]$descriptor.plan.sha256)
+    $executionPath=&$retain ([string]$descriptor.execution.path) ([string]$descriptor.execution.sha256)
+    $plan=Read-MorphospaceProtocolJson $planPath;$execution=Read-MorphospaceProtocolJson $executionPath
+    $publication=[string]$plan.publication_id;$recordId="$publication-source-publication-recorded-transition";$prepareId="$publication-source-publication-prepared-transition"
+    foreach($binding in @(
+        @{reference=$descriptor.plan;path="receipts/$publication-plan.json"},
+        @{reference=$descriptor.execution;path="receipts/$publication-execution.json"},
+        @{reference=$descriptor.record_intent;path="receipts/transactions/$recordId.intent.json"},
+        @{reference=$descriptor.record_completion;path="receipts/transactions/$recordId.completion.json"}
+    )){
+        $canonical=Resolve-MorphospaceWorkspacePath $c.workspace $binding.path -RequireLeaf
+        if([IO.Path]::GetFullPath([string]$binding.reference.path)-cne[IO.Path]::GetFullPath($canonical)){throw 'Recorded source-only parent reference is not the canonical native artifact.'}
+        [void](&$retain $canonical ([string]$binding.reference.sha256))
+    }
+    if(-not(Test-Json -Json (Get-Content -Raw -LiteralPath $executionPath) -SchemaFile (Join-Path $c.repo_root 'schemas/source-only-publication-execution-v1.schema.json'))-or
+       [string]$execution.publication_id-cne$publication-or[string]$execution.project_id-cne[string]$plan.project_id-or[string]$execution.trigger_unit_id-cne[string]$c.unit.unit_id-or
+       [string]$execution.plan.path-cne"receipts/$publication-plan.json"-or[string]$execution.plan.sha256-cne(Get-MorphospaceFileSha256 $planPath)){throw 'Recorded source-only parent execution is detached from its immutable plan.'}
+    # Authenticate the live continuation independently of this historical unit.
+    # A later genuine owner event does not have to leave Record at the tail.
+    $tailUnit="iteration-units/$([string]$c.tail.unit_id).json"
+    [void](&$retain (Resolve-MorphospaceWorkspacePath $c.workspace $tailUnit -RequireLeaf))
+    $tail=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $c.workspace -TransactionId "$([string]$c.tail.event_id)-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath $tailUnit -ExpectedEventsPath 'iteration-events.jsonl' -RequireTail
+    $record=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $c.workspace -TransactionId $recordId -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath $c.unit_relative -ExpectedEventsPath 'iteration-events.jsonl'
+    $prepared=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $c.workspace -TransactionId $prepareId -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath $c.unit_relative -ExpectedEventsPath 'iteration-events.jsonl'
+    Assert-SourceOnlyPreparationIntentSemantics $c $plan $prepared.intent
+    Assert-SourceOnlyRecordingIntentSemantics $c $plan $execution $record.intent
+    $recordedArtifacts=@($record.intent.artifacts)
+    if($recordedArtifacts.Count-ne1-or[string]$recordedArtifacts[0].path-cne"receipts/$publication-execution.json"-or[string]$recordedArtifacts[0].sha256-cne(Get-MorphospaceFileSha256 $executionPath)){throw 'Recorded source-only parent native transaction does not own its exact execution.'}
+    # The immutable Prepare project is the original publication domain. Current
+    # project/state are separately authenticated above, never relabelled as it.
+    $historical=[pscustomobject]@{}
+    foreach($property in $c.PSObject.Properties){$historical|Add-Member -NotePropertyName $property.Name -NotePropertyValue $property.Value}
+    $historical.project=$prepared.intent.additional_projections[0].document
+    $planningRows=@($c.map.repositories|Where-Object{[string]$_.role-ceq'planning'-and[string]$_.repo_id-ceq[string]$plan.planning_owner.repo_id})
+    if($planningRows.Count-ne1){throw 'Recorded source-only parent planning map is ambiguous.'}
+    $planningRoot=(Resolve-Path ([string]$planningRows[0].path)).Path
+    Assert-SourceOnlyCleanGitRepository $planningRoot 'recorded source-only parent planning owner'
+    [void](Get-SourceOnlyHistoricalPrepareCheckpoint $historical $plan $planPath $planningRoot)
+    Assert-SourceOnlyPlan $historical $plan $planPath -AfterPrepare -Recovery -RecordedTransition $record
+    Assert-SourceOnlyRecoveryExecution $historical $plan $execution -RetainedPublishedParent
+    $selected=@($plan.source_repositories|Where-Object{[string]$_.repo_id-ceq[string]$descriptor.repo_id})
+    $published=@($execution.source_repositories|Where-Object{[string]$_.repo_id-ceq[string]$descriptor.repo_id})
+    if($selected.Count-ne1-or$published.Count-ne1){throw 'Recorded source-only parent selected source is not a unique original writable publication owner.'}
+    $remote=[string]$selected[0].remote_url
+    if($remote-cnotmatch'^(?:https://github[.]com/|git@github[.]com:)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:[.]git)?$'){throw 'Recorded source-only integration parent requires an exact GitHub repository identity.'}
+    $repository=$Matches[1];$mapped=@($c.map.repositories|Where-Object{[string]$_.repo_id-ceq[string]$descriptor.repo_id-and[string]$_.role-ceq'source'})
+    if($mapped.Count-ne1){throw 'Recorded source-only parent source map is ambiguous.'}
+    $commit=[string]$published[0].final_revision
+    $tree=Get-SourceOnlyGitValue ([string]$mapped[0].path) @('rev-parse',"$commit^{tree}") 'recorded source-only parent tree'
+    foreach($transition in @($prepared,$record,$tail)){
+        if($transition.intent.PSObject.Properties.Name-ccontains'additional_projections'){foreach($projection in @($transition.intent.additional_projections)){[void](&$retain (Resolve-MorphospaceWorkspacePath $c.workspace ([string]$projection.path) -RequireLeaf))}}
+        foreach($suffix in @('intent','completion')){[void](&$retain (Resolve-MorphospaceWorkspacePath $c.workspace "receipts/transactions/$($transition.transaction_id).$suffix.json" -RequireLeaf))}
+        foreach($artifact in @($transition.intent.artifacts)){[void](&$retain (Resolve-MorphospaceWorkspacePath $c.workspace ([string]$artifact.path) -RequireLeaf) ([string]$artifact.sha256))}
+    }
+    $accept=$plan.acceptance_transition
+    foreach($suffix in @('intent','completion')){[void](&$retain (Resolve-MorphospaceWorkspacePath $c.workspace "receipts/transactions/$($accept.transaction_id).$suffix.json" -RequireLeaf))}
+    $receiptPath=Resolve-MorphospaceWorkspacePath $c.workspace ([string]$accept.validation_receipt.path) -RequireLeaf
+    [void](&$retain $receiptPath ([string]$accept.validation_receipt.sha256));$receipt=Read-MorphospaceProtocolJson $receiptPath
+    $relocation=$null
+    if([string]$plan.expected.event_tail_id-cmatch'-accepted-evidence-relocated-[0-9]{4,}$'){
+        $relocation=Test-MorphospaceAcceptedEvidenceRelocation -WorkspaceRoot $c.workspace -RelocationId ([string]$plan.expected.event_tail_id)
+        [void](&$retain ([string]$relocation.receipt_path) ([string]$relocation.step.intent.artifacts[0].sha256))
+        foreach($suffix in @('intent','completion')){[void](&$retain (Resolve-MorphospaceWorkspacePath $c.workspace "receipts/transactions/$($plan.expected.event_tail_id)-transition.$suffix.json" -RequireLeaf))}
+    }
+    foreach($artifact in @($receipt.artifacts)){
+        $relocated=@(if($null-ne$relocation){$relocation.document.artifacts|Where-Object{[string]$_.artifact_id-ceq[string]$artifact.artifact_id}})
+        $path=if($relocated.Count-eq1){Resolve-MorphospaceWorkspacePath $c.workspace ([string]$relocated[0].local_path) -RequireLeaf}else{Resolve-SourceOnlyValidationArtifactPath $receiptPath ([string]$artifact.path) ([string]$artifact.artifact_id)}
+        [void](&$retain $path ([string]$artifact.sha256))
+    }
+    foreach($evidence in @($plan.validation_evidence)){[void](&$retain (Resolve-MorphospaceWorkspacePath $c.workspace ([string]$evidence.path) -RequireLeaf) ([string]$evidence.sha256))}
+    foreach($entry in @($observed.GetEnumerator())){if((Get-MorphospaceFileSha256 $entry.Key)-cne$entry.Value){throw 'Recorded source-only parent raw input changed before return.'}}
+    return [pscustomobject]@{provenance_kind='recorded-source-only-publication';merge_commit=$commit;merge_tree=$tree;source_reference=[pscustomobject]@{repo_id=[string]$descriptor.repo_id};publication_subject=[pscustomobject]@{repository=$repository};observed=@($observed.GetEnumerator()|Sort-Object Key|ForEach-Object{[pscustomobject]@{path=$_.Key;sha256=$_.Value}})}
+}
+
+Export-ModuleMember -Function Invoke-MorphospacePrepareSourceOnlyPublication,Invoke-MorphospaceRecordSourceOnlyPublication,Test-MorphospaceRecordedSourceOnlyPublicationParent

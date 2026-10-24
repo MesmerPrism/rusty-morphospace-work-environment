@@ -15,6 +15,15 @@
     },
     {
       "$ref": "#/$defs/landing"
+    },
+    {
+      "$ref": "#/$defs/computation_request"
+    },
+    {
+      "$ref": "#/$defs/computation"
+    },
+    {
+      "$ref": "#/$defs/source_only_published_parent"
     }
   ],
   "$defs": {
@@ -118,7 +127,8 @@
         "kind": {
           "enum": [
             "same-source",
-            "reviewed-port"
+            "reviewed-port",
+            "reviewed-integration"
           ]
         },
         "review": {
@@ -246,6 +256,9 @@
         },
         "publication_map": {
           "$ref": "#/$defs/raw"
+        },
+        "integration": {
+          "$ref": "#/$defs/integration"
         }
       },
       "allOf": [
@@ -287,6 +300,52 @@
                 "properties": {
                   "scope": {
                     "const": "accepted-source-owner-source-only"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "consumer": {
+                "properties": {
+                  "boundary_kind": {
+                    "const": "accepted-source-owner-reviewed-integration"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "integration"
+            ],
+            "properties": {
+              "relationship": {
+                "properties": {
+                  "kind": {
+                    "const": "reviewed-integration"
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "not": {
+              "required": [
+                "integration"
+              ]
+            },
+            "properties": {
+              "relationship": {
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "same-source",
+                      "reviewed-port"
+                    ]
                   }
                 }
               }
@@ -575,8 +634,473 @@
         },
         {
           "$ref": "#/$defs/accepted_owner"
+        },
+        {
+          "$ref": "#/$defs/accepted_integration_owner"
         }
       ]
+    },
+    "accepted_integration_owner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_id",
+        "unit_id",
+        "state_raw_sha256",
+        "unit_raw_sha256",
+        "events_raw_sha256",
+        "repository_map",
+        "workspace_root",
+        "boundary_kind",
+        "accept_event_id",
+        "accept_receipt"
+      ],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{1,191}$"
+        },
+        "unit_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{1,191}$"
+        },
+        "state_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "unit_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "events_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "repository_map": {
+          "$ref": "#/$defs/raw"
+        },
+        "workspace_root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "boundary_kind": {
+          "const": "accepted-source-owner-reviewed-integration"
+        },
+        "accept_event_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{1,191}$"
+        },
+        "accept_receipt": {
+          "$ref": "#/$defs/raw"
+        }
+      }
+    },
+    "integration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "published_landing",
+        "computation",
+        "computation_original"
+      ],
+      "properties": {
+        "published_landing": {
+          "$ref": "#/$defs/raw"
+        },
+        "computation": {
+          "$ref": "#/$defs/raw"
+        },
+        "computation_original": {
+          "$ref": "#/$defs/raw"
+        }
+      }
+    },
+    "computation_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "kind",
+        "consumer",
+        "source_reference",
+        "publication_subject",
+        "publication_map",
+        "published_landing"
+      ],
+      "properties": {
+        "schema": {
+          "const": "rusty.morphospace.workflow.source_delivery_disposition.v1"
+        },
+        "kind": {
+          "const": "integration-computation-request"
+        },
+        "consumer": {
+          "$ref": "#/$defs/accepted_integration_owner"
+        },
+        "source_reference": {
+          "$ref": "#/$defs/identity"
+        },
+        "publication_subject": {
+          "$ref": "#/$defs/subject"
+        },
+        "publication_map": {
+          "$ref": "#/$defs/raw"
+        },
+        "published_landing": {
+          "$ref": "#/$defs/raw"
+        }
+      }
+    },
+    "native_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "revision",
+        "arguments",
+        "environment",
+        "git",
+        "stdin",
+        "stdout",
+        "stderr",
+        "started_utc",
+        "finished_utc",
+        "exit_code",
+        "stdout_eof",
+        "stderr_eof",
+        "process_reaped",
+        "observer_errors"
+      ],
+      "properties": {
+        "operation": {
+          "enum": [
+            "Version",
+            "MergeBase",
+            "Tree",
+            "Entries",
+            "Attributes",
+            "Merge"
+          ]
+        },
+        "revision": {
+          "type": "string"
+        },
+        "arguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "environment": {
+          "$ref": "#/$defs/raw"
+        },
+        "git": {
+          "$ref": "#/$defs/raw"
+        },
+        "stdin": {
+          "$ref": "#/$defs/raw"
+        },
+        "stdout": {
+          "$ref": "#/$defs/raw"
+        },
+        "stderr": {
+          "$ref": "#/$defs/raw"
+        },
+        "started_utc": {
+          "type": "string",
+          "minLength": 1
+        },
+        "finished_utc": {
+          "type": "string",
+          "minLength": 1
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "stdout_eof": {
+          "const": true
+        },
+        "stderr_eof": {
+          "const": true
+        },
+        "process_reaped": {
+          "const": true
+        },
+        "observer_errors": {
+          "type": "array",
+          "maxItems": 0
+        }
+      }
+    },
+    "native_computation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "accepted",
+        "published",
+        "merge_base",
+        "trees",
+        "result_tree",
+        "result_entries",
+        "source_fence",
+        "bare",
+        "git",
+        "environment",
+        "config",
+        "alternates",
+        "commands"
+      ],
+      "properties": {
+        "accepted": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "published": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "merge_base": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "trees": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "commit",
+              "tree"
+            ],
+            "properties": {
+              "commit": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "tree": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              }
+            }
+          }
+        },
+        "result_tree": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "result_entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "mode",
+              "blob",
+              "path"
+            ],
+            "properties": {
+              "mode": {
+                "enum": [
+                  "100644",
+                  "100755"
+                ]
+              },
+              "blob": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "source_fence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "common",
+            "head",
+            "status",
+            "files"
+          ],
+          "properties": {
+            "common": {
+              "type": "string",
+              "minLength": 1
+            },
+            "head": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "status": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "path",
+                  "sha256"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "sha256": {
+                    "oneOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "bare": {
+          "type": "string",
+          "minLength": 1
+        },
+        "git": {
+          "$ref": "#/$defs/raw"
+        },
+        "environment": {
+          "$ref": "#/$defs/raw"
+        },
+        "config": {
+          "$ref": "#/$defs/raw"
+        },
+        "alternates": {
+          "$ref": "#/$defs/raw"
+        },
+        "commands": {
+          "type": "array",
+          "minItems": 13,
+          "items": {
+            "$ref": "#/$defs/raw"
+          }
+        }
+      }
+    },
+    "computation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "kind",
+        "request",
+        "request_reference",
+        "producer",
+        "native"
+      ],
+      "properties": {
+        "schema": {
+          "const": "rusty.morphospace.workflow.source_delivery_disposition.v1"
+        },
+        "kind": {
+          "const": "integration-computation"
+        },
+        "request": {
+          "$ref": "#/$defs/computation_request"
+        },
+        "request_reference": {
+          "$ref": "#/$defs/raw"
+        },
+        "producer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "entrypoint",
+            "module",
+            "schema",
+            "host"
+          ],
+          "properties": {
+            "entrypoint": {
+              "$ref": "#/$defs/raw"
+            },
+            "module": {
+              "$ref": "#/$defs/raw"
+            },
+            "schema": {
+              "$ref": "#/$defs/raw"
+            },
+            "host": {
+              "$ref": "#/$defs/raw"
+            }
+          }
+        },
+        "native": {
+          "$ref": "#/$defs/native_computation"
+        }
+      }
+    },
+    "source_only_published_parent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "kind",
+        "repo_id",
+        "workspace_root",
+        "unit_id",
+        "repository_map",
+        "plan",
+        "execution",
+        "record_intent",
+        "record_completion"
+      ],
+      "properties": {
+        "schema": {
+          "const": "rusty.morphospace.workflow.source_delivery_disposition.v1"
+        },
+        "kind": {
+          "const": "source-only-published-parent"
+        },
+        "repo_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+        },
+        "workspace_root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "unit_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+        },
+        "repository_map": {
+          "$ref": "#/$defs/raw"
+        },
+        "plan": {
+          "$ref": "#/$defs/raw"
+        },
+        "execution": {
+          "$ref": "#/$defs/raw"
+        },
+        "record_intent": {
+          "$ref": "#/$defs/raw"
+        },
+        "record_completion": {
+          "$ref": "#/$defs/raw"
+        }
+      }
     }
   }
 }

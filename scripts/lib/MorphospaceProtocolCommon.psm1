@@ -139,7 +139,33 @@ function Test-MorphospaceFeatureLockFingerprint {
     $copy=$Lock|ConvertTo-Json -Depth 48|ConvertFrom-Json
     $copy.lock_fingerprint='0'*64
     $bytes=[Text.UTF8Encoding]::new($false).GetBytes(($copy|ConvertTo-Json -Depth 48 -Compress))
-    return [string]$Lock.lock_fingerprint -ceq (Get-MorphospaceSha256Bytes $bytes)
+    if ([string]$Lock.lock_fingerprint -ceq (Get-MorphospaceSha256Bytes $bytes)) { return $true }
+    # New-ProjectWorkspace v2 predates canonical fingerprints. Its finite
+    # initial featureless producer has a known field order, even when a later
+    # canonical protocol artifact has sorted the same object's properties.
+    # Reconstruct only that exact value; never search permutations or discard
+    # fields to make an unknown legacy fingerprint fit.
+    $source=$Lock|ConvertTo-Json -Depth 48|ConvertFrom-Json -DateKind String
+    $fields=@('$schema','schema','project_id','project_revision','revision','generated_at','resolver_version','lock_fingerprint','default_activation','activation_rule','selected_features','denied_features','features','effect_union')
+    $axes=@('permissions','services','activities','queries','tools','assets','shaders','native_libraries','commands','routes','streams','inputs','scenes','markers')
+    if(((@($source.PSObject.Properties.Name|Sort-Object -CaseSensitive))-join ',')-cne((@($fields|Sort-Object -CaseSensitive))-join ',')-or
+       $null-eq$source.effect_union-or
+       ((@($source.effect_union.PSObject.Properties.Name|Sort-Object -CaseSensitive))-join ',')-cne((@($axes|Sort-Object -CaseSensitive))-join ',')){return $false}
+    if([string]$source.'$schema'-cnotmatch'^https://raw\.githubusercontent\.com/MesmerPrism/rusty-morphospace-work-environment/(?:[0-9a-f]{40}|v[0-9]+\.[0-9]+\.[0-9]+|main)/schemas/feature-lock-v2\.schema\.json$'){return $false}
+    if($source.project_id-isnot[string]-or[string]$source.project_id-cnotmatch'^[a-z0-9][a-z0-9-]{1,127}$'){return $false}
+    $effects=[ordered]@{};foreach($axis in $axes){$effects[$axis]=@()}
+    $initial=[pscustomobject][ordered]@{
+        '$schema'=$source.'$schema';schema='rusty.morphospace.workflow.feature_lock.v2'
+        project_id=$source.project_id;project_revision=1;revision=1
+        generated_at='1970-01-01T00:00:00Z';resolver_version='rusty-morphospace-feature-resolver/2'
+        lock_fingerprint=('0'*64);default_activation='disabled';activation_rule='selected-lock-and-runtime-input'
+        selected_features=@();denied_features=@();features=@();effect_union=[pscustomobject]$effects
+    }
+    $source.lock_fingerprint='0'*64
+    if((Get-MorphospaceCanonicalJsonSha256 $initial)-cne(Get-MorphospaceCanonicalJsonSha256 $source)){return $false}
+    $producer=$initial|ConvertTo-Json -Depth 48|ConvertFrom-Json
+    $producerBytes=[Text.UTF8Encoding]::new($false).GetBytes(($producer|ConvertTo-Json -Depth 48 -Compress))
+    return [string]$Lock.lock_fingerprint -ceq (Get-MorphospaceSha256Bytes $producerBytes)
 }
 
 function Skip-MorphospaceJsonWhitespace {
