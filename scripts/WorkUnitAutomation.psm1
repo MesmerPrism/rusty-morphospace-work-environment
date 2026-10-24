@@ -1185,22 +1185,81 @@ function Test-MorphospaceBootstrapReceiptBindingRequired {
     $state = Read-MorphospaceJson -Path (Join-Path $WorkspaceRoot 'workspace.state.json')
     # Settled historical/terminal reads retain their existing owner contracts.
     if ([string]$state.current_unit -cne [string]$Unit.unit_id) { return $false }
-    # Neither a mutable lock schema nor an injected marker may select a weaker
-    # receipt path. Derive the current contract from its committed native tail.
+    $unitId = [string]$Unit.unit_id
+    $unitRelative = "iteration-units/$unitId.json"
+    $tailEventId = if ($state.PSObject.Properties.Name -contains 'last_event_id') { [string]$state.last_event_id } else { '' }
+    $tailTransaction = if ($tailEventId) { "$tailEventId-transition" } else { $null }
+    $tailIntentPath = if ($tailTransaction) { Resolve-MorphospaceWorkspacePath $WorkspaceRoot "receipts/transactions/$tailTransaction.intent.json" } else { $null }
+    $hasSourceEvidence = $Unit.PSObject.Properties.Name -contains 'source_composition'
+
+    # Optional observations can only latch strict validation. They never grant
+    # a class, and generic predicate callers gain no new mandatory unit file.
+    $actualUnitPath = Resolve-MorphospaceWorkspacePath $WorkspaceRoot $unitRelative
+    if ([IO.File]::Exists($actualUnitPath)) {
+        $actualUnit = Read-MorphospaceJson -Path $actualUnitPath
+        if ($actualUnit.PSObject.Properties.Name -contains 'source_composition') { $hasSourceEvidence = $true }
+    }
+    $transactions = Resolve-MorphospaceWorkspacePath $WorkspaceRoot 'receipts/transactions'
+    if ([IO.Directory]::Exists($transactions)) {
+        foreach ($path in [IO.Directory]::EnumerateFiles($transactions, '*.intent.json', [IO.SearchOption]::TopDirectoryOnly)) {
+            # A malformed reserved intent is ambiguous, not evidence that its
+            # source contract is absent. Do not catch and downgrade that error.
+            $candidate = Read-MorphospaceJson -Path $path
+            if ($candidate.PSObject.Properties.Name -notcontains 'target' -or
+                $null -eq $candidate.target -or
+                $candidate.target.PSObject.Properties.Name -notcontains 'unit' -or
+                $null -eq $candidate.target.unit -or
+                $candidate.target.unit.PSObject.Properties.Name -notcontains 'document' -or
+                $null -eq $candidate.target.unit.document) {
+                $genericIntent = $candidate.PSObject.Properties.Name -contains 'schema' -and
+                    [string]$candidate.schema -cmatch '^rusty\.morphospace\.workflow\.transition_ledger_intent\.v[1-6]$'
+                if ($genericIntent -or $path -ceq $tailIntentPath) {
+                    throw 'Validation receipt retained native unit origin is malformed.'
+                }
+                # Other typed owner intents need not own a unit projection.
+                continue
+            }
+            $targetUnit = $candidate.target.unit.document
+            if ($targetUnit.PSObject.Properties.Name -contains 'unit_id' -and
+                [string]$targetUnit.unit_id -ceq $unitId -and
+                $targetUnit.PSObject.Properties.Name -contains 'source_composition') {
+                $hasSourceEvidence = $true
+            }
+        }
+    }
+    if (-not $tailIntentPath -or -not [IO.File]::Exists($tailIntentPath)) {
+        if ($hasSourceEvidence) { throw 'Validation receipt source-owning origin requires its committed native tail.' }
+        # Source-free legacy snapshots and pure generic receipt predicates did
+        # not require native Begin history. This grants no bootstrap authority.
+        return $false
+    }
+
+    # Only the authenticated actual owner target may select a receipt class.
+    # Discovery above is a strictness latch, never a trusted caller proof/flag.
     $step = Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $WorkspaceRoot `
-        -TransactionId "$([string]$state.last_event_id)-transition" `
+        -TransactionId $tailTransaction `
         -ExpectedStatePath 'workspace.state.json' `
-        -ExpectedUnitPath "iteration-units/$([string]$Unit.unit_id).json" `
+        -ExpectedUnitPath $unitRelative `
         -ExpectedEventsPath 'iteration-events.jsonl' -RequireTail
     $nativeUnit = $step.intent.target.unit.document
+    if ($nativeUnit.PSObject.Properties.Name -notcontains 'source_composition') {
+        if ($hasSourceEvidence) { throw 'Validation receipt source contract differs from its committed native target.' }
+        return $false
+    }
+    if ($null -eq $nativeUnit.source_composition -or
+        $nativeUnit.source_composition.PSObject.Properties.Name -notcontains 'lock_path' -or
+        [string]::IsNullOrWhiteSpace([string]$nativeUnit.source_composition.lock_path)) {
+        throw 'Validation receipt native source-composition binding is malformed.'
+    }
+    # Ordinary admitted/frozen receipt obligations retain their generic DTO
+    # contract, including private checks with a pre-Begin status projection.
+    # Caller-injected assessment/Freeze markers cannot select this branch.
+    if ($nativeUnit.PSObject.Properties.Name -contains 'agent_scope_assessment' -and
+        $nativeUnit.PSObject.Properties.Name -contains 'candidate_freeze') { return $false }
     if ((Get-MorphospaceCanonicalJsonSha256 $Unit) -cne (Get-MorphospaceCanonicalJsonSha256 $nativeUnit) -or
         (Get-MorphospaceCanonicalJsonSha256 $state) -cne (Get-MorphospaceCanonicalJsonSha256 $step.intent.target.state.document)) {
         throw 'Validation receipt current unit/state differs from its committed native target.'
     }
-    if ($nativeUnit.PSObject.Properties.Name -notcontains 'source_composition' -or
-        $null -eq $nativeUnit.source_composition.lock_path) { return $false }
-    if ($nativeUnit.PSObject.Properties.Name -contains 'agent_scope_assessment' -and
-        $nativeUnit.PSObject.Properties.Name -contains 'candidate_freeze') { return $false }
     return $true
 }
 

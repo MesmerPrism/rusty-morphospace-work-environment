@@ -11,6 +11,11 @@ function Write-ProfileJson([string]$Path,[object]$Value){[void][IO.Directory]::C
 function Read-ProfileJson([string]$Path){Read-MorphospaceProtocolJson $Path}
 function Clone-ProfileValue([object]$Value){$Value|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64 -DateKind String}
 function Invoke-ProfileNative([string]$Script,[string[]]$Arguments){$output=@(&$pwsh -NoProfile -NonInteractive -File $Script @Arguments 2>&1);if($LASTEXITCODE-ne0){throw "Native fixture action failed ($Script): $($output-join"`n")"};$output}
+function ConvertTo-ProfileNativePresentationText([object[]]$Output){
+    # Remove SGR presentation only; preserve all semantic characters and tokens.
+    $plain=[regex]::Replace(($Output-join"`n"),'\x1b\[[0-9;]*m','')
+    [regex]::Replace($plain,'\s+',' ').Trim()
+}
 function Snapshot-Profile([string]$Root){@((Get-ChildItem -LiteralPath $Root -Recurse -File|Sort-Object FullName|ForEach-Object{"$($_.FullName.Substring($Root.Length)) $(Get-MorphospaceFileSha256 $_.FullName)"}))-join"`n"}
 function Assert-ProfileRefusal([scriptblock]$Action,[string]$Reason,[string]$Workspace){$before=Snapshot-Profile $Workspace;$refused=$false;try{&$Action|Out-Null}catch{$refused=$_.Exception.Message.Contains($Reason,[StringComparison]::Ordinal)};Assert-ProfileTest $refused "Expected refusal containing '$Reason'";Assert-ProfileTest ((Snapshot-Profile $Workspace)-ceq$before) 'Refusal wrote owner files'}
 function Invoke-ProfileAcceptedPrefixProbe([string]$CorrectedRoot,[string]$MapPath,[string]$Destination){
@@ -86,7 +91,7 @@ function Invoke-ProfileAcceptedPrefixProbe([string]$CorrectedRoot,[string]$MapPa
     $damageBefore=Snapshot-Profile $damaged
     $damageOutput=@(&$pwsh -NoProfile -NonInteractive -File $consumer -WorkspaceRoot $damaged -RepositoryMapPath $MapPath -CurrentWorkOnly -SkipOwnerSelfTests -CurrentWorkspaceOnly 2>&1)
     $refused=$LASTEXITCODE-ne0
-    Assert-ProfileTest ($refused-and($damageOutput-join"`n")-match'(artifact|correction|profile closure)') 'Accepted-prefix reader accepted or misclassified damaged correction artifact'
+    Assert-ProfileTest ($refused-and(ConvertTo-ProfileNativePresentationText $damageOutput)-match'(artifact|correction|profile closure)') 'Accepted-prefix reader accepted or misclassified damaged correction artifact'
     Assert-ProfileTest ((Snapshot-Profile $damaged)-ceq$damageBefore) 'Accepted-prefix damage refusal wrote owner files'
     $damagedReceipt=Join-Path $Destination 'damaged-receipt';Copy-Item -LiteralPath $accepted -Destination $damagedReceipt -Recurse
     [IO.File]::AppendAllText((Join-Path $damagedReceipt $acceptedReceiptRelative)," ")
@@ -96,12 +101,15 @@ function Invoke-ProfileAcceptedPrefixProbe([string]$CorrectedRoot,[string]$MapPa
     $receiptDamageAfter=Snapshot-Profile $damagedReceipt
     $receiptDamageRawText=$receiptDamageOutput-join"`n"
     $receiptDamageExpected="Transition ledger committed artifact differs from its intent: $acceptedReceiptRelative"
-    # Native stderr can wrap between the colon and exact artifact path. Retain
-    # the raw display output and normalize only whitespace for this comparison.
-    $receiptDamageNormalized=[regex]::Replace($receiptDamageRawText,'\s+',' ').Trim()
-    $receiptDamageExpectedNormalized=[regex]::Replace($receiptDamageExpected,'\s+',' ').Trim()
+    # Native stderr may place SGR close/open codes around its line wrapping.
+    # Retain raw text; compare the exact owning error/path after presentation only.
+    $receiptDamageNormalized=ConvertTo-ProfileNativePresentationText @($receiptDamageRawText)
+    $receiptDamageExpectedNormalized=ConvertTo-ProfileNativePresentationText @($receiptDamageExpected)
     $receiptDamageMatched=$receiptDamageNormalized.Contains($receiptDamageExpectedNormalized,[StringComparison]::Ordinal)
     Write-ProfileJson (Join-Path $Destination 'accepted-receipt-drift-observation.json') ([pscustomobject]@{argv=@($pwsh,'-NoProfile','-NonInteractive','-File',$consumer,'-WorkspaceRoot',$damagedReceipt,'-RepositoryMapPath',$MapPath,'-CurrentWorkOnly','-SkipOwnerSelfTests','-CurrentWorkspaceOnly');exit_code=$receiptDamageExitCode;output=@($receiptDamageOutput|ForEach-Object{[string]$_});raw_text=$receiptDamageRawText;expected_exact_error=$receiptDamageExpected;whitespace_normalized_output=$receiptDamageNormalized;whitespace_normalized_error=$receiptDamageExpectedNormalized;exact_error_matched=$receiptDamageMatched;owner_before=$receiptDamageBefore;owner_after=$receiptDamageAfter;owner_unchanged=($receiptDamageAfter-ceq$receiptDamageBefore)})
+    if($receiptDamageExitCode-eq0-or-not$receiptDamageMatched-or$receiptDamageAfter-cne$receiptDamageBefore){
+        Write-Host ('Initial profile raw-drift diagnostic: '+([pscustomobject]@{exit_code=$receiptDamageExitCode;raw_text=$receiptDamageRawText;expected_exact_error=$receiptDamageExpected;presentation_normalized_output=$receiptDamageNormalized;exact_error_matched=$receiptDamageMatched;owner_unchanged=($receiptDamageAfter-ceq$receiptDamageBefore)}|ConvertTo-Json -Depth 8 -Compress))
+    }
     Assert-ProfileTest ($receiptDamageExitCode-ne0) 'Accepted-prefix reader accepted final Accept-owned receipt raw drift; see accepted-receipt-drift-observation.json'
     Assert-ProfileTest $receiptDamageMatched 'Accepted-prefix reader misclassified final Accept-owned receipt raw drift; see accepted-receipt-drift-observation.json'
     Assert-ProfileTest ($receiptDamageAfter-ceq$receiptDamageBefore) 'Accepted consumed-receipt refusal wrote owner files'
@@ -154,7 +162,7 @@ if($Scenario-cne'correction'){
     $entry=Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1'
     $before=Snapshot-Profile $workspace
     $readyOutput=@(&$pwsh -NoProfile -NonInteractive -File $entry -Action Ready @common -Execute 2>&1)
-    Write-ProfileJson (Join-Path $HarnessRoot 'ready-observation.json') ([pscustomobject]@{exit_code=$LASTEXITCODE;output=@($readyOutput|ForEach-Object{[string]$_})});Assert-ProfileTest ($LASTEXITCODE-ne0-and($readyOutput-join"`n").Contains('validation-profile-unknown')) 'Unknown profile Ready must refuse before any transition'
+    Write-ProfileJson (Join-Path $HarnessRoot 'ready-observation.json') ([pscustomobject]@{exit_code=$LASTEXITCODE;output=@($readyOutput|ForEach-Object{[string]$_})});Assert-ProfileTest ($LASTEXITCODE-ne0-and(ConvertTo-ProfileNativePresentationText $readyOutput).Contains('validation-profile-unknown')) 'Unknown profile Ready must refuse before any transition'
     Assert-ProfileTest ((Snapshot-Profile $workspace)-ceq$before) 'Unknown Ready wrote owner files'
     Write-Host 'future unknown-ID Ready refusal passed'
     $known=Join-Path $HarnessRoot 'known-profiles'
@@ -171,7 +179,7 @@ Invoke-ProfileNative (Join-Path $old 'scripts/Invoke-WorkUnitAutomation.ps1') (@
 if($Scenario-cne'correction'){
     $before=Snapshot-Profile $workspace
     $claimOutput=@(&$pwsh -NoProfile -NonInteractive -File $entry -Action Claim @common -Execute 2>&1)
-    Assert-ProfileTest ($LASTEXITCODE-ne0-and($claimOutput-join"`n").Contains('validation-profile-unknown')) 'Fresh Claim must refuse the historical ready unknown profile'
+    Assert-ProfileTest ($LASTEXITCODE-ne0-and(ConvertTo-ProfileNativePresentationText $claimOutput).Contains('validation-profile-unknown')) 'Fresh Claim must refuse the historical ready unknown profile'
     Assert-ProfileTest ((Snapshot-Profile $workspace)-ceq$before) 'Unknown Claim wrote owner files'
 }
 Invoke-ProfileNative (Join-Path $old 'scripts/Invoke-WorkUnitAutomation.ps1') (@('-Action','Claim')+$common+'-Execute')|Out-Null
@@ -180,7 +188,7 @@ $workspace=Join-Path $HarnessRoot 'seed/morphospace';$map=Join-Path $HarnessRoot
 # Validate that the real old project is refused by the current public consumer
 # for the exact omission, before attempting the new correction.
 $consumer=@(&$pwsh -NoProfile -NonInteractive -File (Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1') -WorkspaceRoot $workspace -RepositoryMapPath $map -CurrentWorkOnly -SkipOwnerSelfTests -CurrentWorkspaceOnly 2>&1)
-Assert-ProfileTest ($LASTEXITCODE-ne0-and($consumer-join"`n").Contains('unknown validation profile')) 'Historical missing-profile fixture must reproduce the current-work failure'
+Assert-ProfileTest ($LASTEXITCODE-ne0-and(ConvertTo-ProfileNativePresentationText $consumer).Contains('unknown validation profile')) 'Historical missing-profile fixture must reproduce the current-work failure'
 Import-Module (Join-Path $PSScriptRoot 'InitialValidationProfileClosureCorrection.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1')
 function New-ProfileRequest([string]$Root,[string]$Id){

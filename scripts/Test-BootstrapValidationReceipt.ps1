@@ -53,6 +53,8 @@ $refusalDomains=@{
  'live lock schema plus stripped reserved artifacts cannot downgrade'='(?i)(?:Bootstrap\ validation\ document\ is\ malformed:\ source\-composition\-lock\.schema\.json|The\ JSON\ is\ not\ valid\ with\ the\ schema)'
  'fake Freeze plus stripped reserved artifacts cannot downgrade'='(?i)(?:Transition\ ledger\ tail\ completion\ does\ not\ own\ its\ target\ unit\ projection\.|Validation\ receipt\ current\ unit/state\ differs\ from\ its\ committed\ native\ target\.)'
  'removed source binding plus stripped reserved artifacts cannot downgrade'='(?i)(?:Transition\ ledger\ tail\ completion\ does\ not\ own\ its\ target\ unit\ projection\.|Validation\ receipt\ current\ unit/state\ differs\ from\ its\ committed\ native\ target\.)'
+ 'retained source origin survives missing tail plus removed live binding'='Validation\ receipt\ source\-owning\ origin\ requires\ its\ committed\ native\ tail\.'
+ 'native tail source deletion plus removed live binding remains authenticated'='Transition\ ledger\ intent\ unit\ hashes\ are\ invalid\ or\ inconsistent\.'
  'missing native Ready history'='(?i)(?:Bootstrap\ validation\ origin\ transition\ is\ damaged:\ event\ order\.|Bootstrap\ validation\ requires\ authenticated\ native\ Ready\ and\ Claim\.)'
  'native Begin completion semantic damage'='(?i)(?:Transition\ ledger\ completion\ is\ not\ canonically\ bound\ to\ its\ exact\ intent\.)'
  'native Begin intent raw drift'='(?i)(?:Transition\ ledger\ completion\ is\ not\ canonically\ bound\ to\ its\ exact\ intent\.)'
@@ -74,8 +76,8 @@ function Refuse-Bootstrap($Fixture,[scriptblock]$Action,[string]$Why){
  $before=Inventory-Bootstrap $Fixture.workspace;$sourceBefore=SourceFence-Bootstrap $Fixture;$errorRecord=$null
  try{&$Action|Out-Null}catch{$errorRecord=$_}
  $message=if($null-ne$errorRecord){$errorRecord.Exception.Message}else{'NO REFUSAL'}
- # Native errors may wrap on terminal width; preserve raw text, match words after whitespace normalization.
- $normalizedMessage=($message-replace'\s+',' ').Trim()
+ # Strip only lowercase-m SGR presentation; preserve raw errors and exact guard domains.
+ $normalizedMessage=(($message-creplace'\x1b\[[0-9;]*m','')-replace'\s+',' ').Trim()
  Assert-BootstrapTest ($null-ne$errorRecord-and$normalizedMessage-match$refusalDomains[$Why]) "$Why did not refuse at its expected owning guard: $message"
  Assert-BootstrapTest ((Inventory-Bootstrap $Fixture.workspace)-ceq$before-and(SourceFence-Bootstrap $Fixture)-ceq$sourceBefore) "$Why wrote owner/source bytes, Git state or staged index"
  [pscustomobject]@{case=$Why;message=$errorRecord.Exception.Message;fully_qualified_error_id=$errorRecord.FullyQualifiedErrorId;position=$errorRecord.InvocationInfo.PositionMessage;stack=$errorRecord.ScriptStackTrace;owner_unchanged=$true}|ConvertTo-Json -Depth 5|Write-Host
@@ -184,6 +186,21 @@ function Test-BootstrapJourney($f,[string]$Name){
  Damage-BootstrapFiles $f @($lock,$path) {$l=Read-BootstrapJson $lock;$l.schema='rusty.morphospace.workflow.development_envelope_source_composition.v1';Write-BootstrapJson $lock $l;Strip-BootstrapReservedArtifacts $path} {Owner-Bootstrap $f RecordValidation @('-ValidationReceipt',"receipts/$Name-pass.json",'-ValidationResult','pass','-ValidationTier','quick','-Execute')} 'live lock schema plus stripped reserved artifacts cannot downgrade'
  Damage-BootstrapFiles $f @($unitPath,$path) {$u=Read-BootstrapJson $unitPath;$u|Add-Member -NotePropertyName candidate_freeze -NotePropertyValue ([pscustomobject]@{freeze_id='pretend-frozen';receipt_path='receipts/begin.json';receipt_sha256=Raw-Bootstrap (Join-Path $f.workspace 'receipts/begin.json')}) -Force;Write-BootstrapJson $unitPath $u;Strip-BootstrapReservedArtifacts $path} {Owner-Bootstrap $f RecordValidation @('-ValidationReceipt',"receipts/$Name-pass.json",'-ValidationResult','pass','-ValidationTier','quick','-Execute')} 'fake Freeze plus stripped reserved artifacts cannot downgrade'
  Damage-BootstrapFiles $f @($unitPath,$path) {$u=Read-BootstrapJson $unitPath;$u.PSObject.Properties.Remove('source_composition');Write-BootstrapJson $unitPath $u;Strip-BootstrapReservedArtifacts $path} {Owner-Bootstrap $f RecordValidation @('-ValidationReceipt',"receipts/$Name-pass.json",'-ValidationResult','pass','-ValidationTier','quick','-Execute')} 'removed source binding plus stripped reserved artifacts cannot downgrade'
+ $originState=Read-BootstrapJson (Join-Path $f.workspace 'workspace.state.json')
+ $tailIntentPath=Join-Path $f.workspace "receipts/transactions/$([string]$originState.last_event_id)-transition.intent.json"
+ $tailIntentBytes=[IO.File]::ReadAllBytes($tailIntentPath)
+ try{
+  [IO.File]::Delete($tailIntentPath)
+  Damage-BootstrapFiles $f @($unitPath,$path) {
+   $u=Read-BootstrapJson $unitPath;$u.PSObject.Properties.Remove('source_composition');Write-BootstrapJson $unitPath $u
+   Strip-BootstrapReservedArtifacts $path
+  } {Owner-Bootstrap $f RecordValidation @('-ValidationReceipt',"receipts/$Name-pass.json",'-ValidationResult','pass','-ValidationTier','quick','-Execute')} 'retained source origin survives missing tail plus removed live binding'
+ }finally{[IO.File]::WriteAllBytes($tailIntentPath,$tailIntentBytes)}
+ Damage-BootstrapFiles $f @($tailIntentPath,$unitPath,$path) {
+  $t=Read-BootstrapJson $tailIntentPath;$t.target.unit.document.PSObject.Properties.Remove('source_composition');Write-BootstrapJson $tailIntentPath $t
+  $u=Read-BootstrapJson $unitPath;$u.PSObject.Properties.Remove('source_composition');Write-BootstrapJson $unitPath $u
+  Strip-BootstrapReservedArtifacts $path
+ } {Owner-Bootstrap $f RecordValidation @('-ValidationReceipt',"receipts/$Name-pass.json",'-ValidationResult','pass','-ValidationTier','quick','-Execute')} 'native tail source deletion plus removed live binding remains authenticated'
  $originalReceiptRaw=Raw-Bootstrap $path
  $record=Read-BootstrapTerminal (Owner-Bootstrap $f RecordValidation @('-ValidationReceipt',"receipts/$Name-pass.json",'-ValidationResult','pass','-ValidationTier','quick','-Execute'))
  $recordIntent=Read-BootstrapJson (Join-Path $f.workspace "receipts/transactions/$($record.event_id)-transition.intent.json")

@@ -6229,8 +6229,10 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     $preparationRepositoryScopeConsumers=@($registry.checks | Where-Object {
         @($_.consume_path_sets) -ccontains 'preparation-repository-scope'
     } | ForEach-Object { [string]$_.check_id } | Sort-Object)
-    $expectedPreparationRepositoryScopeConsumers=@($preparationRepositoryScopeConsumerChecks | Sort-Object)
-    Assert-True (($preparationRepositoryScopeTriggers -join '|') -ceq ($expectedPreparationRepositoryScopeConsumers -join '|')) 'Preparation-repository-scope trigger consumers differ from the exact focused inventory.'
+    # Evidence-only consumers do not expand the focused preparation trigger closure.
+    $expectedPreparationRepositoryScopeTriggers=@($preparationRepositoryScopeConsumerChecks | Sort-Object)
+    $expectedPreparationRepositoryScopeConsumers=@(($preparationRepositoryScopeConsumerChecks + @('bootstrap-validation-receipt')) | Sort-Object)
+    Assert-True (($preparationRepositoryScopeTriggers -join '|') -ceq ($expectedPreparationRepositoryScopeTriggers -join '|')) 'Preparation-repository-scope trigger consumers differ from the exact focused inventory.'
     Assert-True (($preparationRepositoryScopeConsumers -join '|') -ceq ($expectedPreparationRepositoryScopeConsumers -join '|')) 'Preparation-repository-scope evidence consumers differ from the exact focused inventory.'
     $externalProtectedOwners = [ordered]@{
         '.github/workflows/static-admission.yml' = 'external-validation-adapter'
@@ -6290,9 +6292,9 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         [pscustomobject]@{ path='scripts/Test-ExternalValidationAuthorityGitHubAdapterSelfTest.ps1'; checks=@('external-validation-github-adapter','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='schemas/historical-validation-debt-phase-receipt-v1.schema.json'; checks=@('historical-validation-debt-baseline','historical-validation-debt-phase-runner','work-unit-automation') },
         [pscustomobject]@{ path='scripts/Test-BlockedSupersessionTerminalValidation.ps1'; checks=@('blocked-supersession-terminal-validation') },
-        [pscustomobject]@{ path='scripts/InitialValidationProfileClosureCorrection.psm1'; checks=@('initial-validation-profile-closure','public-boundary'); exact_checks=$true },
-        [pscustomobject]@{ path='schemas/initial-validation-profile-closure-correction-v1.schema.json'; checks=@('initial-validation-profile-closure','public-boundary'); exact_checks=$true },
-        [pscustomobject]@{ path='scripts/Test-InitialValidationProfileClosureCorrection.ps1'; checks=@('initial-validation-profile-closure','public-boundary'); exact_checks=$true },
+        [pscustomobject]@{ path='scripts/InitialValidationProfileClosureCorrection.psm1'; checks=@('bootstrap-validation-receipt','initial-validation-profile-closure','public-boundary'); exact_checks=$true },
+        [pscustomobject]@{ path='schemas/initial-validation-profile-closure-correction-v1.schema.json'; checks=@('bootstrap-validation-receipt','initial-validation-profile-closure','public-boundary'); exact_checks=$true },
+        [pscustomobject]@{ path='scripts/Test-InitialValidationProfileClosureCorrection.ps1'; checks=@('bootstrap-validation-receipt','initial-validation-profile-closure','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-CorrectActiveUnitContract.ps1'; checks=@('correct-active-unit-contract') },
         [pscustomobject]@{ path='schemas/active-unit-supersession-v1.schema.json'; checks=@('active-unit-supersession','work-unit-automation') },
         [pscustomobject]@{ path='scripts/ActiveUnitSupersession.psm1'; checks=@('active-unit-supersession','work-unit-automation') },
