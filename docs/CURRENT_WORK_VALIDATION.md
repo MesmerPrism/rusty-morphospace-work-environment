@@ -91,6 +91,67 @@ compatibility cases below explain specific authenticated histories; they are not
 a startup checklist or new prerequisites for every iteration. Read the relevant
 case when a current validator diagnostic or explicit history task names it.
 
+## Initial source-lock validation receipts
+
+An initial owner may reach native `BeginValidation` without a development
+admission or Candidate Freeze. `New-ValidationReceipt.ps1` supports that finite
+case for an exact `source_composition_lock.v1`; absence of a Freeze alone is
+not evidence of eligibility. Receipt consumption authenticates the current
+native unit/state target before routing, so edited schema or Freeze markers
+cannot select a weaker path. The public command and product-evidence input are
+unchanged:
+
+```powershell
+pwsh -NoProfile -File <work-environment>/scripts/New-ValidationReceipt.ps1 `
+  -WorkspaceRoot <project-root>/morphospace -UnitId <current-unit> `
+  -RepoMapPath <selected-repository-map> -EvidencePath <product-evidence> `
+  -OutPath <project-root>/morphospace/receipts/<validation-receipt>.json
+```
+
+The producer authenticates the first native Ready/Claim origin, supported typed
+active supersession or initial-profile correction, actual instruction completion,
+and Begin transition. It checks current unit/state/project, the closed map,
+source-lock identity, exact repository baselines and Git objects, permitted
+descendants and source scope. Product and read-only source roots remain clean;
+planning changes remain inside declared owner paths. An immutable lock witness
+must be present: the exact committed blob at a mapped planning checkpoint
+recorded by Begin, or the existing authenticated initial-profile correction's
+raw-lock binding. A self-recomputed fingerprint is insufficient.
+
+The producer adds three reserved ordinary hashed artifacts:
+`bootstrap-source-lock`, `bootstrap-repository-map`, and
+`bootstrap-begin-intent`. Caller evidence cannot occupy those IDs. Native v1
+Ready/Claim did not bind historical map raw bytes: the reader checks native map
+semantics and any later typed raw binding, then pins the selected raw map from
+generation through Record and Accept. It does not invent earlier map custody.
+Control files and live Git observations are rechecked before output or mutation.
+
+Use ordinary `RecordValidation` and `Accept` with the same selected map. Both
+authenticate the bootstrap predicate and exact receipt baselines. A new
+bootstrap Record preserves the producer input and retains its exact bytes as
+one new native ledger artifact in the same receipt directory. Accept validates
+that copy and owns a separate exact final copy in its own native transaction;
+the validation checkpoint and accepted-receipt pointer select this final copy.
+The existing committed-history reader therefore authenticates later receipt
+reads from the Accept proof. Producer and Record inputs remain unchanged.
+Only the exact authenticated stage-owned output is excluded from product
+changed-path comparisons. Missing,
+substituted or changed bindings, source, artifacts or
+native history refuse. Existing admitted units still require their authentic
+Candidate Freeze; existing accepted history is not migrated or relabeled.
+
+The producer observes artifact bytes but does not execute the caller's product
+commands or grant product, publication, adoption or device evidence. Reuse valid
+unchanged evidence only under its owning unit's actual requirements. Do not
+fabricate assessment/Freeze markers, alter immutable profile history, or enroll
+an unrelated unit to manufacture this route. Unsupported origins remain refused.
+
+Run `scripts/Test-BootstrapValidationReceipt.ps1 -SelfTest` for genuine initial
+and superseded producer/Record/Accept journeys, current/project readers, source
+and receipt drift controls, and the ordinary admitted-Freeze continuation. The
+initial-profile correction's existing owning test also uses the public producer
+while retaining its explicit modeled-product limits.
+
 ## Authenticated history and recovery cases
 
 An authentic initial unit can be `active`, or `validating` before any recorded
