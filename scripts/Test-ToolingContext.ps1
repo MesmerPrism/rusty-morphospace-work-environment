@@ -52,6 +52,35 @@ try{
  $compat.receipt.sha256=Hash-File (Join-Path $workspace 'receipts/protocol.json')
  $context=New-MorphospaceObservedToolingContext @producerArgs
  if(-not(Assert-MorphospaceToolingContextHistoricalObservation -Context $context -WorkspaceRoot $workspace)){throw 'Historical positive failed.'};[Console]::WriteLine('PASS valid-observed-and-historical-producer')
+ # A validated clone is private to one public observation. Reusing the same
+ # caller object or warm historical closure never waives fresh context/evidence.
+ $fingerprintBefore=$context.fingerprint;$context.fingerprint='0'*64
+ try{
+  Denied {Read-MorphospaceToolingContextResolver -WorkspaceRoot $workspace -Context $context} 'Tooling context fingerprint is detached.' 'mutated-context-resolver-after-warm-read'
+  Denied {Assert-MorphospaceToolingContextHistoricalObservation -WorkspaceRoot $workspace -Context $context} 'Tooling context fingerprint is detached.' 'mutated-context-historical-after-warm-read'
+  Denied {Assert-MorphospaceToolingContextLocalObservation -WorkspaceRoot $workspace -Context $context} 'Tooling context fingerprint is detached.' 'mutated-context-local-after-warm-read'
+ }finally{$context.fingerprint=$fingerprintBefore}
+ foreach($observationDamage in @(
+  @('local/resolver.json','Tooling context resolver raw hash drifted.','resolver'),
+  @('receipts/publication.json',"Tooling context publication evidence 'receipts/publication.json' drifted.",'publication'),
+  @('receipts/protocol.json',"Tooling context protocol receipt 'receipts/protocol.json' drifted.",'protocol'),
+  @('receipts/validation.json','Tooling context publication validation evidence drifted.','validation')
+ )){
+  $observationPath=Join-Path $workspace $observationDamage[0];$observationBefore=[IO.File]::ReadAllBytes($observationPath)
+  try{
+   [IO.File]::WriteAllBytes($observationPath,[byte[]]($observationBefore+@(10)))
+   Denied {Assert-MorphospaceToolingContextHistoricalObservation -WorkspaceRoot $workspace -Context $context} $observationDamage[1] ("warm-historical-"+$observationDamage[2])
+   Denied {Assert-MorphospaceToolingContextLocalObservation -WorkspaceRoot $workspace -Context $context} $observationDamage[1] ("warm-local-"+$observationDamage[2])
+  }finally{[IO.File]::WriteAllBytes($observationPath,$observationBefore)}
+ }
+ $managedPath=Join-Path $routerRoot 'SKILL.md';$managedBefore=[IO.File]::ReadAllBytes($managedPath)
+ try{
+  [IO.File]::WriteAllBytes($managedPath,[byte[]]($managedBefore+@(10)))
+  Denied {Assert-MorphospaceToolingContextLocalObservation -WorkspaceRoot $workspace -Context $context} "Tooling context router 'fixture-router' managed file 'SKILL.md' drifted." 'warm-local-router-bytes'
+ }finally{[IO.File]::WriteAllBytes($managedPath,$managedBefore)}
+ if(-not(Assert-MorphospaceToolingContextHistoricalObservation -Context $context -WorkspaceRoot $workspace)-or-not(Assert-MorphospaceToolingContextLocalObservation -Context $context -WorkspaceRoot $workspace)){throw 'Restored observation positives failed.'}
+ [Console]::WriteLine('PASS context-observation-freshness 12 refusal controls; restored historical/local positives')
+
  # A historical cache hit never waives fresh worktree raw bytes or clean identity.
  [IO.File]::WriteAllText((Join-Path $tool 'entry.txt'),"entry`r`n",[Text.UTF8Encoding]::new($false));Git-Read @('add','entry.txt')|Out-Null
  Denied {New-MorphospaceObservedToolingContext @producerArgs} "Tooling context executor closure 'entry.txt' drifted." 'cache-hit-does-not-waive-raw-bytes'

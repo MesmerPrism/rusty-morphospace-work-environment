@@ -66,7 +66,13 @@ function Assert-ToolingContextClosureImports {
 
 function Read-MorphospaceToolingContextResolver {
     [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][object]$Context)
-    $context=Assert-MorphospaceToolingContext $Context;$relative=ConvertTo-MorphospaceProtocolRelativePath ([string]$context.resolver.path);if($relative-cnotmatch'^local/'){throw 'Tooling context resolver must be an ignored local/ binding.'}
+    $validated=Assert-MorphospaceToolingContext $Context
+    Read-ToolingContextValidatedResolver -WorkspaceRoot $WorkspaceRoot -Context $validated
+}
+# Private only: receives this module's validated clone within one synchronous read.
+function Read-ToolingContextValidatedResolver {
+    [CmdletBinding()]param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][object]$Context)
+    $context=$Context;$relative=ConvertTo-MorphospaceProtocolRelativePath ([string]$context.resolver.path);if($relative-cnotmatch'^local/'){throw 'Tooling context resolver must be an ignored local/ binding.'}
     $path=Resolve-MorphospaceWorkspacePath ([IO.Path]::GetFullPath($WorkspaceRoot)) $relative -RequireLeaf;if((Get-MorphospaceFileSha256 $path)-cne[string]$context.resolver.sha256){throw 'Tooling context resolver raw hash drifted.'}
     $resolver=Read-MorphospaceProtocolJson $path;if(-not(Test-Json -Json ($resolver|ConvertTo-Json -Depth 32) -SchemaFile (Get-ToolingContextSchema 'tooling-context-resolver-v1.schema.json'))){throw 'Tooling context resolver violates its owner schema.'}
     if([string]$resolver.context_id-cne[string]$context.context_id){throw 'Tooling context resolver names another context.'}
@@ -111,19 +117,28 @@ function Assert-ToolingContextHistoricalExecutorClosure {
 }
 function Assert-MorphospaceToolingContextHistoricalObservation {
     [CmdletBinding()]param([Parameter(Mandatory)][object]$Context,[Parameter(Mandatory)][string]$WorkspaceRoot)
-    $context=Assert-MorphospaceToolingContext $Context;$resolver=Read-MorphospaceToolingContextResolver $WorkspaceRoot $context;$root=[IO.Path]::GetFullPath([string]$resolver.executor_root)
+    $validated=Assert-MorphospaceToolingContext $Context
+    $resolver=Read-ToolingContextValidatedResolver -WorkspaceRoot $WorkspaceRoot -Context $validated
+    Assert-ToolingContextValidatedHistoricalObservation -Context $validated -WorkspaceRoot $WorkspaceRoot -Resolver $resolver
+}
+# No public trust flag/token or persistent cache: validated DTO never escapes this read.
+function Assert-ToolingContextValidatedHistoricalObservation {
+    [CmdletBinding()]param([Parameter(Mandatory)][object]$Context,[Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][object]$Resolver)
+    $context=$Context;$resolver=$Resolver;$root=[IO.Path]::GetFullPath([string]$resolver.executor_root)
     Assert-ToolingContextHistoricalExecutorClosure $root $context
     Assert-ToolingContextPortableEvidence $WorkspaceRoot $context;$true
 }
 function Assert-MorphospaceToolingContextLocalObservation {
     [CmdletBinding()]param([Parameter(Mandatory)][object]$Context,[Parameter(Mandatory)][string]$WorkspaceRoot)
-    $context=Assert-MorphospaceToolingContext $Context;$resolver=Read-MorphospaceToolingContextResolver $WorkspaceRoot $context;$root=[IO.Path]::GetFullPath([string]$resolver.executor_root);if(-not[IO.Directory]::Exists($root)){throw 'Tooling context executor root is absent.'}
+    $context=Assert-MorphospaceToolingContext $Context;$resolver=Read-ToolingContextValidatedResolver $WorkspaceRoot $context;$root=[IO.Path]::GetFullPath([string]$resolver.executor_root);if(-not[IO.Directory]::Exists($root)){throw 'Tooling context executor root is absent.'}
     $head=(Get-ToolingContextGitScalar $root @('rev-parse','HEAD') 'executor HEAD').ToLowerInvariant();$tree=(Get-ToolingContextGitScalar $root @('rev-parse','HEAD^{tree}') 'executor tree').ToLowerInvariant();$remote=Get-ToolingContextGitScalar $root @('remote','get-url','origin') 'executor remote';$status=@(Invoke-ToolingContextGit $root @('status','--porcelain=v1','--untracked-files=all') 'executor cleanliness')
     if($status.Count-ne0-or$head-cne[string]$context.executor.commit-or$tree-cne[string]$context.executor.tree-or$remote-cne[string]$context.executor.remote_url){throw 'Tooling context executor Git identity or cleanliness drifted.'}
     foreach($blob in @($context.executor.closure)){$path=Resolve-MorphospaceWorkspacePath $root ([string]$blob.path) -RequireLeaf;if((Get-MorphospaceFileSha256 $path)-cne[string]$blob.sha256){throw "Tooling context executor closure '$($blob.path)' drifted."}};Assert-ToolingContextClosureImports $root $context.executor
     Assert-ToolingContextHistoricalExecutorClosure $root $context
     $routerMap=@{};foreach($row in @($resolver.routers)){$routerMap[[string]$row.skill_id]=[string]$row.root};if($routerMap.Count-ne@($context.routers).Count){throw 'Tooling context resolver router set differs from context.'};foreach($router in @($context.routers)){if(-not$routerMap.ContainsKey([string]$router.skill_id)){throw "Tooling context router '$($router.skill_id)' is unresolved."};Assert-ToolingContextRouterLive $router ([string]$routerMap[[string]$router.skill_id])}
-    Assert-MorphospaceToolingContextHistoricalObservation -Context $context -WorkspaceRoot $WorkspaceRoot|Out-Null;$true
+    # Preserve the late resolver raw/schema observation; only immutable context validation is consolidated.
+    $lateResolver=Read-ToolingContextValidatedResolver $WorkspaceRoot $context
+    Assert-ToolingContextValidatedHistoricalObservation -Context $context -WorkspaceRoot $WorkspaceRoot -Resolver $lateResolver|Out-Null;$true
 }
 
 
