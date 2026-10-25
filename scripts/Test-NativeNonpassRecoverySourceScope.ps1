@@ -4,7 +4,7 @@ $ErrorActionPreference='Stop'
 $source=Split-Path $PSScriptRoot -Parent
 $root=Join-Path ([IO.Path]::GetTempPath()) ('native-recovery-source-scope-'+[guid]::NewGuid().ToString('N'))
 $module=$null;$breakpoint=$null;$global:NativeRecoveryScopePhysicalObservations=0
-function Scope-Git([string]$At,[string[]]$Argv){$out=@(&(@(Get-Command git -CommandType Application)[0]).Source -C $At @Argv 2>&1);if($LASTEXITCODE-ne0){throw "Scope fixture Git failed: $($out-join' ')"};($out-join"`n").Trim()}
+function Scope-Git([string]$At,[string[]]$Argv){$command=Get-Command git -CommandType Application -ErrorAction Stop|Select-Object -First 1;$out=@(& $command.Source -C $At @Argv 2>&1);if($LASTEXITCODE-ne0){throw "Scope fixture Git failed: $($out-join' ')"};($out-join"`n").Trim()}
 function Scope-Refuses([string]$Label,[scriptblock]$Action){$caught=$null;try{&$Action|Out-Null}catch{$caught=$_};if($null-eq$caught-or$caught.Exception-is[Management.Automation.CommandNotFoundException]){throw "Source scope did not refuse $Label."}}
 try{
     $a=Join-Path $root 'authority';$b=Join-Path $root 'executor';$w=Join-Path $root 'workspace';$request=Join-Path $root 'request.json'

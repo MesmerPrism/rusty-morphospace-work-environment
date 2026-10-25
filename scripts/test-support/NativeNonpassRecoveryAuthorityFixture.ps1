@@ -1,7 +1,7 @@
 # Test-only ephemeral authority and signatures. Never dot-source from production
 # code. Every Git write stays in an explicitly owned disposable fixture root.
 Set-StrictMode -Version Latest
-function Invoke-NativeAuthorityFixtureGit([string]$Root,[string[]]$Argv){$exe=(@(Get-Command git -CommandType Application -ErrorAction Stop)[0]).Source;$output=@(&$exe -C $Root @Argv 2>&1);if($LASTEXITCODE-ne0){throw "Native authority fixture Git failed: $($output-join' ')"};($output-join"`n").Trim()}
+function Invoke-NativeAuthorityFixtureGit([string]$Root,[string[]]$Argv){$command=Get-Command git -CommandType Application -ErrorAction Stop|Select-Object -First 1;$output=@(& $command.Source -C $Root @Argv 2>&1);if($LASTEXITCODE-ne0){throw "Native authority fixture Git failed: $($output-join' ')"};($output-join"`n").Trim()}
 function Write-NativeAuthorityFixtureJson([string]$Path,[object]$Value){[IO.Directory]::CreateDirectory((Split-Path $Path -Parent))|Out-Null;[IO.File]::WriteAllText($Path,($Value|ConvertTo-Json -Depth 60 -Compress),[Text.UTF8Encoding]::new($false))}
 function Assert-NativeAuthorityFixtureChild([string]$Root,[string]$Path){$parent=[IO.Path]::GetFullPath($Root).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar;$child=[IO.Path]::GetFullPath($Path);if(-not$child.StartsWith($parent,[StringComparison]::OrdinalIgnoreCase)){throw 'Native authority fixture refuses a write outside its explicit disposable parent.'};$child}
 function New-NativeNonpassRecoveryAuthorityFixture {

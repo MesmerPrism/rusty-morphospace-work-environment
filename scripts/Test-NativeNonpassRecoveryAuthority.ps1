@@ -8,7 +8,7 @@ $root=Join-Path ([IO.Path]::GetTempPath()) ('wef-native-authority-'+[guid]::NewG
 [IO.Directory]::CreateDirectory($root)|Out-Null
 function Write-TestJson([string]$Path,[object]$Value){[IO.Directory]::CreateDirectory((Split-Path $Path -Parent))|Out-Null;[IO.File]::WriteAllText($Path,($Value|ConvertTo-Json -Depth 50 -Compress),[Text.UTF8Encoding]::new($false))}
 function Copy-TestValue([object]$Value){$Value|ConvertTo-Json -Depth 50|ConvertFrom-Json -Depth 50 -DateKind String}
-function Git([string]$At,[string[]]$Argv){$result=@(& (@(Get-Command git -CommandType Application -ErrorAction Stop)[0]).Source -C $At @Argv 2>&1);if($LASTEXITCODE-ne0){throw "Fixture Git failed: $($result-join' ')"};($result-join"`n").Trim()}
+function Git([string]$At,[string[]]$Argv){$command=Get-Command git -CommandType Application -ErrorAction Stop|Select-Object -First 1;$result=@(& $command.Source -C $At @Argv 2>&1);if($LASTEXITCODE-ne0){throw "Fixture Git failed: $($result-join' ')"};($result-join"`n").Trim()}
 function Init-Git([string]$At){[IO.Directory]::CreateDirectory($At)|Out-Null;Git $At @('init','-b','main')|Out-Null;Git $At @('config','user.name','Fixture')|Out-Null;Git $At @('config','user.email','fixture@example.invalid')|Out-Null;Git $At @('config','core.autocrlf','false')|Out-Null;Git $At @('remote','add','origin','https://github.com/MesmerPrism/rusty-morphospace-work-environment.git')|Out-Null}
 function Commit-Git([string]$At,[string]$Message){Git $At @('add','--all')|Out-Null;Git $At @('commit','-m',$Message)|Out-Null;Git $At @('rev-parse','HEAD')}
 function Assert-Test([bool]$Condition,[string]$Name){if(-not$Condition){throw "Authority self-test failed: $Name"}}
@@ -37,15 +37,15 @@ try{
     function Hash-File([string]$Path){(Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()}
     function Sign-Test([string]$Schema,[object]$Payload,[string]$Path){$canonical=&$crypto {param($v)Get-CanonicalAuthorizationBytes $v} $Payload;$signature=$rsa.SignData($canonical,[Security.Cryptography.HashAlgorithmName]::SHA256,[Security.Cryptography.RSASignaturePadding]::Pss);Write-TestJson $Path ([ordered]@{schema=$Schema;payload=$Payload;signature=[ordered]@{algorithm='RSA-PSS-SHA256';public_key_spki_sha256=$policy.public_key_spki_sha256;value_base64=[Convert]::ToBase64String($signature)}})}
     $now=[DateTimeOffset]::UtcNow;$issued=$now.AddSeconds(-5).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");$expires=$now.AddMinutes(30).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")
-    $adapter=$null
     if($RecoveryAdapterPath){
-        [IO.Directory]::CreateDirectory((Join-Path $b 'scripts/lib'))|Out-Null;[IO.File]::Copy([IO.Path]::GetFullPath($RecoveryAdapterPath),(Join-Path $b 'scripts/lib/MorphospaceNativeNonpassRecoveryAuthorization.psm1'))
+        $fixtureAdapterPath=Join-Path (Join-Path $b 'scripts/lib') ([IO.Path]::GetFileName($RecoveryAdapterPath))
+        [IO.Directory]::CreateDirectory((Join-Path $b 'scripts/lib'))|Out-Null;[IO.File]::Copy([IO.Path]::GetFullPath($RecoveryAdapterPath),$fixtureAdapterPath)
         [IO.File]::Copy((Join-Path $sourceRoot 'scripts/lib/MorphospaceProtocolCommon.psm1'),(Join-Path $b 'scripts/lib/MorphospaceProtocolCommon.psm1'))
         $allA=&$am {param($p)Get-NativeRecoverySourceIdentity $p} $a
         $anchor=[ordered]@{repository=$allA.repository;commit=$allA.commit;tree=$allA.tree;artifacts=@($allA.artifacts|ForEach-Object{[ordered]@{path=$_.path;mode=$_.mode;size_bytes=$_.size_bytes;sha256=$_.sha256}})}
         Write-TestJson (Join-Path $b 'config/native-nonpass-recovery-authority-binding.json') @{schema='rusty.morphospace.workflow.native_nonpass_recovery_authority_binding.v1';authorities=@($anchor)}
         $head=Commit-Git $b 'bind independently adopted fixture A';Git $b @('checkout','main')|Out-Null;Git $b @('reset','--hard',$base)|Out-Null;Git $b @('merge','--no-ff','repair','-m','normal bound source landing')|Out-Null;$landing=Git $b @('rev-parse','HEAD');Git $b @('checkout','repair')|Out-Null
-        $adapter=Import-Module (Join-Path $b 'scripts/lib/MorphospaceNativeNonpassRecoveryAuthorization.psm1') -Force -PassThru
+        $adapter=Import-Module $fixtureAdapterPath -Force -PassThru
     }
     $sourceIdentity=&$am {param($p)Get-NativeRecoverySourceIdentity $p} $b
     $historicalIdentity=@(&$am {param($p,$h)Get-NativeRecoveryObjectSourceIdentity $p $h} $b $sourceIdentity.commit)
@@ -77,7 +77,7 @@ try{
     Assert-Test (-not(Test-Path (Join-Path $w 'dispatched.txt'))) 'verify-only dispatched candidate';$script:cases.Add('verify-only no dispatch')
     $bindings=$derived.current_bindings;$bindings|Add-Member request_path $reqpath
     &$am {param($w,$r,$c,$b)Assert-MorphospaceNativeNonpassRecoveryAuthorization -WorkspaceRoot $w -Request $r -CurrentBindings $c -ExecutorRoot $b} $w $request $bindings $b|Out-Null
-    if($null-ne$adapter){
+    if($RecoveryAdapterPath){
         &$adapter {param($w,$r,$c,$b)Assert-MorphospaceNativeNonpassRecoveryAuthorization -WorkspaceRoot $w -Request $r -CurrentBindings $c -ExecutorRoot $b} $w $request $bindings $b|Out-Null;$script:cases.Add('independently pinned B adapter')
         $bindingPath=Join-Path $b 'config/native-nonpass-recovery-authority-binding.json';$savedBinding=[IO.File]::ReadAllBytes($bindingPath);$savedPolicy=[IO.File]::ReadAllBytes((Join-Path $a 'config/native-nonpass-recovery-authority.json'));$savedModule=[IO.File]::ReadAllBytes((Join-Path $a 'scripts/lib/NativeNonpassRecoveryAuthority.psm1'))
         foreach($damage in @('missing-adopted-A','tampered-A-module','tampered-A-policy','fake-locator')){
