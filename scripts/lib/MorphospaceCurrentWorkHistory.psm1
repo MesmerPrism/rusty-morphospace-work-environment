@@ -7,6 +7,7 @@ Import-Module (Join-Path $PSScriptRoot 'MorphospaceDevelopmentEnvelopeSemantics.
 Import-Module (Join-Path $PSScriptRoot 'MorphospaceSourceCompositionIdentity.psm1')
 Import-Module (Join-Path $PSScriptRoot 'MorphospaceLegacyToolingReclassification.psm1')
 Import-Module (Join-Path $PSScriptRoot '../AcceptedValidationEvidenceRelocation.psm1')
+$script:currentWorkCustodyModule=Import-Module (Join-Path $PSScriptRoot 'MorphospaceNonpassCustodyCorrection.psm1') -PassThru
 
 # A read-only lifecycle projection, not a new receipt or recovery mechanism.
 # Earlier records cannot grant current authority merely by being classified here.
@@ -152,6 +153,14 @@ function Get-MorphospaceCurrentWorkHistory {
     param([Parameter(Mandatory)][string]$WorkspaceRoot, [switch]$RequireIdle)
     $workspace = [IO.Path]::GetFullPath($WorkspaceRoot)
     $state = Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'workspace.state.json' -RequireLeaf)
+    # Authenticate immutable correction inventory before recursive retirement
+    # or accepted-boundary traversal. This report is audit-only; no consumer
+    # accepts it as a validation proof or as an input classification.
+    $custodyAudit=@(&$script:currentWorkCustodyModule {param($w)
+        foreach($row in @(Get-NonpassCustodyCommittedInventory $w)){
+            [pscustomobject]@{unit_id=[string]$row.unit_id;return_event_id=[string]$row.return_event_id;artifact_id=[string]$row.artifact_id;classification='nonpass-audit-inert-unavailable';current_policy_revalidated=$false;grants_validation_credit=$false;grants_acceptance_credit=$false;proof_reuse=$false}
+        }
+    } $workspace)
     $archive = $null
     $archiveTransactions = Join-Path $workspace 'history-archive/transactions'
     if (($state.PSObject.Properties.Name -contains 'history_archive' -and $null -ne $state.history_archive) -or
@@ -418,6 +427,11 @@ function Get-MorphospaceCurrentWorkHistory {
                         $hasNewOwnerAction=$true
                         Import-Module (Join-Path $PSScriptRoot '../InitialValidationProfileClosureCorrection.psm1')
                         [void](Test-MorphospaceHistoricalInitialValidationProfileClosure -WorkspaceRoot $workspace -ExpectedEvent $event)
+                    }elseif([string]$document.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v4'){
+                        $hasNewOwnerAction=$true
+                        if(-not$ownerActionSchemas.Add([string]$document.schema)){throw 'Current-work continuation repeats a v4 custody correction.'}
+                        $candidateOwner=Import-Module (Join-Path $PSScriptRoot '../CandidateFreeze.psm1') -PassThru
+                        &$candidateOwner {param($w,$i)Assert-MorphospaceCandidateRevisionRecoveryBindings $w $i -Historical} $workspace $intent
                     }
                 }
                 if($hasNewOwnerAction-and$ownerActionSchemas.Count-ne1){throw 'Current-work continuation mixes distinct owner actions.'}
@@ -536,7 +550,7 @@ function Get-MorphospaceCurrentWorkHistory {
         }
         if ([string]$proof.intent.target.unit.sha256 -cne (Get-MorphospaceCanonicalJsonSha256 $units[$id]) -or [string]$proof.intent.target.unit.document.status -cne 'accepted') { throw "Current-work prerequisite '$id' differs from accepted evidence." }
     }
-    return [pscustomobject]@{ authenticated=$true; sequence=$sequence; accepted_unit_id=$acceptedId; historical_ids=$historical; retired_ids=$retired; historically_retired_proposed_ids=$historicallyRetiredProposed; retired_active_ids=$retiredActive; active_retirements=$activeRetirements; authenticated_superseded_scope_conflict_ids=$supersededScopeConflicts; units=$units; events=$events; audit_only=@($audit.ToArray()) }
+    return [pscustomobject]@{ authenticated=$true; sequence=$sequence; accepted_unit_id=$acceptedId; historical_ids=$historical; retired_ids=$retired; historically_retired_proposed_ids=$historicallyRetiredProposed; retired_active_ids=$retiredActive; active_retirements=$activeRetirements; authenticated_superseded_scope_conflict_ids=$supersededScopeConflicts; units=$units; events=$events; audit_only=@($audit.ToArray())+@($custodyAudit) }
 }
 
 function Get-MorphospacePreparationStepEvidence {

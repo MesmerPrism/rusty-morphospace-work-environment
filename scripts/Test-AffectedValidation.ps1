@@ -6231,7 +6231,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     } | ForEach-Object { [string]$_.check_id } | Sort-Object)
     # Evidence-only consumers do not expand the focused preparation trigger closure.
     $expectedPreparationRepositoryScopeTriggers=@($preparationRepositoryScopeConsumerChecks | Sort-Object)
-    $expectedPreparationRepositoryScopeConsumers=@(($preparationRepositoryScopeConsumerChecks + @('bootstrap-validation-receipt')) | Sort-Object)
+    $expectedPreparationRepositoryScopeConsumers=@(($preparationRepositoryScopeConsumerChecks + @('bootstrap-validation-receipt','nonpass-evidence-recovery','nonpass-receipt-evidence')) | Sort-Object)
     Assert-True (($preparationRepositoryScopeTriggers -join '|') -ceq ($expectedPreparationRepositoryScopeTriggers -join '|')) 'Preparation-repository-scope trigger consumers differ from the exact focused inventory.'
     Assert-True (($preparationRepositoryScopeConsumers -join '|') -ceq ($expectedPreparationRepositoryScopeConsumers -join '|')) 'Preparation-repository-scope evidence consumers differ from the exact focused inventory.'
     $externalProtectedOwners = [ordered]@{

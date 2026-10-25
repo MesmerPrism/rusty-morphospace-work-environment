@@ -1,5 +1,6 @@
 $script:ActiveRetirementProofBatch=$null
 Set-StrictMode -Version 2.0
+Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceNonpassCustodyCorrection.psm1')
 $ErrorActionPreference='Stop'
 $script:ActiveRetirementHistoricalEventsScope=$null
 $script:ActiveRetirementHadCallerProtocolCommon=$null-ne(Get-Command Read-MorphospaceProtocolJson -ErrorAction SilentlyContinue)
@@ -304,7 +305,7 @@ function Set-ActiveRetirementFrozenBeginRepositoryProjection {
 }
 
 function Assert-ActiveRetirementRetainedLifecycle {
-    param([string]$Workspace,[object]$Event,[object]$Transition,[switch]$SupersessionLineage,[object]$SupersessionProject=$null,[object]$SupersessionFeatureLock=$null)
+    param([string]$Workspace,[object]$Event,[object]$Transition,[switch]$SupersessionLineage,[object]$SupersessionProject=$null,[object]$SupersessionFeatureLock=$null,[string]$NonpassCustodyRequestPath='')
     $intent=$Transition.intent;$unitId=[string]$Event.unit_id
     if($SupersessionLineage){
         if($null-eq$SupersessionProject-or$null-eq$SupersessionFeatureLock){throw 'Active retirement v2 lifecycle replay requires its reconstructed project and feature-lock context.'}
@@ -337,7 +338,7 @@ function Assert-ActiveRetirementRetainedLifecycle {
             Set-ActiveRetirementInstructionRepositoryProjection $state $unit $receipt -HistoricalObservation:$SupersessionLineage
         }
         $unit=Copy-ActiveRetirementValue $targetUnit
-    }elseif(@($intent.artifacts|Where-Object{[string](ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$_.bytes_base64))).schema-ceq'rusty.morphospace.workflow.candidate_freeze.v3'}).Count-eq1){
+    }elseif(@($intent.artifacts|Where-Object{[string](ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$_.bytes_base64))).schema-cin@('rusty.morphospace.workflow.candidate_freeze.v3','rusty.morphospace.workflow.candidate_freeze.v4')}).Count-eq1){
         $revisionOwner=Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1') -PassThru
         &$revisionOwner {param($w,$i) Assert-MorphospaceCandidateRevisionRecoveryBindings $w $i -Historical} $Workspace $intent
         $unit=Copy-ActiveRetirementValue $targetUnit;$state.validation_checkpoint=$null
@@ -366,7 +367,8 @@ function Assert-ActiveRetirementRetainedLifecycle {
         if([string]$receipt.unit_id-cne$unitId-or[string]$receipt.project_id-cne[string]$Event.project_id-or[string]$receipt.result-cne$result){throw 'Active retirement ReturnToActive receipt is detached.'}
         if(@($intent.artifacts).Count-ne1-or[string]$intent.artifacts[0].path-cne[string]$Event.receipts[1]-or[string]$Event.receipts[1]-cne"receipts/$($Event.event_id)-retained-validation.json"-or[string]$intent.artifacts[0].sha256-cne(Get-MorphospaceFileSha256 $receiptPath)){throw 'Active retirement retained ReturnToActive bytes are detached.'}
         $ids=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-        foreach($artifact in @($receipt.artifacts)){$path=if([IO.Path]::IsPathFullyQualified([string]$artifact.path)){[string]$artifact.path}else{Join-Path (Split-Path $receiptPath -Parent) ([string]$artifact.path)};if(-not$ids.Add([string]$artifact.artifact_id)-or(Get-MorphospaceFileSha256 $path)-cne([string]$artifact.sha256).ToLowerInvariant()){throw 'Active retirement retained ReturnToActive evidence bytes drifted.'}}
+        foreach($artifact in @($receipt.artifacts)){if(-not$ids.Add([string]$artifact.artifact_id)){throw 'Active retirement retained ReturnToActive repeats an artifact ID.'}}
+        if($NonpassCustodyRequestPath){$custody=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceNonpassCustodyCorrection.psm1') -PassThru;&$custody {param($w,$r,$p,$e)Assert-NonpassCustodyReceiptArtifacts $w $r $p $e} $Workspace $relative $NonpassCustodyRequestPath ([string]$Event.event_id)}else{Assert-MorphospaceHistoricalNonpassArtifacts -WorkspaceRoot $Workspace -ReceiptPath $relative -ReturnEventId ([string]$Event.event_id)}
         foreach($evidence in @($receipt.criteria)+@($receipt.gates)+@(if($null-ne$receipt.device_validation){$receipt.device_validation})){foreach($reference in @($evidence.evidence_refs)){if(-not$ids.Contains([string]$reference)){throw 'Active retirement retained ReturnToActive references unknown evidence.'}}}
         $unit.status='active';$state.validation_checkpoint=[pscustomobject]@{tier=[string]$receipt.tier;receipt=$relative;result=$result}
     }elseif([string]$Event.event_id-cmatch('^'+[regex]::Escape($unitId)+'-validation-fail-[0-9]{4,}$')){
@@ -719,7 +721,7 @@ function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
                 $toolingModule=Import-Module (Join-Path $PSScriptRoot 'ToolingContextUpgrade.psm1') -PassThru
                 $null=&$toolingModule {param($root,$expected,$transition) Assert-ToolingContextHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $expected -Transition $transition} $workspaceFull $event $proof
                 $documents=@($proof.intent.artifacts|ForEach-Object{ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$_.bytes_base64))})
-                $toolingUpgradeRequests=@($documents|Where-Object{[string]$_.schema-ceq'rusty.morphospace.workflow.tooling_context_upgrade.v1'})
+                $toolingUpgradeRequests=@($documents|Where-Object schema -CEQ 'rusty.morphospace.workflow.tooling_context_upgrade.v1')
                 $toolingUpgradeContexts=@($documents|Where-Object{[string]$_.schema-ceq'rusty.morphospace.workflow.tooling_context.v1'})
                 if($toolingUpgradeRequests.Count-ne1-or$toolingUpgradeContexts.Count-ne1){throw 'Active retirement tooling upgrade proof artifacts are ambiguous.'}
                 foreach($binding in @(Get-ActiveRetirementToolingProofBindings -WorkspaceRoot $workspaceFull -Request $toolingUpgradeRequests[0] -Context $toolingUpgradeContexts[0])){Set-PlanningProjection ([string]$binding.path) ([string]$binding.sha256) -AuxiliaryProof}

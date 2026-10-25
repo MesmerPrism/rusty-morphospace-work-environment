@@ -1,4 +1,5 @@
 Set-StrictMode -Version 2.0
+Import-Module (Join-Path $PSScriptRoot 'MorphospaceNonpassCustodyCorrection.psm1')
 $ErrorActionPreference='Stop'
 Import-Module (Join-Path $PSScriptRoot 'MorphospaceProtocolCommon.psm1')
 Import-Module (Join-Path $PSScriptRoot 'MorphospaceTransitionLedger.psm1')
@@ -58,7 +59,7 @@ function Assert-RetirementLineageSource {
 }
 function Assert-RetirementLineageFreezeSource {
  param([string]$Workspace,[object]$Intent,[object]$Unit)
- $freezes=@(foreach($schema in @('rusty.morphospace.workflow.candidate_freeze.v1','rusty.morphospace.workflow.candidate_freeze.v2','rusty.morphospace.workflow.candidate_freeze.v3')){$artifact=Get-RetirementLineageArtifact $Intent $schema;if($null-ne$artifact){$artifact}})
+ $freezes=@(foreach($schema in @('rusty.morphospace.workflow.candidate_freeze.v1','rusty.morphospace.workflow.candidate_freeze.v2','rusty.morphospace.workflow.candidate_freeze.v3','rusty.morphospace.workflow.candidate_freeze.v4')){$artifact=Get-RetirementLineageArtifact $Intent $schema;if($null-ne$artifact){$artifact}})
  if($freezes.Count-eq0){return};if($freezes.Count-ne1){throw 'Active retirement lineage Freeze source receipt is ambiguous.'}
  # The source at this historical Freeze can differ from the eventual endpoint.
  # Unlike a fresh Supersede input, Freeze actually captured its raw-file hash.
@@ -236,7 +237,8 @@ function Get-MorphospaceActiveRetirementSupersessionLineage {
      $null=&$owner {param($receipt) Assert-ActiveRetirementSchema $receipt 'validation-receipt.schema.json'} $receipt
      if([string]$receipt.result-cne$result-or[string]$receipt.unit_id-cne[string]$unit.unit_id-or[string]$receipt.project_id-cne[string]$event.project_id){throw 'Active retirement lineage ReturnToActive receipt identity differs.'}
      $artifactIds=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-     foreach($artifact in @($receipt.artifacts)){if(-not$artifactIds.Add([string]$artifact.artifact_id)){throw 'Active retirement lineage nonpassing evidence repeats an artifact ID.'};$path=if([IO.Path]::IsPathRooted([string]$artifact.path)){[string]$artifact.path}else{Join-Path (Split-Path $receiptPath -Parent) ([string]$artifact.path)};if((Get-MorphospaceFileSha256 $path)-cne([string]$artifact.sha256).ToLowerInvariant()){throw 'Active retirement lineage nonpassing evidence drifted.'}}
+     foreach($artifact in @($receipt.artifacts)){if(-not$artifactIds.Add([string]$artifact.artifact_id)){throw 'Active retirement lineage nonpassing evidence repeats an artifact ID.'}}
+     Assert-MorphospaceHistoricalNonpassArtifacts -WorkspaceRoot $workspace -ReceiptPath $relative -ReturnEventId ([string]$event.event_id)
      $expectedCriteria=@($unit.acceptance|ForEach-Object{[string]$_.acceptance_id}|Sort-Object);$actualCriteria=@($receipt.criteria|ForEach-Object{[string]$_.acceptance_id}|Sort-Object)
      if(($expectedCriteria-join'|')-cne($actualCriteria-join'|')){throw 'Active retirement lineage nonpassing receipt acceptance coverage differs.'}
      foreach($criterion in @($receipt.criteria)){$definition=@($unit.acceptance|Where-Object{[string]$_.acceptance_id-eq[string]$criterion.acceptance_id});if($definition.Count-ne1-or[string]$definition[0].command-ne[string]$criterion.command){throw 'Active retirement lineage nonpassing receipt acceptance command differs.'}}

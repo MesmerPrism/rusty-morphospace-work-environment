@@ -266,7 +266,7 @@ function Get-MorphospaceDevelopmentEnvelopeContinuation {
                 $amendmentModule = Import-Module (Join-Path $PSScriptRoot '../ActiveWriteScopeAmendment.psm1') -PassThru
                 $null = & $amendmentModule { param($root,$expected,$transition) Assert-ActiveWriteScopeHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $expected -Transition $transition } $workspace $event $proof
                 $kind = 'amendment'
-            } elseif ($null -ne (Get-DevelopmentContinuationArtifact $intent 'rusty.morphospace.workflow.candidate_freeze.v3')) {
+            } elseif ($null -ne (Get-DevelopmentContinuationArtifact $intent 'rusty.morphospace.workflow.candidate_freeze.v3') -or $null -ne (Get-DevelopmentContinuationArtifact $intent 'rusty.morphospace.workflow.candidate_freeze.v4')) {
                 $revisionOwner=Import-Module (Join-Path $PSScriptRoot '../CandidateFreeze.psm1') -PassThru
                 &$revisionOwner {param($root,$transition) Assert-MorphospaceCandidateRevisionRecoveryBindings $root $transition -Historical} $workspace $intent
                 Assert-DevelopmentContinuationStableAuthority $currentUnit $targetUnit @('candidate_freeze') 'candidate revision'
