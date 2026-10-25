@@ -1,0 +1,276 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/native-nonpass-recovery-request-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "project_id",
+    "unit_id",
+    "freeze_id",
+    "request_raw_sha256",
+    "authority",
+    "executor",
+    "qualification_raw_sha256",
+    "current_bindings",
+    "failure_tuple_sha256",
+    "defects_sha256"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rusty.morphospace.workflow.native_nonpass_recovery_request.v1"
+    },
+    "project_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+    },
+    "unit_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+    },
+    "freeze_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+    },
+    "request_raw_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "commit",
+        "tree",
+        "closure_sha256",
+        "policy_sha256"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        },
+        "closure_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "policy_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "executor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "commit",
+        "tree",
+        "closure_sha256",
+        "artifacts"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        },
+        "tree": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        },
+        "closure_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4096,
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "path",
+                  "state",
+                  "mode",
+                  "size_bytes",
+                  "sha256"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\:\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "state": {
+                    "const": "present"
+                  },
+                  "mode": {
+                    "enum": [
+                      "100644",
+                      "100755"
+                    ]
+                  },
+                  "size_bytes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 16777216
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "path",
+                  "state"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\\\:\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "state": {
+                    "const": "absent"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "qualification_raw_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "current_bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_raw_sha256",
+        "state_raw_sha256",
+        "unit_raw_sha256",
+        "feature_lock_raw_sha256",
+        "events_raw_sha256",
+        "source_composition_raw_sha256",
+        "repository_map_raw_sha256",
+        "request_raw_sha256",
+        "workspace_path_sha256",
+        "events_length",
+        "event_tail_id",
+        "final_repositories",
+        "planning_commit",
+        "planning_tree"
+      ],
+      "properties": {
+        "project_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "state_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "unit_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "feature_lock_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "events_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "source_composition_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "repository_map_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "request_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "workspace_path_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "events_length": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "event_tail_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+        },
+        "final_repositories": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "repo_id",
+              "commit",
+              "tree"
+            ],
+            "properties": {
+              "repo_id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+              },
+              "commit": {
+                "type": "string",
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+              },
+              "tree": {
+                "type": "string",
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+              }
+            }
+          }
+        },
+        "planning_commit": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        },
+        "planning_tree": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+        }
+      }
+    },
+    "failure_tuple_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "defects_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

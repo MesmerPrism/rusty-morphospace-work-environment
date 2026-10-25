@@ -32,6 +32,19 @@ land the source while product adoption remains pending. A package that changes
 workflow or publication authority still requires its own locked owner; this
 separation cannot downgrade that source work to the fast lane.
 
+The exact failed-NONPASS custody repair has a narrow prospective source-policy
+bootstrap in [Native NONPASS Recovery Authority](NATIVE_NONPASS_RECOVERY_AUTHORITY.md).
+An explicit repository-owner decision, including an exact decision under active
+Full Authority delegation, may qualify the independent policy/verifier and its
+bounded producer/correction source delivery through the existing external-owner
+protected Static gate, independent review, required dynamic CI and normal merge.
+This evolves the locked-source prerequisite for those exact source deliveries;
+it is not a fast package, a general recovery exemption or native unit acceptance.
+The reviewed candidate and complete path/mode/size/hash set must exist before
+each candidate-specific decision. Independently adopted policy, source
+qualification and a separate signed current-state authorization remain mandatory
+before the native repair runs.
+
 When a frozen product contract explicitly orders source publication after its
 acceptance, preserve that contract and record the human's explicit superseding
 decision through the stateless source-delivery disposition in
