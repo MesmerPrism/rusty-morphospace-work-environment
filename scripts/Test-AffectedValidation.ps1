@@ -6239,6 +6239,8 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         '.github/workflows/validate.yml' = 'selector-trust-root'
         'config/external-owner-authorization.json' = 'external-owner-authorization-core'
         'config/external-validation-authority.json' = 'external-validation-verifier'
+        'config/native-nonpass-recovery-authority-binding.json' = 'native-nonpass-recovery-binding'
+        'config/native-nonpass-recovery-authority.json' = 'native-nonpass-recovery-authority'
         'manifests/affected-validation-registry.json' = 'affected-validation-registry'
         'schemas/external-owner-authorization-policy-v1.schema.json' = 'external-owner-authorization-core'
         'schemas/external-owner-authorization-request-v1.schema.json' = 'external-owner-authorization-core'
@@ -6255,7 +6257,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     }
     $externalPolicy = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'config/external-validation-authority.json')
     $mandatoryProtectedPaths = @($externalPolicy.mandatory_protected_paths)
-    Assert-True ($mandatoryProtectedPaths.Count -eq 17) "External validation authority protected-path inventory changed from the expected 17 paths: $($mandatoryProtectedPaths.Count)."
+    Assert-True ($mandatoryProtectedPaths.Count -eq 19) "External validation authority protected-path inventory changed from the expected 19 paths: $($mandatoryProtectedPaths.Count)."
     Assert-True ($externalProtectedOwners.Count -eq $mandatoryProtectedPaths.Count) 'External protected-path ownership fixture does not cover the complete mandatory inventory.'
     $affectedModule = Get-Module MorphospaceAffectedValidation
     foreach ($protectedPath in $mandatoryProtectedPaths) {
@@ -6266,6 +6268,17 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
                 if (Test-MorphospaceAffectedPathSetMatch -Path $Path -Patterns @($PathSets[$pathSetId])) { [string]$pathSetId }
             }
         } ([string]$protectedPath) $compiledRegistry.path_sets)
+        if ([string]$protectedPath -ceq 'config/native-nonpass-recovery-authority-binding.json') {
+            $trackedBinding = @(& git -C $repoRoot ls-tree --name-only HEAD -- ([string]$protectedPath))
+            if ($LASTEXITCODE -ne 0) { throw 'Protected native binding fixture could not inspect exact HEAD.' }
+            if ($trackedBinding.Count -eq 0) {
+                # A protects this exact future B path before its implementation
+                # exists. No file or ownership adoption is inferred from policy.
+                Assert-True (-not (Test-Path -LiteralPath (Join-Path $repoRoot ([string]$protectedPath)))) 'Future protected native binding must remain physically absent until its owner is delivered.'
+                Assert-True ($matchingPathSets.Count -eq 0) 'Absent future native binding unexpectedly has a delivered owner.'
+                continue
+            }
+        }
         Assert-True ($matchingPathSets.Count -eq 1) "Mandatory external protected path '$protectedPath' must have exactly one path-set owner; found '$($matchingPathSets -join ',')'."
         $expectedOwner = [string]$externalProtectedOwners[[string]$protectedPath]
         Assert-True ([string]$matchingPathSets[0] -ceq $expectedOwner) "Mandatory external protected path '$protectedPath' belongs to '$($matchingPathSets[0])' instead of '$expectedOwner'."
@@ -6285,7 +6298,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     $proportionalMappings = @(
         [pscustomobject]@{ path='scripts/Test-CanonicalTextBytes.ps1'; checks=@('canonical-text-bytes','external-owner-authorization','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/New-ExternalOwnerAuthorizationComment.ps1'; checks=@('canonical-text-bytes','external-owner-authorization','public-boundary'); exact_checks=$true },
-        [pscustomobject]@{ path='scripts/lib/ExternalOwnerAuthorization.psm1'; checks=@('authority-runner-fast','canonical-text-bytes','external-owner-authorization','external-validation-github-adapter','historical-validation-debt-baseline','prepared-push-transaction-suffix-reconciliation','public-boundary'); exact_checks=$true },
+        [pscustomobject]@{ path='scripts/lib/ExternalOwnerAuthorization.psm1'; checks=@('authority-runner-fast','canonical-text-bytes','external-owner-authorization','external-validation-github-adapter','historical-validation-debt-baseline','native-nonpass-recovery-authority','native-nonpass-recovery-source-scope','prepared-push-transaction-suffix-reconciliation','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-ExternalOwnerAuthorization.ps1'; checks=@('canonical-text-bytes','external-owner-authorization','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='schemas/external-validation-authority-assessment-v1.schema.json'; checks=@('canonical-text-bytes','external-owner-authorization','external-validation-authority','external-validation-github-adapter','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-ExternalValidationAuthoritySelfTest.ps1'; checks=@('external-validation-authority','external-validation-github-adapter','public-boundary'); exact_checks=$true },
