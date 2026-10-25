@@ -1,4 +1,4 @@
-param()
+param([switch]$NativeRecoveryProtectionOnly)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -114,6 +114,42 @@ function Assert-Rejected {
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $authorityScript = Join-Path $PSScriptRoot "Test-ExternalValidationAuthority.ps1"
+function Test-NativeRecoveryPolicyProtection {
+    # Exercise the real base-owned verifier with the actual source policy's
+    # mandatory paths. A config-only key or anchor change must need admission,
+    # including a future anchor path which is absent from the trusted base.
+    $caseRoot=Join-Path ([IO.Path]::GetTempPath()) ('native-policy-protection-'+[guid]::NewGuid().ToString('N'))
+    [IO.Directory]::CreateDirectory($caseRoot)|Out-Null
+    $expectedRoot=[IO.Path]::GetFullPath($caseRoot)
+    try{
+        Invoke-GitTest $caseRoot @('init','--initial-branch=main')|Out-Null
+        Invoke-GitTest $caseRoot @('config','user.name','Native policy test')|Out-Null
+        Invoke-GitTest $caseRoot @('config','user.email','native-policy@example.invalid')|Out-Null
+        $sourcePolicy=Get-Content -LiteralPath (Join-Path $repoRoot 'config/external-validation-authority.json') -Raw|ConvertFrom-Json
+        $fixturePolicy=[ordered]@{schema=$sourcePolicy.schema;policy_id='native-policy-protection';repository='example/example';mandatory_protected_paths=@($sourcePolicy.mandatory_protected_paths);protected_rules=@($sourcePolicy.protected_rules);approved_change_sets=@();status='active'}
+        Write-Utf8 (Join-Path $caseRoot 'config/external-validation-authority.json') ($fixturePolicy|ConvertTo-Json -Depth 20)
+        Write-Utf8 (Join-Path $caseRoot 'README.md') "Fixture baseline`n"
+        Invoke-GitTest $caseRoot @('add','.')|Out-Null
+        Invoke-GitTest $caseRoot @('commit','-qm','Independent protected-policy base')|Out-Null
+        $base=Invoke-GitTest $caseRoot @('rev-parse','HEAD')
+        foreach($path in @('config/native-nonpass-recovery-authority.json','config/native-nonpass-recovery-authority-binding.json')){
+            Invoke-GitTest $caseRoot @('switch','--detach',$base)|Out-Null
+            Write-Utf8 (Join-Path $caseRoot $path) "{}`n"
+            Invoke-GitTest $caseRoot @('add','--',$path)|Out-Null
+            Invoke-GitTest $caseRoot @('commit','-qm','Unapproved exact config-only change')|Out-Null
+            $head=Invoke-GitTest $caseRoot @('rev-parse','HEAD')
+            Invoke-GitTest $caseRoot @('switch','--detach',$base)|Out-Null
+            Assert-Rejected (Invoke-AuthorityTest $caseRoot $base $head) 'Protected changes do not match an exact base-approved change set' "Native recovery configuration $path"
+        }
+        Write-Output 'Native recovery key policy and future authority binding require trusted-base admission.'
+    }finally{
+        $actual=[IO.Path]::GetFullPath((Get-Item -LiteralPath $caseRoot -Force).FullName)
+        if($actual-cne$expectedRoot-or-not([IO.Path]::GetFileName($actual)).StartsWith('native-policy-protection-',[StringComparison]::Ordinal)){throw 'Native policy fixture cleanup target changed.'}
+        Remove-Item -LiteralPath $actual -Recurse -Force
+    }
+}
+Test-NativeRecoveryPolicyProtection
+if($NativeRecoveryProtectionOnly){return}
 $temp = Join-Path (
     [IO.Path]::GetTempPath()
 ) ("morphospace-external-authority-" + [guid]::NewGuid().ToString("N"))
