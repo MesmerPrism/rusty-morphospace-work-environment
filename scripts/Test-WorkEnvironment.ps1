@@ -353,11 +353,13 @@ if ($SelfTest) {
     }
 
     if ($Tier -in @("Standard", "Deep")) {
+        $automationTest = [pscustomobject]@{ name = "automation:work-unit"; script = "Test-WorkUnitAutomation.ps1"; arguments = @(); detail = "Validated transitions, preservation, routing, push preparation, and recovery." }
         try {
-            [void](Invoke-IsolatedWorkflowSelfTest -RepositoryRoot $RepoRoot -Path (Join-Path $RepoRoot "scripts\Test-WorkUnitAutomation.ps1") -TimeoutSeconds 900)
-            Add-CheckResult -Name "automation:work-unit" -Status "ok" -Detail "Validated transitions, preservation, routing, push preparation, and recovery."
+            $automationTestPath = Join-Path (Join-Path $RepoRoot "scripts") $automationTest.script
+            [void](Invoke-IsolatedWorkflowSelfTest -RepositoryRoot $RepoRoot -Path $automationTestPath -Arguments $automationTest.arguments -TimeoutSeconds 900)
+            Add-CheckResult -Name $automationTest.name -Status "ok" -Detail $automationTest.detail
         } catch {
-            Add-CheckResult -Name "automation:work-unit" -Status "missing" -Required $true -Detail $_.Exception.Message
+            Add-CheckResult -Name $automationTest.name -Status "missing" -Required $true -Detail $_.Exception.Message
         }
     }
 
