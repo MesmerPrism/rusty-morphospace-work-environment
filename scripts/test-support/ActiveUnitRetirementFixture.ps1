@@ -139,6 +139,8 @@ function Add-ActiveRetirementSupersession {
 function Add-ActiveRetirementRootNonpass {
     param([object]$Seed,[string]$TestRoot,[switch]$ReturnToActive,[ValidateSet('Committed','Untracked','Ignored')][string]$AttemptDisposition='Committed')
     $workspace=$Seed.workspace;$mapPath=Join-Path $workspace 'repository-map.json';$planning=$Seed.source_repository
+    # Storage is a fixture prerequisite, never a late relaxation after Freeze.
+    [IO.File]::AppendAllText((Join-Path $planning '.git/info/exclude'),"`n/morphospace/receipts/u002-modeled-nonpass-evidence/`n",[Text.UTF8Encoding]::new($false))
     Invoke-EnvelopeGit $planning @('add','morphospace')|Out-Null;Invoke-EnvelopeGit $planning @('commit','--allow-empty','-qm','Modeled admitted Claim checkpoint')|Out-Null
     $freezePath=Join-Path $TestRoot 'root-freeze.json';$null=New-RetirementNonpassFreezeRequest $workspace $mapPath $freezePath
     $automation=Join-Path $PSScriptRoot '../Invoke-WorkUnitAutomation.ps1';$common=@{WorkspaceRoot=$workspace;UnitId='u002';RepoMapPath=$mapPath;ValidationTier='quick'}
@@ -232,6 +234,7 @@ function Add-ActiveRetirementSupersededLifecycle {
     # Keep the reviewed input outside the source worktree. The genuine source
     # lock pins its clean proposed-input HEAD; own-planning transport stays at
     # that HEAD while real lifecycle files are written before this Freeze.
+    [IO.File]::AppendAllText((Join-Path $Seed.source_repository '.git/info/exclude'),"`n/morphospace/receipts/$UnitId-second-modeled-nonpass-evidence/`n",[Text.UTF8Encoding]::new($false))
     $freezePath=Join-Path (Split-Path $Seed.source_repository -Parent) "$UnitId-after-supersede-freeze.json"
     $null=New-RetirementNonpassFreezeRequest -Workspace $workspace -RepositoryMapPath $RepoMapPath -RequestPath $freezePath -UnitId $UnitId
     $call=@{Action='FreezeCandidate';CandidateFreeze=$freezePath;OutPath=(Join-Path $workspace "receipts/$UnitId-extension-freeze.json");Timestamp='2026-08-25T00:00:51.2000000Z'}

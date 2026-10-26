@@ -56,6 +56,10 @@ function Get-RunnerFastFixtureModuleClosure {
         'scripts/Test-TransitionLedger.ps1|ModulePath' = 2
         # The compact scanner captures the scope prefix from `$using:processModule`.
         'scripts/Test-AuthorityRecordReadiness.ps1|using' = 1
+        # This import selects independently authenticated external authority A
+        # from its adopted binding. It is not a module in the copied candidate
+        # closure; retain the exact adapter/variable/count and reject all others.
+        'scripts/lib/MorphospaceNativeNonpassRecoveryAuthorization.psm1|authorityModulePath' = 1
     }
     $observedAuditedDynamicImports = @{}
 
@@ -370,12 +374,26 @@ try {
     Write-TestText (Join-Path $closureFixture 'scripts\dynamic-entry.ps1') "`$module = 'leaf.psm1'`nImport-Module `$module -Force`n"
     Write-TestText (Join-Path $closureFixture 'scripts\scoped-entry.ps1') "`$script:ScopedModulePath = Join-Path `$PSScriptRoot 'leaf.psm1'`nImport-Module `$script:ScopedModulePath`n"
     Write-TestText (Join-Path $closureFixture 'scripts\full-path-entry.ps1') "`$path = [IO.Path]::GetFullPath((Join-Path `$PSScriptRoot 'leaf.psm1'))`nImport-Module `$path`n"
+    $auditedAuthorityPath='scripts/lib/MorphospaceNativeNonpassRecoveryAuthorization.psm1'
+    $auditedAuthorityBody='Import-Module $authorityModulePath -PassThru -Scope Local -Force'+"`n"
+    Write-TestText (Join-Path $closureFixture $auditedAuthorityPath) $auditedAuthorityBody
+    Write-TestText (Join-Path $closureFixture 'scripts/unknown-authority-import.ps1') $auditedAuthorityBody
     Initialize-TestGitRepository $git $closureFixture 'fixture module closure'
     $closureProbe = @(Get-RunnerFastFixtureModuleClosure -Git $git -SourceRoot $closureFixture -SeedPaths @('scripts/root.ps1'))
     Assert-RunnerFast (($closureProbe -join ',') -ceq 'scripts/leaf.psm1,scripts/middle.psm1,scripts/root.ps1') 'tracked entrypoint and module import closure was not derived exactly'
     $literalVariableProbe = @(Get-RunnerFastFixtureModuleClosure -Git $git -SourceRoot $closureFixture -SeedPaths @('scripts/scoped-entry.ps1','scripts/full-path-entry.ps1'))
     Assert-RunnerFast (($literalVariableProbe -join ',') -ceq 'scripts/full-path-entry.ps1,scripts/leaf.psm1,scripts/scoped-entry.ps1') 'scoped or normalized literal module import closure was not derived exactly'
-    foreach ($damagePath in @('scripts/missing-entry.ps1','scripts/dynamic-entry.ps1')) {
+    $auditedProbe=@(Get-RunnerFastFixtureModuleClosure -Git $git -SourceRoot $closureFixture -SeedPaths @($auditedAuthorityPath))
+    Assert-RunnerFast ($auditedProbe.Count-eq1-and$auditedProbe[0]-ceq$auditedAuthorityPath) 'external authority import became a candidate module edge'
+    foreach($count in @(0,2)){
+        try{
+            Write-TestText (Join-Path $closureFixture $auditedAuthorityPath) ($auditedAuthorityBody*$count)
+            $caught=$null
+            try{[void](Get-RunnerFastFixtureModuleClosure -Git $git -SourceRoot $closureFixture -SeedPaths @($auditedAuthorityPath))}catch{$caught=$_}
+            Assert-RunnerFast ($null-ne$caught-and$caught.Exception.Message.Contains("expected=1 observed=$count",[StringComparison]::Ordinal)) 'audited external import count changed without refusal'
+        }finally{Write-TestText (Join-Path $closureFixture $auditedAuthorityPath) $auditedAuthorityBody}
+    }
+    foreach ($damagePath in @('scripts/missing-entry.ps1','scripts/dynamic-entry.ps1','scripts/unknown-authority-import.ps1')) {
         $damageRejected = $false
         try { [void](Get-RunnerFastFixtureModuleClosure -Git $git -SourceRoot $closureFixture -SeedPaths @($damagePath)) } catch { $damageRejected = $true }
         Assert-RunnerFast $damageRejected "module import closure accepted damaged edge '$damagePath'"

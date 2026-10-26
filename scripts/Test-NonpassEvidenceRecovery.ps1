@@ -80,6 +80,45 @@ function Expand-RecoveryFixtureSource([string]$Commit,[string]$Archive,[string]$
     try{$null=$process.Start();$stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEndAsync();$process.WaitForExit();$null=$stdout.GetAwaiter().GetResult();$errorText=$stderr.GetAwaiter().GetResult();if($process.ExitCode-ne0){throw "Published fixture Git object $Commit is required: $errorText"}}finally{$process.Dispose()}
     [IO.Compression.ZipFile]::ExtractToDirectory($Archive,$Destination)
 }
+function Invoke-RecoveryAuthoritySourceGit([string]$At,[string[]]$Arguments){
+    # Same isolated Git process policy as the owning authority source reader.
+    $process=[Diagnostics.Process]::new();$process.StartInfo=[Diagnostics.ProcessStartInfo]::new()
+    $process.StartInfo.FileName=(Get-Command git -CommandType Application|Select-Object -First 1).Source
+    $process.StartInfo.WorkingDirectory=$At;$process.StartInfo.UseShellExecute=$false;$process.StartInfo.CreateNoWindow=$true
+    $process.StartInfo.RedirectStandardOutput=$true;$process.StartInfo.RedirectStandardError=$true
+    foreach($name in @($process.StartInfo.Environment.Keys)){if($name-match'^GIT_'){$process.StartInfo.Environment.Remove($name)|Out-Null}}
+    $process.StartInfo.Environment['GIT_CONFIG_NOSYSTEM']='1';$process.StartInfo.Environment['GIT_CONFIG_GLOBAL']=if($IsWindows){'NUL'}else{'/dev/null'}
+    foreach($argument in @('--no-optional-locks','--no-pager','--no-replace-objects','-c','core.fsmonitor=false','-c','core.hooksPath=','-c','core.autocrlf=false','-c','core.longpaths=true','-c','protocol.allow=never','-c','protocol.file.allow=always')+$Arguments){$process.StartInfo.ArgumentList.Add($argument)}
+    try{
+        $null=$process.Start();$stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEndAsync();$process.WaitForExit()
+        $result=$stdout.GetAwaiter().GetResult();$errorText=$stderr.GetAwaiter().GetResult()
+        if($process.ExitCode-ne0){throw "Adopted authority fixture Git failed: $errorText"}
+        $result.Trim()
+    }finally{$process.Dispose()}
+}
+function Initialize-RecoveryAuthoritySource([object]$Authority,[string]$Destination){
+    if([IO.Directory]::Exists($Destination)-or[IO.File]::Exists($Destination)){throw 'Adopted authority source fixture output is occupied.'}
+    if([string]$Authority.commit-cnotmatch'^(?:[0-9a-f]{40}|[0-9a-f]{64})$'-or
+       [string]$Authority.tree-cnotmatch'^(?:[0-9a-f]{40}|[0-9a-f]{64})$'-or
+       [string]$Authority.repository-cnotmatch'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'){throw 'Adopted authority fixture requires exact binding identity.'}
+    $commit=[string]$Authority.commit;$tree=[string]$Authority.tree
+    if((Invoke-RecoveryAuthoritySourceGit $repoRoot @('rev-parse','--verify',"$commit^{commit}"))-cne$commit-or
+       (Invoke-RecoveryAuthoritySourceGit $repoRoot @('rev-parse','--verify',"$commit^{tree}"))-cne$tree){throw 'Adopted authority fixture local object identity differs from its binding.'}
+    # Reuse the exact-source consumer's local no-hardlink/no-checkout pattern.
+    # Dissociate any borrowed source objects; no network protocol is permitted.
+    Invoke-RecoveryAuthoritySourceGit $repoRoot @('clone','--quiet','--no-hardlinks','--no-checkout','--dissociate',$repoRoot,$Destination)|Out-Null
+    Invoke-RecoveryAuthoritySourceGit $Destination @('config','core.autocrlf','false')|Out-Null
+    Invoke-RecoveryAuthoritySourceGit $Destination @('remote','set-url','origin',('https://github.com/'+[string]$Authority.repository+'.git'))|Out-Null
+    Invoke-RecoveryAuthoritySourceGit $Destination @('checkout','--quiet','--detach',$commit)|Out-Null
+    if((Invoke-RecoveryAuthoritySourceGit $Destination @('rev-parse','HEAD'))-cne$commit-or
+       (Invoke-RecoveryAuthoritySourceGit $Destination @('rev-parse','HEAD^{tree}'))-cne$tree-or
+       (Invoke-RecoveryAuthoritySourceGit $Destination @('status','--porcelain=v2','--untracked-files=all'))){throw 'Adopted authority source fixture is not its exact clean pinned checkout.'}
+    foreach($relative in @('objects/info/alternates','objects/info/http-alternates','info/grafts','shallow')){
+        if(Test-Path -LiteralPath (Join-Path $Destination ('.git/'+$relative))){throw 'Adopted authority fixture must own complete unmodified Git objects.'}
+    }
+    if(Invoke-RecoveryAuthoritySourceGit $Destination @('for-each-ref','--format=%(refname)','refs/replace')){throw 'Adopted authority fixture replacement refs are forbidden.'}
+    [IO.Path]::GetFullPath($Destination)
+}
 function Assert-RevisionRefuses([scriptblock]$Action,[string]$Name,[string]$ExpectedMessage=''){
     $before=Get-EnvelopeWorkspaceByteInventorySha256 $ws;$caught=$null
     try{&$Action|Out-Null}catch{$caught=$_}
@@ -122,6 +161,12 @@ function Assert-RevisionRetirementConsumer([string]$EventId){
 }
 $root=if($FixtureRoot){[IO.Path]::GetFullPath($FixtureRoot)}else{Join-Path ([IO.Path]::GetTempPath()) ('wef-nonpass-recovery-'+[guid]::NewGuid().ToString('N'))}
 [IO.Directory]::CreateDirectory($root)|Out-Null
+# Fail source setup before starting the expensive recovery journey.
+if(-not$AuthoritySourceRoot){
+    $binding=Read-EnvelopeProtocolJson (Join-Path $repoRoot 'config/native-nonpass-recovery-authority-binding.json')
+    if(@($binding.authorities).Count-ne1){throw 'The full positive native recovery fixture requires one independently adopted authority Git source; no denial-only pass is issued.'}
+    $AuthoritySourceRoot=Initialize-RecoveryAuthoritySource $binding.authorities[0] (Join-Path $root 'adopted-authority-source')
+}
 if(-not$LegacyProducerRoot){
     $archive=Join-Path $root 'published-old-producer.zip'
     $LegacyProducerRoot=Join-Path $root 'published-old-producer'
@@ -235,12 +280,6 @@ Assert-RevisionRefuses {Assert-MorphospaceHistoricalNonpassArtifacts -WorkspaceR
 Assert-RevisionRefuses {Assert-MorphospaceHistoricalNonpassArtifacts -WorkspaceRoot $ws -ReceiptPath $failed -ReturnEventId ([string]$beforeState.last_event_id) -RecoveryRequestPath $v4Path} 'public prospective waiver parameter'
 Assert-RevisionRefuses {Invoke-RevisionFreeze $v4Path -Execute} 'unqualified independent native recovery authority'
 Write-Host 'PASS exact tuple/class/raw-anchor/observation/PASS and unadopted-authority no-write refusals.'
-if(-not$AuthoritySourceRoot){
-    $binding=Read-EnvelopeProtocolJson (Join-Path $repoRoot 'config/native-nonpass-recovery-authority-binding.json')
-    if(@($binding.authorities).Count-ne1){throw 'The full positive native recovery fixture requires one independently adopted authority Git source; no denial-only pass is issued.'}
-    $AuthoritySourceRoot=Join-Path $root 'adopted-authority-source'
-    Expand-RecoveryFixtureSource ([string]$binding.authorities[0].commit) (Join-Path $root 'adopted-authority-source.zip') $AuthoritySourceRoot
-}
 . (Join-Path $repoRoot 'scripts/test-support/NativeNonpassRecoveryAuthorityFixture.ps1')
 Invoke-EnvelopeGit $source @('remote','add','origin','https://github.com/example/nonpass-source-fixture.git')|Out-Null
 Invoke-EnvelopeGit $ws @('add','--all')|Out-Null
