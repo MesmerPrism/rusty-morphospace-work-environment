@@ -84,6 +84,117 @@ function Test-FoundationStrictJsonReader {
     [pscustomobject]@{scope='strict-json-reader-focused';cases=$caseNumber;device_calls=0}|ConvertTo-Json|Write-Host
 }
 Test-FoundationStrictJsonReader
+function Test-FoundationDiscriminatorReader {
+    $root=Join-Path ([IO.Path]::GetTempPath()) ('protocol-discriminator-'+[guid]::NewGuid().ToString('N'))
+    [IO.Directory]::CreateDirectory($root)|Out-Null
+    $utf8=[Text.UTF8Encoding]::new($false,$true)
+    $schema='rusty.morphospace.workflow.development_unit_admission.v1';$unit='unit-test'
+    $cases=[Collections.Generic.List[object]]::new()
+    # The old reader plus its exact StrictMode2 caller condition is the oracle.
+    foreach($text in @('{}','{"schema":"other"}','{"schema":"other","unit_id":null}',
+        '{"schema":null}','{"schema":false}','{"schema":1}','{"schema":{}}',
+        '{"schema":[]}','{"schema":["other"]}','{"schema":["x","y"]}',
+        ('{"Schema":"'+$schema+'","UNIT_ID":"'+$unit+'","payload":{"keep":17}}'),
+        ('{"sch\u0065ma":"'+$schema+'","unit_id":"'+$unit+'"}'),
+        ('{"schema":"'+$schema+'"}'),
+        ('{"schema":"'+$schema.ToUpperInvariant()+'","unit_id":"'+$unit+'"}'),
+        ('{"schema":"'+$schema+'","unit_id":"UNIT-TEST"}')
+    )){$cases.Add(@{bytes=$utf8.GetBytes($text);label='discriminator-shape'})}
+    # OrdinalIgnoreCase in managed code and PS member lookup need not fold
+    # non-ASCII field names identically; compare actual legacy behavior.
+    foreach($text in @(
+        ('{"'+[char]0x017f+'chema":"'+$schema+'","unit_id":"'+$unit+'"}'),
+        ('{"schema":"'+$schema+'","unit_'+[char]0x0131+'d":"'+$unit+'"}'),
+        ('{"schema":"'+$schema+'","un'+[char]0x0130+'t_id":"'+$unit+'"}'),
+        ('{"'+[char]0x212a+'ey":0,"schema":"other"}')
+    )){$cases.Add(@{bytes=$utf8.GetBytes($text);label='nonascii-root-member'})}
+    foreach($value in @('null','false','1','{}','[]','["unit-test"]','["x","y"]')){
+        $cases.Add(@{bytes=$utf8.GetBytes('{"schema":"'+$schema+'","unit_id":'+$value+'}');label='unit-coercion'})
+        $cases.Add(@{bytes=$utf8.GetBytes('{"schema":"other","unit_id":'+$value+'}');label='short-circuit'})
+    }
+    $cases.Add(@{bytes=$utf8.GetBytes('{"schema":["'+$schema+'"],"unit_id":"'+$unit+'"}');label='schema-coercion'})
+    # Whole-document grammar still matters after an unrelated discriminator.
+    foreach($tail in @('"x":"\N\T\U0041"','"x":"\Ud83d\ude00"','"x":"\ud83d\Ude00"',
+        '"x":"\ud800"','"x":"\udc00"','"x":"\q"','"x":"\u12xz"','"x":"\u0000"',
+        '"x":{"nested":{"a":1,"A":2}}','"x":{"a":1,"\u0061":2}',
+        '"x":-0','"x":-9223372036854775808','"x":9223372036854775807',
+        '"x":9223372036854775808','"x":-9223372036854775809','"x":01','"x":-01',
+        '"x":+1','"x":1.0','"x":1e2','"x":trueX','"x":TRUE','"x":nullx',
+        '"x":[1,]','"x":[] ,','"x":/*comment*/1',('"x":'+[char]0x0661),('"x":'+[char]0x00a0+'1')
+    )){$cases.Add(@{bytes=$utf8.GetBytes('{"schema":"other",'+$tail+'}');label='complete-unrelated-grammar'})}
+    foreach($depth in @(63,64,65)){
+        # x is depth1; empty innermost array is depth $depth, child is depth+1.
+        foreach($leaf in @('','0')){$cases.Add(@{bytes=$utf8.GetBytes('{"schema":"other","x":'+('['*$depth)+$leaf+(']'*$depth)+'}');label="depth-$depth-leaf-$leaf"})}
+    }
+    foreach($length in @(1048576,1048577)){
+        foreach($asKey in @($false,$true)){
+            $body=if($asKey){'"'+('a'*$length)+'":0'}else{'"x":"'+('a'*$length)+'"'}
+            $cases.Add(@{bytes=$utf8.GetBytes('{"schema":"other",'+$body+'}');label="utf16-$length-key-$asKey"})
+        }
+    }
+    foreach($pairs in @(524288,524289)){$cases.Add(@{bytes=$utf8.GetBytes('{"schema":"other","x":"'+(([string][char]0xd83d+[string][char]0xde00)*$pairs)+'"}');label="astral-utf16-$pairs"})}
+    foreach($size in @(16777216,16777217)){
+        $head=$utf8.GetBytes('{"schema":"other"}');$bytes=[byte[]]::new($size)
+        [Array]::Fill[byte]($bytes,32);[Array]::Copy($head,$bytes,$head.Length)
+        $cases.Add(@{bytes=$bytes;label="raw-byte-bound-$size"})
+    }
+    foreach($bytes in @([byte[]](0xef,0xbb,0xbf,0x7b,0x7d),[byte[]](0x7b,0,0x7d),
+        [byte[]](0x7b,0x22,0x78,0x22,0x3a,0x22,0xc0,0xaf,0x22,0x7d),
+        [byte[]](0x7b,0x22,0x78,0x22,0x3a,0x22,0xed,0xa0,0x80,0x22,0x7d),
+        [byte[]](0x7b,0x22,0x78,0x22,0x3a,0x22,0xf0,0x9f)
+    )){$cases.Add(@{bytes=$bytes;label='strict-byte-encoding'})}
+    foreach($text in @('[]','{}{}','{"schema":"other"}x',('{"schema":"other","x":"'+[char]31+'"}'),('{"schema":"other","x":"'+[char]0xfeff+'"}'))){$cases.Add(@{bytes=$utf8.GetBytes($text);label='top-level-control'})}
+    try{
+        $n=0
+        foreach($case in $cases){
+            $n++;$path=Join-Path $root ("case-$n.json");[IO.File]::WriteAllBytes($path,$case.bytes)
+            $expected=$null;$expectedError=$null;$actual=$null;$actualError=$null
+            try{$expected=& $script:CommonModule {param($b,$p,$s,$u)Set-StrictMode -Version 2.0;$d=ConvertFrom-MorphospaceProtocolJsonBytes -Bytes $b -Context "'$p'";if([string]$d.schema-ceq$s-and[string]$d.unit_id-ceq$u){$d}} $case.bytes $path $schema $unit}catch{$expectedError=$_.Exception.Message}
+            try{$actual=Read-MorphospaceProtocolJsonMatchingDiscriminator -Path $path -Schema $schema -UnitId $unit}catch{$actualError=$_.Exception.Message}
+            Assert-Foundation ($actualError-ceq$expectedError) "discriminator case $n/$($case.label) changed refusal: expected=$expectedError actual=$actualError"
+            if($null-eq$expectedError){Assert-Foundation (($actual|ConvertTo-Json -Depth 100 -Compress)-ceq($expected|ConvertTo-Json -Depth 100 -Compress)) "discriminator case $n/$($case.label) changed selected full DTO"}
+        }
+        & $script:CommonModule {
+            $script:DiscriminatorOriginalConverter=${function:ConvertFrom-MorphospaceProtocolJsonBytes}
+            $script:DiscriminatorOriginalPathReader=${function:Read-MorphospaceProtocolJson}
+            $script:DiscriminatorDtoCount=0;$script:DiscriminatorMutationPath=$null
+            Set-Item Function:script:ConvertFrom-MorphospaceProtocolJsonBytes {
+                param([byte[]]$Bytes,[string]$Context='protocol JSON')
+                $script:DiscriminatorDtoCount++
+                if($null-ne$script:DiscriminatorMutationPath){
+                    $script:DiscriminatorCapturedSha=Get-MorphospaceSha256Bytes $Bytes
+                    [IO.File]::WriteAllText($script:DiscriminatorMutationPath,'{"schema":"changed-after-capture"}',[Text.UTF8Encoding]::new($false))
+                }
+                & $script:DiscriminatorOriginalConverter -Bytes $Bytes -Context $Context
+            }
+            Set-Item Function:script:Read-MorphospaceProtocolJson {param([string]$Path)throw 'Discriminator reopened legacy path reader instead of converting captured bytes.'}
+        }
+        try{
+            $selectedPath=Join-Path $root 'selected.json';$selectedBytes=$utf8.GetBytes('{"schema":"'+$schema+'","unit_id":"'+$unit+'","payload":{"retained":17}}');[IO.File]::WriteAllBytes($selectedPath,$selectedBytes)
+            for($i=0;$i-lt248;$i++){
+                $path=Join-Path $root ("neutral-$i.json");[IO.File]::WriteAllText($path,'{"schema":"neutral","nested":{"items":[1,true,null,{"value":"'+('n'*25000)+'"}]}}',$utf8)
+                $value=Read-MorphospaceProtocolJsonMatchingDiscriminator -Path $path -Schema $schema -UnitId $unit
+                Assert-Foundation ($null-eq$value) 'neutral complete receipt selected as admission'
+            }
+            $selected=Read-MorphospaceProtocolJsonMatchingDiscriminator -Path $selectedPath -Schema $schema -UnitId $unit
+            $count=& $script:CommonModule {$script:DiscriminatorDtoCount}
+            Assert-Foundation ($count-eq1-and$selected.payload.retained-eq17) '248 neutral receipts plus candidate did not construct exactly one complete DTO'
+            & $script:CommonModule {param($p)$script:DiscriminatorMutationPath=$p} $selectedPath
+            $sameBytes=Read-MorphospaceProtocolJsonMatchingDiscriminator -Path $selectedPath -Schema $schema -UnitId $unit
+            $capturedSha=& $script:CommonModule {$script:DiscriminatorCapturedSha}
+            Assert-Foundation ($capturedSha-ceq(Get-MorphospaceSha256Bytes $selectedBytes)-and$sameBytes.payload.retained-eq17-and[IO.File]::ReadAllText($selectedPath).Contains('changed-after-capture')) 'selected DTO did not consume same captured bytes across converter-entry file mutation'
+        }finally{
+            & $script:CommonModule {
+                Set-Item Function:script:ConvertFrom-MorphospaceProtocolJsonBytes $script:DiscriminatorOriginalConverter
+                Set-Item Function:script:Read-MorphospaceProtocolJson $script:DiscriminatorOriginalPathReader
+                Remove-Variable DiscriminatorOriginalConverter,DiscriminatorOriginalPathReader,DiscriminatorDtoCount,DiscriminatorMutationPath,DiscriminatorCapturedSha -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+        [pscustomobject]@{scope='strict-discriminator-focused';differential_cases=$cases.Count;neutral_receipts=248;total_receipts=249;selected_dtos=1;device_calls=0}|ConvertTo-Json|Write-Host
+    }finally{if([IO.Directory]::Exists($root)){Remove-Item -LiteralPath $root -Recurse -Force}}
+}
+Test-FoundationDiscriminatorReader
+
 if($StrictJsonReaderOnly){Write-Host 'Strict JSON reader focused checks passed.';return}
 
 function Invoke-InternalGit { param([string]$Git,[string]$Root,[string[]]$Arguments) &$script:ContentModule {param($g,$r,$a) Invoke-MorphospaceBoundGitBytes -GitExecutable $g -RepositoryPath $r -Arguments $a} $Git $Root $Arguments }
