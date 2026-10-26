@@ -9,10 +9,71 @@ function Copy-Envelope([object]$Value){$Value|ConvertTo-Json -Depth 64|ConvertFr
 
 function Get-EnvelopeLockFingerprint([object]$Value){$copy=Copy-Envelope $Value;$copy.lock_fingerprint='0'*64;Get-EnvelopeCanonicalJsonSha256 $copy}
 
+function Get-EnvelopeFixturePath([string]$Path){
+  if([string]::IsNullOrWhiteSpace($Path)){throw 'Envelope fixture path must not be empty.'}
+  # Resolve relative inputs against the caller's PowerShell filesystem location,
+  # before .NET or Git can interpret them against a different working directory.
+  $provider=$null;$drive=$null
+  $resolved=$ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path,[ref]$provider,[ref]$drive)
+  if($provider.Name-cne'FileSystem'){throw "Envelope fixture path requires the FileSystem provider: $Path"}
+  [IO.Path]::GetFullPath($resolved)
+}
+
+function Assert-EnvelopeLocalGitRepository([string]$Path){
+  $root=[IO.Path]::TrimEndingDirectorySeparator((Get-EnvelopeFixturePath $Path));$metadata=Join-Path $root '.git'
+  $message="Envelope Git fixture requires its own local repository: $root"
+  if($env:GIT_CONFIG-or-not(Test-Path -LiteralPath $metadata -PathType Container)-or((Get-Item -LiteralPath $metadata -Force).Attributes-band[IO.FileAttributes]::ReparsePoint)){throw $message}
+  $comparison=if($IsWindows){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
+  foreach($probe in @(
+    @{arguments=@('rev-parse','--show-toplevel');expected=$root},
+    @{arguments=@('rev-parse','--absolute-git-dir');expected=$metadata},
+    @{arguments=@('rev-parse','--path-format=absolute','--git-common-dir');expected=$metadata}
+  )){
+    $actual=@(Invoke-EnvelopeGit $root $probe.arguments)
+    if($actual.Count-ne1-or-not[IO.Path]::TrimEndingDirectorySeparator((Get-EnvelopeFixturePath $actual[0])).Equals($probe.expected,$comparison)){throw $message}
+  }
+}
+
+function Initialize-EnvelopeFixtureRepository([string]$Root,[string]$Repository){
+  $parent=Get-EnvelopeFixturePath $Root;$target=Get-EnvelopeFixturePath $Repository
+  # Never reinitialize a gitfile/shared repository, or allow environment metadata
+  # redirection to make init write somewhere other than the fresh scratch target.
+  if((Test-Path -LiteralPath (Join-Path $target '.git'))-or$env:GIT_DIR-or$env:GIT_COMMON_DIR){throw "Envelope Git fixture requires a fresh local repository: $target"}
+  Invoke-EnvelopeGit $parent @('init',$target)|Out-Null
+  Assert-EnvelopeLocalGitRepository $target
+}
+
 # Capture-owned TEMP adds nesting to the real transaction receipt paths. Enable
 # Git's Windows long-path support for this fixture command only; no persisted
 # repository or machine configuration and no production path policy changes.
-function Invoke-EnvelopeGit([string]$Path,[string[]]$Arguments){$output=@(& git -c core.longpaths=true -C $Path @Arguments 2>&1);if($LASTEXITCODE-ne0){throw "Envelope Git fixture failed: git -C $Path $($Arguments -join ' ') $($output -join ' ')"};@($output|ForEach-Object{[string]$_})}
+function Invoke-EnvelopeGit([string]$Path,[string[]]$Arguments){
+  $Path=Get-EnvelopeFixturePath $Path
+  # Existing callers use only these command-scoped overrides before the command.
+  # Reject -C/--git-dir and other global options instead of letting them bypass
+  # the repository check or redirect a later config write.
+  $commandIndex=0;$unsupported='Envelope Git fixture rejects unsupported arguments: '+($Arguments-join' ')
+  while($commandIndex-lt$Arguments.Count-and$Arguments[$commandIndex]-ceq'-c'){
+    if($commandIndex+1-ge$Arguments.Count-or$Arguments[$commandIndex+1]-cnotmatch'^(init\.defaultBranch|init\.templateDir|user\.name|user\.email|core\.hooksPath)='){throw $unsupported}
+    $commandIndex+=2
+  }
+  if($commandIndex-ge$Arguments.Count-or$Arguments[$commandIndex].StartsWith('-')){throw $unsupported}
+  if($Arguments[$commandIndex]-ceq'config'){
+    $keyIndex=$commandIndex+1
+    if($keyIndex-lt$Arguments.Count-and$Arguments[$keyIndex]-ceq'--local'){$keyIndex++}
+    $get=$keyIndex-lt$Arguments.Count-and$Arguments[$keyIndex]-ceq'--get'
+    if($get){$keyIndex++}
+    $expected=if($get){1}else{2}
+    if($Arguments.Count-$keyIndex-ne$expected-or$Arguments[$keyIndex]-cnotmatch'^[A-Za-z][A-Za-z0-9-]*\.[A-Za-z0-9.-]+$'){throw $unsupported}
+    Assert-EnvelopeLocalGitRepository $Path
+    $prefix=if($commandIndex){@($Arguments[0..($commandIndex-1)])}else{@()}
+    $local=@('config','--local');if($get){$local+=@('--get')}
+    # Bind the local scope and terminate option parsing before the name/value.
+    $Arguments=@($prefix)+$local+@('--')+@($Arguments[$keyIndex..($Arguments.Count-1)])
+  }
+  $output=@(& git -c core.longpaths=true -C $Path @Arguments 2>&1)
+  if($LASTEXITCODE-ne0){throw "Envelope Git fixture failed: git -C $Path $($Arguments -join ' ') $($output -join ' ')"}
+  @($output|ForEach-Object{[string]$_})
+}
 
 function Get-EnvelopeProtocolModule{if($null-eq$protocolModule){throw 'MorphospaceProtocolCommon retained module is unavailable.'};$protocolModule}
 
@@ -53,6 +114,7 @@ function New-EnvelopeReplacementAdmission([object]$Template,[string]$Workspace,[
 }
 
 function New-EnvelopeRepreparationFixture([string]$BaseRepository,[string]$FixtureRoot,[object]$Template,[string]$RepositoryMapRelative='repository-map.json',[switch]$SeparateWritableRepository){
+  $BaseRepository=Get-EnvelopeFixturePath $BaseRepository;$FixtureRoot=Get-EnvelopeFixturePath $FixtureRoot
   [IO.Directory]::CreateDirectory($FixtureRoot)|Out-Null;$repository=Join-Path $FixtureRoot 'source-repo';Copy-Item -LiteralPath $BaseRepository -Destination $repository -Recurse;Invoke-EnvelopeGit $repository @('config','--local','core.longpaths','true')|Out-Null;$workspace=Join-Path $repository 'morphospace';$input=Copy-Envelope $Template
   $originalMapPath=Join-Path $workspace ([string]$input.expected.repository_map_path);$mapPath=Join-Path $workspace $RepositoryMapRelative;if([IO.Path]::GetFullPath($originalMapPath)-cne[IO.Path]::GetFullPath($mapPath)){[IO.Directory]::CreateDirectory((Split-Path $mapPath -Parent))|Out-Null;Move-Item -LiteralPath $originalMapPath -Destination $mapPath}
   $map=Read-EnvelopeProtocolJson $mapPath;$writableRepository=$null;if($SeparateWritableRepository){$writable=@($map.repositories|Where-Object{[string]$_.repo_id-ceq'read-only-dependency'});Assert-Envelope ($writable.Count-eq1) 'repreparation fixture lacks one separable dependency repository-map row';$writableParent=Join-Path $FixtureRoot 'writable';[IO.Directory]::CreateDirectory($writableParent)|Out-Null;$writableRepository=Join-Path $writableParent 'dependency-repo';Invoke-EnvelopeGit $writableParent @('clone','--no-hardlinks',[string]$writable[0].path,$writableRepository)|Out-Null;Invoke-EnvelopeGit $writableRepository @('config','user.name','Development Envelope Test')|Out-Null;Invoke-EnvelopeGit $writableRepository @('config','user.email','development-envelope-test@example.invalid')|Out-Null;Invoke-EnvelopeGit $writableRepository @('config','commit.gpgsign','false')|Out-Null;$writable[0].path=$writableRepository};$planning=@($map.repositories|Where-Object{[string]$_.repo_id-ceq'project-shell'});Assert-Envelope ($planning.Count-eq1) 'repreparation fixture lacks one project-shell repository-map row';$planning[0].path=$repository;$planning[0].role='planning';Write-EnvelopeJson $mapPath $map
@@ -96,7 +158,7 @@ function New-EnvelopeRepreparationFixture([string]$BaseRepository,[string]$Fixtu
 
 function New-EnvelopeAdmissionPreparedFixture {
   param([string]$Root,[string]$RepositoryRoot,[object]$TransitionLedgerModule,[switch]$OwnerProducedPreparation,[switch]$NearestAgentInstructions,[switch]$SelfHostedReadOnlyPlanning,[switch]$HistoricalSupersession,[switch]$AdditiveFeature,[switch]$ValidationOnly,[switch]$DeclaredTierConsumer,[object]$ToolingContextDescriptor,[string]$PreparationTimestamp='2026-08-25T00:00:30.0000000Z',[string]$LegacyToolRepositoryRoot='',[string]$LegacyToolRepositoryId='legacy-skill-surfaces',[string[]]$LegacyToolAllowedPaths=@(),[string]$RepositoryMapRelative='repository-map.json')
-$temp=$Root;$repoRoot=$RepositoryRoot;$transitionLedgerModule=$TransitionLedgerModule
+$temp=Get-EnvelopeFixturePath $Root;$repoRoot=Get-EnvelopeFixturePath $RepositoryRoot;$transitionLedgerModule=$TransitionLedgerModule
     $toolingInstructions=$null-ne$ToolingContextDescriptor-or-not[string]::IsNullOrWhiteSpace($LegacyToolRepositoryRoot)
     $ws=if($SelfHostedReadOnlyPlanning){Join-Path $temp 'source-repo/morphospace'}else{Join-Path $temp 'morphospace'};$mapRelative=$RepositoryMapRelative.Replace('\','/');[IO.Directory]::CreateDirectory((Join-Path $ws 'iteration-units'))|Out-Null;[IO.Directory]::CreateDirectory((Join-Path $ws 'receipts'))|Out-Null
     $example=Join-Path $repoRoot 'examples\hello-morphospace-v2\morphospace'
@@ -124,11 +186,11 @@ $temp=$Root;$repoRoot=$RepositoryRoot;$transitionLedgerModule=$TransitionLedgerM
     $acceptedEventId='u001-accepted-'+('{0:D4}' -f $acceptedSequence)
     $acceptedState=Copy-Envelope $state;$acceptedState.last_accepted_receipt='receipts/u001-accepted.json';$acceptedState.last_event_id=$acceptedEventId;$acceptedUnit=Copy-Envelope $u001;$acceptedUnit.status='accepted';$acceptedEvent=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id=$acceptedEventId;sequence=$acceptedSequence;timestamp='2026-08-25T00:00:00.0000000Z';project_id='envelope-test';unit_id='u001';event_type='state-transition';summary='Accepted predecessor.';receipts=@('receipts/u001-accepted.json')}
     &$transitionLedgerModule {param($root,$targetState,$targetUnit,$event)Start-MorphospaceTransitionLedger -WorkspaceRoot $root -TransactionId "$($event.event_id)-transition" -StatePath 'workspace.state.json' -UnitPath 'iteration-units/u001.json' -EventsPath 'iteration-events.jsonl' -TargetState $targetState -TargetUnit $targetUnit -Event $event} $ws $acceptedState $acceptedUnit $acceptedEvent|Out-Null;$state=Read-EnvelopeProtocolJson (Join-Path $ws 'workspace.state.json');$u001=Read-EnvelopeProtocolJson (Join-Path $ws 'iteration-units\u001.json')
-    $sourceRepo=Join-Path $temp 'source-repo';[IO.Directory]::CreateDirectory((Join-Path $sourceRepo 'morphospace'))|Out-Null;Invoke-EnvelopeGit $temp @('init',$sourceRepo)|Out-Null;Invoke-EnvelopeGit $sourceRepo @('config','--local','core.longpaths','true')|Out-Null;Invoke-EnvelopeGit $sourceRepo @('config','user.name','Envelope Test')|Out-Null;Invoke-EnvelopeGit $sourceRepo @('config','user.email','envelope@example.invalid')|Out-Null;[IO.File]::WriteAllText((Join-Path $sourceRepo 'morphospace\README.md'),'source fixture'+[Environment]::NewLine,[Text.UTF8Encoding]::new($false));if($toolingInstructions-and-not$DeclaredTierConsumer){[IO.File]::WriteAllText((Join-Path $sourceRepo 'morphospace/AGENTS.md'),"# Fixture agent instructions`nUse the exact bound owner tooling and preserve source locks.`n",[Text.UTF8Encoding]::new($false));Invoke-EnvelopeGit $sourceRepo @('add','morphospace/AGENTS.md')|Out-Null};if($NearestAgentInstructions){[IO.File]::WriteAllText((Join-Path $sourceRepo 'AGENTS.md'),"# Fixture agent instructions`nUse the bound owner tooling; perform no external effects.`n",[Text.UTF8Encoding]::new($false));Invoke-EnvelopeGit $sourceRepo @('add','AGENTS.md')|Out-Null};if($ValidationOnly){foreach($skillId in @('rusty-morphospace','system-engineering')){$fixtureSkill=Join-Path $sourceRepo ('morphospace/skills/'+$skillId);[IO.Directory]::CreateDirectory($fixtureSkill)|Out-Null;Copy-Item -LiteralPath (Join-Path $RepositoryRoot ('skills/'+$skillId+'/SKILL.md')) -Destination (Join-Path $fixtureSkill 'SKILL.md')};Invoke-EnvelopeGit $sourceRepo @('add','morphospace/skills/')|Out-Null};Invoke-EnvelopeGit $sourceRepo @('add','morphospace/README.md')|Out-Null;if($SelfHostedReadOnlyPlanning){Invoke-EnvelopeGit $sourceRepo @('add','morphospace/')|Out-Null};if($DeclaredTierConsumer){
+    $sourceRepo=Join-Path $temp 'source-repo';[IO.Directory]::CreateDirectory((Join-Path $sourceRepo 'morphospace'))|Out-Null;Initialize-EnvelopeFixtureRepository $temp $sourceRepo;Invoke-EnvelopeGit $sourceRepo @('config','--local','core.longpaths','true')|Out-Null;Invoke-EnvelopeGit $sourceRepo @('config','user.name','Envelope Test')|Out-Null;Invoke-EnvelopeGit $sourceRepo @('config','user.email','envelope@example.invalid')|Out-Null;[IO.File]::WriteAllText((Join-Path $sourceRepo 'morphospace\README.md'),'source fixture'+[Environment]::NewLine,[Text.UTF8Encoding]::new($false));if($toolingInstructions-and-not$DeclaredTierConsumer){[IO.File]::WriteAllText((Join-Path $sourceRepo 'morphospace/AGENTS.md'),"# Fixture agent instructions`nUse the exact bound owner tooling and preserve source locks.`n",[Text.UTF8Encoding]::new($false));Invoke-EnvelopeGit $sourceRepo @('add','morphospace/AGENTS.md')|Out-Null};if($NearestAgentInstructions){[IO.File]::WriteAllText((Join-Path $sourceRepo 'AGENTS.md'),"# Fixture agent instructions`nUse the bound owner tooling; perform no external effects.`n",[Text.UTF8Encoding]::new($false));Invoke-EnvelopeGit $sourceRepo @('add','AGENTS.md')|Out-Null};if($ValidationOnly){foreach($skillId in @('rusty-morphospace','system-engineering')){$fixtureSkill=Join-Path $sourceRepo ('morphospace/skills/'+$skillId);[IO.Directory]::CreateDirectory($fixtureSkill)|Out-Null;Copy-Item -LiteralPath (Join-Path $RepositoryRoot ('skills/'+$skillId+'/SKILL.md')) -Destination (Join-Path $fixtureSkill 'SKILL.md')};Invoke-EnvelopeGit $sourceRepo @('add','morphospace/skills/')|Out-Null};Invoke-EnvelopeGit $sourceRepo @('add','morphospace/README.md')|Out-Null;if($SelfHostedReadOnlyPlanning){Invoke-EnvelopeGit $sourceRepo @('add','morphospace/')|Out-Null};if($DeclaredTierConsumer){
       foreach($n in 1..3){$doc=Join-Path $sourceRepo "morphospace/docs/router-$n.md";[IO.Directory]::CreateDirectory((Split-Path $doc -Parent))|Out-Null;[IO.File]::WriteAllText($doc,"# Host fixture router $n`nPreserve the bound owner and exact source. No external effects.`n",[Text.UTF8Encoding]::new($false))};Invoke-EnvelopeGit $sourceRepo @('add','morphospace/docs/')|Out-Null
     };Invoke-EnvelopeGit $sourceRepo @('config','commit.gpgsign','false')|Out-Null;Invoke-EnvelopeGit $sourceRepo @('commit','-m','source-fixture')|Out-Null
     $sourceCommit=(@(Invoke-EnvelopeGit $sourceRepo @('rev-parse','HEAD'))[0]).Trim().ToLowerInvariant();$sourceTree=(@(Invoke-EnvelopeGit $sourceRepo @('rev-parse','HEAD^{tree}'))[0]).Trim().ToLowerInvariant();$sourceRow=[ordered]@{repo_id='project-shell';role='planning';commit=$sourceCommit;tree=$sourceTree;branch=(@(Invoke-EnvelopeGit $sourceRepo @('rev-parse','--abbrev-ref','HEAD'))[0]).Trim();materialization_path='source-repo';tracked_worktree_clean=$true}
-    $dependencyRepo=Join-Path $temp 'dependency-repo';[IO.Directory]::CreateDirectory((Join-Path $dependencyRepo 'dependency'))|Out-Null;Invoke-EnvelopeGit $temp @('init',$dependencyRepo)|Out-Null;Invoke-EnvelopeGit $dependencyRepo @('config','--local','core.longpaths','true')|Out-Null;Invoke-EnvelopeGit $dependencyRepo @('config','user.name','Envelope Test')|Out-Null;Invoke-EnvelopeGit $dependencyRepo @('config','user.email','envelope@example.invalid')|Out-Null;[IO.File]::WriteAllText((Join-Path $dependencyRepo 'dependency\README.md'),'read-only dependency fixture'+[Environment]::NewLine,[Text.UTF8Encoding]::new($false));Invoke-EnvelopeGit $dependencyRepo @('add','dependency/README.md')|Out-Null;Invoke-EnvelopeGit $dependencyRepo @('config','commit.gpgsign','false')|Out-Null;Invoke-EnvelopeGit $dependencyRepo @('commit','-m','dependency-fixture')|Out-Null
+    $dependencyRepo=Join-Path $temp 'dependency-repo';[IO.Directory]::CreateDirectory((Join-Path $dependencyRepo 'dependency'))|Out-Null;Initialize-EnvelopeFixtureRepository $temp $dependencyRepo;Invoke-EnvelopeGit $dependencyRepo @('config','--local','core.longpaths','true')|Out-Null;Invoke-EnvelopeGit $dependencyRepo @('config','user.name','Envelope Test')|Out-Null;Invoke-EnvelopeGit $dependencyRepo @('config','user.email','envelope@example.invalid')|Out-Null;[IO.File]::WriteAllText((Join-Path $dependencyRepo 'dependency\README.md'),'read-only dependency fixture'+[Environment]::NewLine,[Text.UTF8Encoding]::new($false));Invoke-EnvelopeGit $dependencyRepo @('add','dependency/README.md')|Out-Null;Invoke-EnvelopeGit $dependencyRepo @('config','commit.gpgsign','false')|Out-Null;Invoke-EnvelopeGit $dependencyRepo @('commit','-m','dependency-fixture')|Out-Null
     $dependencyCommit=(@(Invoke-EnvelopeGit $dependencyRepo @('rev-parse','HEAD'))[0]).Trim().ToLowerInvariant();$dependencyTree=(@(Invoke-EnvelopeGit $dependencyRepo @('rev-parse','HEAD^{tree}'))[0]).Trim().ToLowerInvariant();$dependencyRow=[ordered]@{repo_id='read-only-dependency';role='source';commit=$dependencyCommit;tree=$dependencyTree;branch=(@(Invoke-EnvelopeGit $dependencyRepo @('rev-parse','--abbrev-ref','HEAD'))[0]).Trim();materialization_path='dependency-repo';tracked_worktree_clean=$true};$sourceIdentity=[ordered]@{project_id='envelope-test';preparation_id='u002-envelope';repositories=@($sourceRow,$dependencyRow)};$sourceComposition=[ordered]@{schema='rusty.morphospace.workflow.development_envelope_source_composition.v1';lock_id='u002-envelope-source-fixture';preparation_id='u002-envelope';project_id='envelope-test';fingerprint=(Get-EnvelopeCanonicalJsonSha256 ([pscustomobject]$sourceIdentity));repositories=@($sourceRow,$dependencyRow);status='locked';does_not_prove=@('Fixture-only preparation source lock; does not admit a unit.')};if(-not$OwnerProducedPreparation){[IO.File]::WriteAllText((Join-Path $ws 'source-composition.json'),(($sourceComposition|ConvertTo-Json -Depth 32)+"`n"),[Text.UTF8Encoding]::new($false))};$mapRows=@([ordered]@{repo_id='project-shell';path=$sourceRepo;role='planning'},[ordered]@{repo_id='read-only-dependency';path=$dependencyRepo;role='source'});if($LegacyToolRepositoryRoot){$mapRows+=,[ordered]@{repo_id=$LegacyToolRepositoryId;path=[IO.Path]::GetFullPath($LegacyToolRepositoryRoot);role='source'}};Write-EnvelopeJson (Join-Path $ws $mapRelative) ([ordered]@{schema='rusty.morphospace.workflow.repository_map.v1';repositories=$mapRows})
     $scope=[ordered]@{schema='rusty.morphospace.workflow.agent_scope_assessment.v1';objective='Implement a bounded successor without predeclaring every discovered path.';owner_repositories=@([ordered]@{repo_id='project-shell';source_roots=@('morphospace/')},[ordered]@{repo_id='read-only-dependency';source_roots=@('dependency/')});public_private_boundary='public';allowed_change_categories=@('documentation-only');allowed_effect_categories=@('none');allowed_permission_categories=@('none');build_envelope=[ordered]@{class='none';allowed_profiles=@('workflow')};device_envelope=[ordered]@{requirement='forbidden';allowed_kinds=@()};non_scope=@('Device and external effects.');prerequisites=@('u001');validation_class='quick';evidence_expectations=@('Validation receipt.');cleanup_expectations=@('No generated residue.')};if($LegacyToolRepositoryRoot){$scope.owner_repositories+=,[ordered]@{repo_id=$LegacyToolRepositoryId;source_roots=@($LegacyToolAllowedPaths)}};if($null-ne$ToolingContextDescriptor){$scope.allowed_change_categories=@('documentation-only','workflow-automation')}
     $u002=Copy-Envelope $u001;$u002.unit_id='u002';$u002.status='proposed';$u002.prerequisites=@('u001');$u002.objective=$scope.objective;if($null-ne$ToolingContextDescriptor){$u002.change_categories=@('documentation-only','workflow-automation');$u002|Add-Member -NotePropertyName work_mode -NotePropertyValue 'feature';$u002|Add-Member -NotePropertyName claim_requirements -NotePropertyValue ([pscustomobject][ordered]@{minimum_free_disk_mib=1;required_tools=@();product_inputs=@()})};$u002.instruction_impact='update';foreach($surface in @($u002.instruction_surfaces|Where-Object{[string]$_.surface_kind-cne'skill'})){$surface.path='<project-shell>/morphospace/README.md';$surface.owner='project-shell';$surface.action='update';$surface.status='complete'};if($toolingInstructions){$u002.instruction_surfaces+=,[pscustomobject][ordered]@{surface_kind='agents';path='<project-shell>/morphospace/AGENTS.md';owner='project-shell';change_reason='Review the nearest fixture instructions for workflow tooling.';action='review-no-change';status='complete';validation='Exact source-composition fixture instructions.';skill_id=$null}};$u002|Add-Member agent_scope_assessment ([pscustomobject]$scope);$dependencies=@([pscustomobject][ordered]@{repo_id='read-only-dependency';paths=@('dependency/');purpose='Sanitized cross-repository fixture input.';verification='Exact source-composition identity.'});if($LegacyToolRepositoryRoot){$dependencies+=,[pscustomobject][ordered]@{repo_id=$LegacyToolRepositoryId;paths=@($LegacyToolAllowedPaths);purpose='Legacy read-only instruction router.';verification='Exact historical tooling source identity.'}};if($SelfHostedReadOnlyPlanning){$u002.allowed_repositories=@([pscustomobject][ordered]@{repo_id='read-only-dependency';allowed_paths=@('dependency/')});foreach($surface in @($u002.instruction_surfaces)){$surface.path='<read-only-dependency>/dependency/README.md';$surface.owner='read-only-dependency'};$dependencies=@([pscustomobject][ordered]@{repo_id='project-shell';paths=@('morphospace/');purpose='Retained preparation authority owned by this nested workspace.';verification='Exact immutable preparation objects and authenticated owner lifecycle.'});Invoke-EnvelopeGit $sourceRepo @('add','morphospace/')|Out-Null;Invoke-EnvelopeGit $sourceRepo @('commit','-m','bind-self-hosted-owner-map')|Out-Null};$u002|Add-Member read_only_dependencies $dependencies;$u002|Add-Member source_composition ([ordered]@{mode='exact-lock';lock_path='source-composition.json';materialization_receipt=$null});Assert-Envelope (@($sourceComposition.repositories).Count-eq2-and@($u002.allowed_repositories).Count-eq1) 'candidate-freeze fixture does not model a read-only source-composition superset';      if($DeclaredTierConsumer){
@@ -247,7 +309,7 @@ function New-EnvelopeHistoricalRetirement {
 
 function New-EnvelopeRetiredRepreparationFixture {
   param([string]$Root,[string]$RepositoryRoot,[string]$Workspace,[string]$SourceRepository,[object]$AdmissionTemplate,[switch]$HistoricalPreparationFault)
-$temp=$Root;$repoRoot=$RepositoryRoot;$ws=$Workspace;$sourceRepo=$SourceRepository;$admission=$AdmissionTemplate
+$temp=Get-EnvelopeFixturePath $Root;$repoRoot=Get-EnvelopeFixturePath $RepositoryRoot;$ws=Get-EnvelopeFixturePath $Workspace;$sourceRepo=Get-EnvelopeFixturePath $SourceRepository;$admission=$AdmissionTemplate
     $retirementBase=Join-Path $temp 'proposed-retirement-base';Copy-Item -LiteralPath $ws -Destination $retirementBase -Recurse
     $retirementOut=Join-Path $retirementBase 'receipts\u002-contract-retirement.json'
     $proposedRetirementModule=Import-Module (Join-Path $PSScriptRoot '../ProposedUnitRetirement.psm1') -PassThru
@@ -291,7 +353,7 @@ $temp=$Root;$repoRoot=$RepositoryRoot;$ws=$Workspace;$sourceRepo=$SourceReposito
 
 function New-RecoveredProposalContinuationSeed {
   param([string]$Root,[string]$RepositoryRoot,[object]$TransitionLedgerModule)
-$temp=$Root
+$temp=Get-EnvelopeFixturePath $Root
 $preparedSeed=New-EnvelopeAdmissionPreparedFixture -Root $temp -RepositoryRoot $RepositoryRoot -TransitionLedgerModule $TransitionLedgerModule -OwnerProducedPreparation
 $ws=$preparedSeed.workspace;$sourceRepo=$preparedSeed.source_repository;$admission=$preparedSeed.admission_template
   # Reproduce the historical preparation writer's exact stale fingerprint and

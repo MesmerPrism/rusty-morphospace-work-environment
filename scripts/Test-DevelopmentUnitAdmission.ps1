@@ -1,4 +1,4 @@
-param([switch]$SelfTest,[switch]$AdditivePreparationOnly,[switch]$OwnPlanningCaseOnly,[switch]$ValidationOnlyFreezeOnly,[switch]$InstructionDeclarationOnly,[switch]$GitLongPathsOnly,[switch]$ReplacementContinuationOnly)
+param([switch]$SelfTest,[switch]$AdditivePreparationOnly,[switch]$OwnPlanningCaseOnly,[switch]$ValidationOnlyFreezeOnly,[switch]$InstructionDeclarationOnly,[switch]$GitLongPathsOnly,[switch]$ReplacementContinuationOnly,[switch]$FixtureScratchOnly)
 $ErrorActionPreference='Stop'
 $repoRoot=Split-Path $PSScriptRoot -Parent
 function Test-AdmissionReviewedSkillRouting {
@@ -52,6 +52,104 @@ $transitionLedgerPath=Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.p
 $transitionLedgerModule=@(Get-Module -All|Where-Object{$_.Path-eq$transitionLedgerPath}|Select-Object -Last 1)[0]
 if($null-eq$transitionLedgerModule){throw 'MorphospaceTransitionLedger module is unavailable.'}
 . (Join-Path $PSScriptRoot 'test-support/DevelopmentAdmissionFixture.ps1')
+
+function Test-EnvelopeFixtureScratchIsolation {
+  $root=Join-Path ([IO.Path]::GetTempPath()) ('workenv-fixture-scratch-'+[guid]::NewGuid().ToString('N'))
+  $parent=Join-Path $root 'enclosing';$outside=Join-Path $root 'outside'
+  try {
+    [void][IO.Directory]::CreateDirectory($parent);[void][IO.Directory]::CreateDirectory($outside)
+    Invoke-EnvelopeGit $parent @('init')|Out-Null
+    Invoke-EnvelopeGit $parent @('config','--local','user.name','Enclosing Sentinel')|Out-Null
+    Invoke-EnvelopeGit $parent @('config','--local','user.email','enclosing@example.invalid')|Out-Null
+    Invoke-EnvelopeGit $parent @('config','--local','fixture.sentinel','preserve exact bytes')|Out-Null
+    $source=Join-Path $parent 'sentinel.txt';[IO.File]::WriteAllText($source,"enclosing source`n")
+    Invoke-EnvelopeGit $parent @('add','sentinel.txt')|Out-Null
+    $retained=@(Join-Path $parent '.git/config';Join-Path $parent '.git/index';$source)
+    $before=@{};foreach($path in $retained){$before[$path]=[Convert]::ToBase64String([IO.File]::ReadAllBytes($path))}
+    function Assert-EnclosingFixtureUnchanged {
+      foreach($path in $retained){Assert-Envelope ($before[$path]-ceq[Convert]::ToBase64String([IO.File]::ReadAllBytes($path))) "scratch fixture changed enclosing repository bytes: $([IO.Path]::GetFileName($path))"}
+    }
+    $local=Join-Path $outside 'local-repository';[void][IO.Directory]::CreateDirectory($local)
+    Invoke-EnvelopeGit $local @('-c','init.defaultBranch=fixture','-c','init.templateDir=','init')|Out-Null
+    $emptyHooks=Join-Path $outside 'empty-hooks';[void][IO.Directory]::CreateDirectory($emptyHooks)
+    [IO.File]::WriteAllText((Join-Path $local 'source.txt'),"local fixture`n");Invoke-EnvelopeGit $local @('add','source.txt')|Out-Null
+    Invoke-EnvelopeGit $local @('-c','user.name=Fixture','-c','user.email=fixture@example.invalid','-c',"core.hooksPath=$emptyHooks",'commit','-m','fixture override compatibility')|Out-Null
+    Invoke-EnvelopeGit $local @('-c','user.name=Override','config','fixture.literal','--literal-value')|Out-Null
+    Assert-Envelope ((@(Invoke-EnvelopeGit $local @('config','--local','--get','fixture.literal'))[0])-ceq'--literal-value') 'local config with command override lost literal option-like values'
+    foreach($arguments in @(
+      @('-C',$parent,'config','--local','fixture.sentinel','must not write'),
+      @('config','--file',(Join-Path $parent '.git/config'),'fixture.sentinel','must not write'),
+      @('-c','user.name=Override','config','--file',(Join-Path $parent '.git/config'),'fixture.sentinel','must not write')
+    )){
+      $rejected=$false
+      try{Invoke-EnvelopeGit $local $arguments|Out-Null}catch{$rejected=$_.Exception.Message-like'Envelope Git fixture rejects unsupported arguments:*'}
+      Assert-EnclosingFixtureUnchanged
+      Assert-Envelope $rejected 'fixture Git arguments allowed config target redirection'
+    }
+    $rejected=$false
+    try{Get-EnvelopeFixturePath 'Env:TEMP'|Out-Null}catch{$rejected=$_.Exception.Message-like'Envelope fixture path requires the FileSystem provider:*'}
+    Assert-Envelope $rejected 'fixture path accepted a non-filesystem provider'
+    $rejected=$false
+    try{New-EnvelopeAdmissionPreparedFixture -Root 'Env:TEMP' -RepositoryRoot $repoRoot -TransitionLedgerModule $transitionLedgerModule|Out-Null}catch{$rejected=$_.Exception.Message-like'Envelope fixture path requires the FileSystem provider:*'}
+    Assert-Envelope $rejected 'fixture creation accepted a non-filesystem root'
+    Assert-EnclosingFixtureUnchanged
+    Write-Output 'PASS Git argument redirection and non-filesystem roots refused; existing command-scoped overrides preserved'
+    foreach($location in @($parent,$outside)){
+      Push-Location -LiteralPath $location
+      $processDirectory=[Environment]::CurrentDirectory;[Environment]::CurrentDirectory=$(if($location-ceq$outside){$root}else{$location})
+      try {
+        $failure=$null;$seed=$null
+        try{$seed=New-EnvelopeAdmissionPreparedFixture -Root 'relative-scratch' -RepositoryRoot $repoRoot -TransitionLedgerModule $transitionLedgerModule}catch{$failure=$_}
+        Assert-EnclosingFixtureUnchanged
+        if($null-ne$failure){throw $failure}
+        $expected=Join-Path $location 'relative-scratch'
+        Assert-Envelope ([IO.Path]::IsPathFullyQualified($seed.workspace)-and$seed.source_repository-ceq(Join-Path $expected 'source-repo')-and$seed.dependency_repository-ceq(Join-Path $expected 'dependency-repo')) 'relative fixture root did not resolve from the caller filesystem location'
+        foreach($repository in @($seed.source_repository,$seed.dependency_repository)){
+          Assert-Envelope (Test-Path -LiteralPath (Join-Path $repository '.git/config') -PathType Leaf) 'fixture repository lacks its own local Git config'
+          Assert-Envelope ((@(Invoke-EnvelopeGit $repository @('config','--local','--get','user.name'))[0])-ceq'Envelope Test') 'fixture identity was not configured locally'
+        }
+        Write-Output "PASS relative scratch fixture inside $([IO.Path]::GetFileName($location)); enclosing config, index and source bytes preserved"
+      } finally {[Environment]::CurrentDirectory=$processDirectory;Pop-Location}
+    }
+    # Missing/mislocated init and worktree-style metadata must never fall back
+    # to the enclosing Git config, even when a caller attempts config directly.
+    $missing=Join-Path $parent 'not-initialized';[void][IO.Directory]::CreateDirectory($missing)
+    $mislocated=Join-Path $missing 'nested-repository';Invoke-EnvelopeGit $missing @('init',$mislocated)|Out-Null
+    $gitfile=Join-Path $parent 'shared-gitfile';[void][IO.Directory]::CreateDirectory($gitfile)
+    [IO.File]::WriteAllText((Join-Path $gitfile '.git'),('gitdir: '+(Join-Path $parent '.git')+"`n"))
+    foreach($unsafe in @($missing,$gitfile,$outside)){
+      $rejected=$false
+      try{Invoke-EnvelopeGit $unsafe @('config','--local','fixture.sentinel','must not write')|Out-Null}catch{$rejected=$_.Exception.Message-like'Envelope Git fixture requires its own local repository:*'}
+      Assert-EnclosingFixtureUnchanged
+      Assert-Envelope $rejected 'fixture Git config accepted parent discovery or shared Git metadata'
+    }
+    $rejected=$false
+    try{Initialize-EnvelopeFixtureRepository $parent $gitfile}catch{$rejected=$_.Exception.Message-like'Envelope Git fixture requires a fresh local repository:*'}
+    Assert-EnclosingFixtureUnchanged
+    Assert-Envelope $rejected 'fixture initialization accepted existing shared Git metadata'
+    $rejected=$false
+    try{New-EnvelopeRepreparationFixture -BaseRepository $gitfile -FixtureRoot (Join-Path $parent 'copied-gitfile') -Template ([pscustomobject]@{})|Out-Null}catch{$rejected=$_.Exception.Message-like'Envelope Git fixture requires its own local repository:*'}
+    Assert-EnclosingFixtureUnchanged
+    Assert-Envelope $rejected 'copied fixture Git file allowed shared config mutation'
+    foreach($variable in @('GIT_DIR','GIT_CONFIG')){
+      $saved=[Environment]::GetEnvironmentVariable($variable)
+      try{
+        [Environment]::SetEnvironmentVariable($variable,$(if($variable-ceq'GIT_DIR'){Join-Path $parent '.git'}else{Join-Path $parent '.git/config'}))
+        $rejected=$false
+        try{Invoke-EnvelopeGit $mislocated @('config','--local','fixture.sentinel','must not write')|Out-Null}catch{$rejected=$_.Exception.Message-like'Envelope Git fixture requires its own local repository:*'}
+        Assert-EnclosingFixtureUnchanged
+        Assert-Envelope $rejected "fixture Git config accepted redirected metadata: $variable"
+      }finally{[Environment]::SetEnvironmentVariable($variable,$saved)}
+    }
+    Write-Output 'PASS missing/mislocated initialization and shared Git file refuse config without enclosing repository mutation'
+  } finally {
+    $absolute=[IO.Path]::GetFullPath($root);$temporary=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')
+    $comparison=if($IsWindows){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
+    if(-not[IO.Path]::GetDirectoryName($absolute).Equals($temporary,$comparison)-or[IO.Path]::GetFileName($absolute)-cnotmatch'^workenv-fixture-scratch-[0-9a-f]{32}$'){throw 'Unsafe scratch fixture cleanup path'}
+    if(Test-Path -LiteralPath $absolute){Remove-Item -LiteralPath $absolute -Recurse -Force}
+  }
+}
+if($SelfTest-or$FixtureScratchOnly){Test-EnvelopeFixtureScratchIsolation;if($FixtureScratchOnly){return}}
 
 function Set-AdmissionReplacementInstructionPlan([object]$Admission,[object]$Template){
   $Admission.unit.instruction_impact='update'
