@@ -22,6 +22,6 @@
   "adb_forward_inventory_result_contract": "questionable.file_manager.adb_forward_inventory_result.v1",
   "apk_launch_result_contract": "questionable.file_manager.apk_launch_result.v1",
   "launcher_export_proof_contract": "questionable.file_manager.launcher_export_proof.v2",
-  "runtime_observation_contract": "questionable.file_manager.app_runtime_observation.v5",
+  "runtime_observation_contract": "questionable.file_manager.app_runtime_observation.v6",
   "global_focus_observation_contract": "questionable.file_manager.android_global_focus_observation.v1"
 }

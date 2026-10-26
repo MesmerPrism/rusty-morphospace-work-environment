@@ -1,6 +1,13 @@
 {
   "schema": "rusty.morphospace.qfm_runtime_observation_adapter_fixture.v1",
   "purpose": "Consumer adapters preserve QFM Android fact families without producing application or OpenXR readiness.",
+  "v6_source": {
+    "repository": "MesmerPrism/QuestIonAble-File-Manager",
+    "commit": "8b010fa25b5c5d8fbae8d20b4389d587ca7bdef7",
+    "shape": "src/QuestIonAbleFileManager.Core/Models.cs: AppRuntimeObservation, RuntimeProcessCorroboration, AndroidGlobalFocusObservation",
+    "process_cases": "tests/QuestIonAbleFileManager.Core.Tests/InspectedDeploymentTests.cs: Observe_CorroboratesExactLongPackageWithoutInventingPidofAbsence",
+    "focus_cases": "tests/QuestIonAbleFileManager.Core.Tests/Fixtures/android-global-focus-observation.v1.json"
+  },
   "cases": [
     { "id": "legacy-v3", "observation": { "ObservationContract": "questionable.file_manager.app_runtime_observation.v3", "Installed": { "Identity": { "PackageName": "com.example.app" } }, "ProcessIds": [456], "IsForeground": true, "IsTopResumed": true } },
     { "id": "legacy-v4", "observation": { "ObservationContract": "questionable.file_manager.app_runtime_observation.v4", "Installed": { "Identity": { "PackageName": "com.example.app" } }, "ProcessIds": [456], "IsForeground": true, "IsTopResumed": true, "CurrentFocus": { "State": "Observed", "Component": "com.example.app/com.example.app.Main" }, "FocusedApp": { "State": "Observed", "Component": "com.example.app/com.example.app.Main" } } },
@@ -8,6 +15,66 @@
     { "id": "focus-placeholder-after-brief-app-focus", "frames": [
       { "ObservationContract": "questionable.file_manager.app_runtime_observation.v5", "Installed": { "Identity": { "PackageName": "com.example.app" } }, "ProcessIds": [456], "IsForeground": true, "IsTopResumed": true, "GlobalFocus": { "ObservationContract": "questionable.file_manager.android_global_focus_observation.v1", "CurrentFocus": { "State": "Reported", "Components": ["com.example.app/com.example.app.Main"] }, "FocusedApp": { "State": "Reported", "Components": ["com.example.app/com.example.app.Main"] } } },
       { "ObservationContract": "questionable.file_manager.app_runtime_observation.v5", "Installed": { "Identity": { "PackageName": "com.example.app" } }, "ProcessIds": [456], "IsForeground": true, "IsTopResumed": true, "GlobalFocus": { "ObservationContract": "questionable.file_manager.android_global_focus_observation.v1", "CurrentFocus": { "State": "Reported", "Components": ["com.oculus.vrshell/com.oculus.vrshell.FocusPlaceholderActivity"] }, "FocusedApp": { "State": "Reported", "Components": ["com.oculus.vrshell/com.oculus.vrshell.FocusPlaceholderActivity"] } } }
-    ] }
+    ] },
+    { "id": "minimal-v6-unavailable-families", "observation": { "ObservationContract": "questionable.file_manager.app_runtime_observation.v6" } },
+    { "id": "v6-verified-presence-with-empty-pidof", "observation": {
+      "ObservationContract": "questionable.file_manager.app_runtime_observation.v6",
+      "Installed": { "Identity": { "PackageName": "com.example.app" } },
+      "ProcessIds": [], "ProcessObservationQuality": "pidofReportedNoProcesses", "ProcessObservationExitCode": 1,
+      "ProcessObservationSource": "fixed serial-scoped pidof derived from inspected package",
+      "ProcessCorroboration": { "State": "verifiedPresent", "ProcessId": 17527, "StartTicks": 123, "CurrentUserUid": 10177, "ObservationSource": "fixed exact-package meminfo joined to current-user unique UID and stable PID stat birth", "AbsenceAuthority": false },
+      "ProcessAlive": true, "IsForeground": false, "IsTopResumed": false,
+      "ForegroundComponents": [], "TopResumedComponents": [],
+      "GlobalFocus": { "ObservationContract": "questionable.file_manager.android_global_focus_observation.v1",
+        "CurrentFocus": { "State": "reported", "RecordCount": 1, "Components": ["com.example.app/com.example.app.Main"], "EmptyRecordCount": 0, "MalformedRecordCount": 0, "RecordsTruncated": false, "ObservationSource": "fixed serial-scoped dumpsys window windows mCurrentFocus", "SourceExitCode": null },
+        "FocusedApp": { "State": "reported", "RecordCount": 1, "Components": ["com.example.app/com.example.app.Main"], "EmptyRecordCount": 0, "MalformedRecordCount": 0, "RecordsTruncated": false, "ObservationSource": "fixed serial-scoped dumpsys window windows mFocusedApp", "SourceExitCode": null }
+      }
+    } },
+    { "id": "v6-inconclusive-is-not-absence", "observation": {
+      "ObservationContract": "questionable.file_manager.app_runtime_observation.v6",
+      "ProcessIds": [], "ProcessObservationQuality": "pidofReportedNoProcesses", "ProcessObservationExitCode": 1,
+      "ProcessObservationSource": "fixed serial-scoped pidof derived from inspected package",
+      "ProcessCorroboration": { "State": "inconclusive", "ProcessId": null, "StartTicks": null, "CurrentUserUid": null, "ObservationSource": "fixed exact-package meminfo joined to current-user unique UID and stable PID stat birth", "AbsenceAuthority": false }, "ProcessAlive": null,
+      "IsForeground": true, "IsTopResumed": true,
+      "GlobalFocus": { "ObservationContract": "questionable.file_manager.android_global_focus_observation.v1",
+        "CurrentFocus": { "State": "reported", "RecordCount": 1, "Components": ["com.oculus.vrshell/com.oculus.vrshell.FocusPlaceholderActivity"], "EmptyRecordCount": 0, "MalformedRecordCount": 0, "RecordsTruncated": false, "ObservationSource": "fixed serial-scoped dumpsys window windows mCurrentFocus", "SourceExitCode": null },
+        "FocusedApp": { "State": "reported", "RecordCount": 1, "Components": ["com.oculus.vrshell/com.oculus.vrshell.FocusPlaceholderActivity"], "EmptyRecordCount": 0, "MalformedRecordCount": 0, "RecordsTruncated": false, "ObservationSource": "fixed serial-scoped dumpsys window windows mFocusedApp", "SourceExitCode": null }
+      }
+    } },
+    { "id": "v6-pidof-presence", "observation": {
+      "ObservationContract": "questionable.file_manager.app_runtime_observation.v6",
+      "ProcessIds": [456], "ProcessObservationQuality": "pidofReportedProcesses", "ProcessObservationExitCode": 0,
+      "ProcessCorroboration": { "State": "notCollected", "ProcessId": null, "StartTicks": null, "CurrentUserUid": null, "ObservationSource": "fixed exact-package meminfo joined to current-user unique UID and stable PID stat birth", "AbsenceAuthority": false }, "ProcessAlive": true
+    } },
+    { "id": "v6-conflicting-corroboration", "observation": {
+      "ObservationContract": "questionable.file_manager.app_runtime_observation.v6",
+      "ProcessIds": [], "ProcessObservationQuality": "pidofReportedNoProcesses", "ProcessObservationExitCode": 1,
+      "ProcessCorroboration": { "State": "conflicting", "ProcessId": null, "StartTicks": null, "CurrentUserUid": null, "ObservationSource": "fixed exact-package meminfo joined to current-user unique UID and stable PID stat birth", "AbsenceAuthority": false }, "ProcessAlive": null
+    } },
+    { "id": "v6-unavailable-sources", "observation": {
+      "observationContract": "questionable.file_manager.app_runtime_observation.v6",
+      "processIds": [], "processObservationQuality": "pidofUnavailable", "processObservationExitCode": 1,
+      "processCorroboration": { "state": "unavailable", "processId": null, "startTicks": null, "currentUserUid": null, "observationSource": "fixed exact-package meminfo joined to current-user unique UID and stable PID stat birth", "absenceAuthority": false }, "processAlive": null,
+      "globalFocus": { "observationContract": "questionable.file_manager.android_global_focus_observation.v1",
+        "currentFocus": { "state": "unavailable", "recordCount": 0, "components": [], "emptyRecordCount": 0, "malformedRecordCount": 0, "recordsTruncated": false, "observationSource": "fixed serial-scoped dumpsys window windows mCurrentFocus", "sourceExitCode": 1 },
+        "focusedApp": { "state": "unavailable", "recordCount": 0, "components": [], "emptyRecordCount": 0, "malformedRecordCount": 0, "recordsTruncated": false, "observationSource": "fixed serial-scoped dumpsys window windows mFocusedApp", "sourceExitCode": 1 }
+      }
+    } },
+    { "id": "v6-multiple-malformed-focus", "observation": {
+      "ObservationContract": "questionable.file_manager.app_runtime_observation.v6",
+      "CurrentFocus": { "State": "multiple", "Component": null, "ObservationSource": "fixed serial-scoped dumpsys window windows mCurrentFocus", "SourceExitCode": null },
+      "FocusedApp": { "State": "observed", "Component": "com.example.app/com.example.app.Main", "ObservationSource": "fixed serial-scoped dumpsys window windows mFocusedApp", "SourceExitCode": null },
+      "GlobalFocus": { "ObservationContract": "questionable.file_manager.android_global_focus_observation.v1",
+        "CurrentFocus": { "State": "malformed", "RecordCount": 2, "Components": ["com.example.app/com.example.app.Main"], "EmptyRecordCount": 0, "MalformedRecordCount": 1, "RecordsTruncated": false, "ObservationSource": "fixed serial-scoped dumpsys window windows mCurrentFocus", "SourceExitCode": null },
+        "FocusedApp": { "State": "reported", "RecordCount": 1, "Components": ["com.example.app/com.example.app.Main"], "EmptyRecordCount": 0, "MalformedRecordCount": 0, "RecordsTruncated": false, "ObservationSource": "fixed serial-scoped dumpsys window windows mFocusedApp", "SourceExitCode": null }
+      }
+    } },
+    { "id": "v6-unknown-truncated-focus", "observation": {
+      "ObservationContract": "questionable.file_manager.app_runtime_observation.v6",
+      "GlobalFocus": { "ObservationContract": "questionable.file_manager.android_global_focus_observation.v1",
+        "CurrentFocus": { "State": "unknown", "RecordCount": 0, "Components": [], "EmptyRecordCount": 0, "MalformedRecordCount": 0, "RecordsTruncated": true, "ObservationSource": "fixed serial-scoped dumpsys window windows mCurrentFocus", "SourceExitCode": null },
+        "FocusedApp": { "State": "unknown", "RecordCount": 0, "Components": [], "EmptyRecordCount": 0, "MalformedRecordCount": 0, "RecordsTruncated": true, "ObservationSource": "fixed serial-scoped dumpsys window windows mFocusedApp", "SourceExitCode": null }
+      }
+    } }
   ]
 }

@@ -1,10 +1,10 @@
 {
   "schema": "rusty.morphospace.quest_file_manager_consumer_fixture.v3",
-  "purpose": "Work Environment consumes QFM v5, global-focus v1, and read-only permission observation v1 as separate Android fact families; it never manufactures policy, app, or OpenXR readiness.",
+  "purpose": "Work Environment consumes QFM inspected deployment v5, runtime observation v6, global-focus v1, and read-only permission observation v1 as separate Android fact families; it never manufactures policy, app, or OpenXR readiness.",
   "provider_corpus": {
-    "current_main_commit": "d8ea42f0a45d942962d002aa451bc88a52666b73",
-    "current_main_tree": "aa9253f5fc4f2b9d83b76896fd3ad6b54aeef417",
-    "historical_candidate_evidence": ["e4a9eaaa68c1c3368082584fcb9dfd74c9f99036", "914ec6ac38693869fbaeceb2150383df8b1f6024"]
+    "current_main_commit": "8b010fa25b5c5d8fbae8d20b4389d587ca7bdef7",
+    "current_main_tree": "3481395fdfc49e67d239cbce7bba8cae82fbf793",
+    "historical_candidate_evidence": ["e4a9eaaa68c1c3368082584fcb9dfd74c9f99036", "914ec6ac38693869fbaeceb2150383df8b1f6024", "d8ea42f0a45d942962d002aa451bc88a52666b73"]
   },
   "native_schema_ids": [
     "questionable.file_manager.inspected_deployment.v5",
@@ -17,11 +17,11 @@
     "questionable.file_manager.adb_forward_inventory_result.v1",
     "questionable.file_manager.apk_launch_result.v1",
     "questionable.file_manager.launcher_export_proof.v2",
-    "questionable.file_manager.app_runtime_observation.v5",
+    "questionable.file_manager.app_runtime_observation.v6",
     "questionable.file_manager.android_global_focus_observation.v1"
   ],
   "runtime_observation_boundary": {
-    "schema": "questionable.file_manager.app_runtime_observation.v5",
+    "schema": "questionable.file_manager.app_runtime_observation.v6",
     "fact_families": ["installed_identity", "process", "task_top_resumed", "global_android_focus", "application_evidence"],
     "does_not_prove": ["openxr_readiness", "app_effect", "wearer_visibility", "panel_paused_state", "advancing_focused_or_submitted_frames", "app_owned_handoff_marker"]
   },
@@ -37,5 +37,5 @@
     "unknown_or_unavailable_is_explicit": true,
     "android_facts_never_establish_readiness": true
   },
-  "required_case_ids": ["legacy-v3", "legacy-v4", "focus-placeholder-after-brief-app-focus", "unknown-contract"]
+  "required_case_ids": ["legacy-v3", "legacy-v4", "focus-placeholder-after-brief-app-focus", "unknown-contract", "minimal-v6-unavailable-families", "v6-verified-presence-with-empty-pidof", "v6-inconclusive-is-not-absence", "v6-conflicting-corroboration", "v6-unavailable-sources", "v6-multiple-malformed-focus", "v6-unknown-truncated-focus"]
 }
