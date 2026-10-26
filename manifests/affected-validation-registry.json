@@ -197,7 +197,7 @@
     {"path_set_id": "source-only-publication", "patterns": ["schemas/source-delivery-disposition-v1.schema.json", "schemas/source-only-publication-*.schema.json", "scripts/SourceOnlyPublication.psm1", "scripts/Test-SourceOnlyPublication.ps1", "scripts/SourceOnlyPublicationInputs.psm1", "scripts/New-SourceOnlyPublicationInput.ps1", "scripts/Test-SourceOnlyPublicationInputs.ps1"]},
     {"path_set_id": "accepted-validation-evidence-relocation", "patterns": ["schemas/accepted-validation-evidence-relocation-v1.schema.json", "scripts/AcceptedValidationEvidenceRelocation.psm1", "scripts/New-AcceptedValidationEvidenceRelocationInput.ps1"]},
     {"path_set_id": "validation-only-write-scope-narrowing", "patterns": ["schemas/validation-only-write-scope-narrowing-v1.schema.json", "scripts/ValidationOnlyWriteScopeNarrowing.psm1", "scripts/Test-ValidationOnlyWriteScopeNarrowing.ps1"]},
-    {"path_set_id": "workflow-contracts", "patterns": ["templates/**", "scripts/Test-WorkflowContracts.ps1"]},
+    {"path_set_id": "workflow-contracts", "patterns": ["templates/**", "scripts/Test-WorkflowContracts.ps1", "scripts/test-support/IsolatedWorkflowSelfTest.psm1"]},
     {"path_set_id": "documentation", "patterns": ["AGENTS.md", "README.md", "docs/**", "scripts/Test-DocumentationLinks.ps1", "scripts/Test-PublicBoundary.ps1"]},
     {"path_set_id": "portable-skills", "patterns": ["skills/**", "scripts/Test-SkillTemplates.ps1"]},
     {"path_set_id": "affected-validation-registry", "patterns": ["manifests/affected-validation-registry.json"]},
