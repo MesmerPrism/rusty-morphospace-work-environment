@@ -133,13 +133,21 @@ function Test-EnvelopeFixtureScratchIsolation {
     Assert-Envelope $rejected 'copied fixture Git file allowed shared config mutation'
     foreach($variable in @('GIT_DIR','GIT_CONFIG')){
       $saved=[Environment]::GetEnvironmentVariable($variable)
+      $savedPresent=[Environment]::GetEnvironmentVariables().Contains($variable)
       try{
         [Environment]::SetEnvironmentVariable($variable,$(if($variable-ceq'GIT_DIR'){Join-Path $parent '.git'}else{Join-Path $parent '.git/config'}))
         $rejected=$false
         try{Invoke-EnvelopeGit $mislocated @('config','--local','fixture.sentinel','must not write')|Out-Null}catch{$rejected=$_.Exception.Message-like'Envelope Git fixture requires its own local repository:*'}
         Assert-EnclosingFixtureUnchanged
         Assert-Envelope $rejected "fixture Git config accepted redirected metadata: $variable"
-      }finally{[Environment]::SetEnvironmentVariable($variable,$saved)}
+      }finally{
+        # PowerShell's string binding turns ordinary null into an empty value.
+        # Use explicit .NET null to restore an originally absent variable.
+        if($null-eq$saved){[Environment]::SetEnvironmentVariable($variable,[NullString]::Value)}
+        else{[Environment]::SetEnvironmentVariable($variable,$saved)}
+      }
+      $restored=[Environment]::GetEnvironmentVariable($variable)
+      Assert-Envelope (([Environment]::GetEnvironmentVariables().Contains($variable)-eq$savedPresent)-and$saved-ceq$restored) "fixture environment cleanup changed original presence or value: $variable"
     }
     Write-Output 'PASS missing/mislocated initialization and shared Git file refuse config without enclosing repository mutation'
   } finally {
@@ -149,7 +157,7 @@ function Test-EnvelopeFixtureScratchIsolation {
     if(Test-Path -LiteralPath $absolute){Remove-Item -LiteralPath $absolute -Recurse -Force}
   }
 }
-if($SelfTest-or$FixtureScratchOnly){Test-EnvelopeFixtureScratchIsolation;if($FixtureScratchOnly){return}}
+if($SelfTest-or$FixtureScratchOnly){Test-EnvelopeFixtureScratchIsolation}
 
 function Set-AdmissionReplacementInstructionPlan([object]$Admission,[object]$Template){
   $Admission.unit.instruction_impact='update'
@@ -336,7 +344,7 @@ function Test-EnvelopeGitLongPaths {
     if(Test-Path -LiteralPath $absolute){Remove-Item -LiteralPath $absolute -Recurse -Force}
   }
 }
-if($SelfTest-or$GitLongPathsOnly){Test-EnvelopeGitLongPaths;if($GitLongPathsOnly){return}}
+if($SelfTest-or$GitLongPathsOnly-or$FixtureScratchOnly){Test-EnvelopeGitLongPaths;if($GitLongPathsOnly-or$FixtureScratchOnly){return}}
 
 function Test-ValidationOnlyEmptyFreeze {
   $root=Join-Path ([IO.Path]::GetTempPath()) ('workenv-validation-empty-freeze-'+[guid]::NewGuid().ToString('N'))
