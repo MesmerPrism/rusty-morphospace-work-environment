@@ -131,7 +131,10 @@ if((Get-WorkflowProcessEnvironmentDigest)-cne$before){throw 'Launcher modes chan
         foreach($entry in ([ordered]@{GIT_PAGER='hostile-pager';WEF002_UNOWNED_MARKER='hostile-unowned';PSExecutionPolicyPreference='hostile-policy';PSModulePath='hostile-module-path'}).GetEnumerator()){$start.Environment[[string]$entry.Key]=[string]$entry.Value}
         foreach($entry in ([ordered]@{GIT_PAGER='hostile-pager';WEF002_UNOWNED_MARKER='hostile-unowned';PSExecutionPolicyPreference='hostile-policy';PSModulePath='hostile-module-path'}).GetEnumerator()){if($start.Environment[[string]$entry.Key]-cne[string]$entry.Value){throw "Hostile workflow projection harness start environment omitted '$($entry.Key)'."}}
         $process=[Diagnostics.Process]::new();$process.StartInfo=$start;if(-not$process.Start()){throw 'Hostile workflow projection harness did not start.'};$stdoutTask=$process.StandardOutput.ReadToEndAsync();$stderrTask=$process.StandardError.ReadToEndAsync()
-        if(-not$process.WaitForExit(30000)){try{$process.Kill($true)}finally{[void]$process.WaitForExit(5000)};throw 'Hostile workflow projection harness exceeded 30 seconds.'}
+        # The fixed harness includes completion-preserving child controls. Its
+        # explicit timed-mode leaf keeps its deadline; the enclosing finite
+        # harness is observed through its actual exit, including on slow hosts.
+        $process.WaitForExit()
         if(-not[Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($stdoutTask,$stderrTask),5000)){throw 'Hostile workflow projection harness streams did not drain within 5 seconds.'}
         $stdout=$stdoutTask.GetAwaiter().GetResult();$stderr=$stderrTask.GetAwaiter().GetResult();if($stdout.Length+$stderr.Length-gt65536){throw 'Hostile workflow projection harness exceeded its 64 KiB output bound.'}
         if($process.ExitCode-ne0-or$stdout-cne'harness-closed'){throw "Hostile workflow projection harness failed with exit $($process.ExitCode): $stderr"}

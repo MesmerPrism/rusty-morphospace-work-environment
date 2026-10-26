@@ -663,6 +663,9 @@ throw 'The selector consumer must never execute the evidence producer.'
     $successor = Get-Content -Raw -LiteralPath $terminalUnitPath | ConvertFrom-Json
     $successor.unit_id = $successorId
     $successor.status = 'proposed'
+    # The new requested declaration uses a registered category. Retained
+    # terminal fixture declarations keep their original historical bytes.
+    $successor.change_categories = @('implementation')
     $successor.objective = 'Prove exact recovery of a historical terminal selector binding.'
     if ($successor.PSObject.Properties.Name -contains 'candidate_freeze') {
         $successor.PSObject.Properties.Remove('candidate_freeze')
