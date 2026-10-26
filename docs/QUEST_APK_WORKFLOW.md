@@ -164,9 +164,10 @@ contract set from that template. The resolver rejects older provider pins that
 do not advertise QFM v5 inspected deployment, preflight/deploy, bounded
 diagnostic result/bundle, typed stop, shared-forward inventory, one typed JSON
 launch envelope on success or failure, the current-Quest launcher-export proof,
-runtime observation v6, global-focus observation v1, and read-only permission
-observation v1. Existing runtime-v5 pins remain supported; the resolver requires
-the executable to advertise the exact configured runtime contract. Resolve the provider
+runtime observation v5 or v6, global-focus observation v1, and read-only permission
+observation v1. The example retains its supported v5 pin. For a v6 provider, set
+`runtime_observation_contract` to `questionable.file_manager.app_runtime_observation.v6`;
+the executable must advertise the exact configured runtime contract. Resolve the provider
 without touching a headset:
 
 ```powershell
