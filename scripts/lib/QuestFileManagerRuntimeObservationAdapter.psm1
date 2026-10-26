@@ -23,10 +23,16 @@ function Test-QfmPropertyPresent {
 function Get-QfmObservationContract {
     param([object]$Observation)
 
-    $contract = Get-QfmProperty -Value $Observation -Name 'ObservationContract'
-    if ($null -eq $contract) { $contract = Get-QfmProperty -Value $Observation -Name 'observationContract' }
-    if ($null -eq $contract) { $contract = Get-QfmProperty -Value $Observation -Name 'schema' }
-    return [string]$contract
+    if ($null -eq $Observation) { return '' }
+    foreach ($name in @('ObservationContract', 'observationContract', 'schema')) {
+        $property = $Observation.PSObject.Properties[$name]
+        if ($null -eq $property -or $null -eq $property.Value) { continue }
+        # Inspect before pipeline enumeration: a one-element JSON array is
+        # malformed, not a supported scalar contract identifier.
+        if ($property.Value -isnot [string]) { return '' }
+        return $property.Value
+    }
+    return ''
 }
 
 function Convert-QfmRuntimeObservation {
@@ -38,6 +44,7 @@ function Convert-QfmRuntimeObservation {
         'questionable.file_manager.app_runtime_observation.v3' { 'legacy-v3'; break }
         'questionable.file_manager.app_runtime_observation.v4' { 'legacy-v4'; break }
         'questionable.file_manager.app_runtime_observation.v5' { 'current-v5'; break }
+        'questionable.file_manager.app_runtime_observation.v6' { 'current-v6'; break }
         default { 'unknown'; break }
     }
     $isSupported = $adapter -ne 'unknown'
@@ -53,7 +60,7 @@ function Convert-QfmRuntimeObservation {
     if ($null -eq $focusedApp) { $focusedApp = Get-QfmProperty -Value $Observation -Name 'focusedApp' }
     $globalFocus = Get-QfmProperty -Value $Observation -Name 'GlobalFocus'
     if ($null -eq $globalFocus) { $globalFocus = Get-QfmProperty -Value $Observation -Name 'globalFocus' }
-    $processReported = Test-QfmPropertyPresent -Value $Observation -Names @('ProcessIds', 'processIds', 'ProcessObservationQuality', 'processObservationQuality', 'ProcessObservationSource', 'processObservationSource')
+    $processReported = Test-QfmPropertyPresent -Value $Observation -Names @('ProcessIds', 'processIds', 'ProcessObservationQuality', 'processObservationQuality', 'ProcessObservationSource', 'processObservationSource', 'ProcessObservationExitCode', 'ProcessCorroboration', 'ProcessAlive')
     $taskReported = Test-QfmPropertyPresent -Value $Observation -Names @('IsForeground', 'isForeground', 'IsTopResumed', 'isTopResumed', 'ForegroundComponents', 'foregroundComponents', 'TopResumedComponents', 'topResumedComponents')
     $installed = Get-QfmProperty -Value $Observation -Name 'Installed'
     if ($null -eq $installed) { $installed = Get-QfmProperty -Value $Observation -Name 'installed' }
@@ -73,6 +80,11 @@ function Convert-QfmRuntimeObservation {
                 process_ids = @($processIds)
                 quality = (Get-QfmProperty -Value $Observation -Name 'ProcessObservationQuality')
                 source = (Get-QfmProperty -Value $Observation -Name 'ProcessObservationSource')
+                observation_exit_code = Get-QfmProperty -Value $Observation -Name 'ProcessObservationExitCode'
+                # Preserve the native presence-only corroboration and nullable
+                # liveness separately from pidof; never compute absence/readiness.
+                corroboration = Get-QfmProperty -Value $Observation -Name 'ProcessCorroboration'
+                alive = Get-QfmProperty -Value $Observation -Name 'ProcessAlive'
             }
             task_top_resumed = [pscustomobject]@{
                 status = if ($taskReported) { 'reported' } else { 'unavailable' }
@@ -83,7 +95,7 @@ function Convert-QfmRuntimeObservation {
             }
             global_android_focus = [pscustomobject]@{
                 status = if ($adapter -eq 'legacy-v3') { 'unavailable' } elseif ($null -eq $globalFocus -and $null -eq $currentFocus -and $null -eq $focusedApp) { 'unavailable' } else { 'reported' }
-                contract = if ($adapter -eq 'current-v5') { 'questionable.file_manager.android_global_focus_observation.v1' } elseif ($adapter -eq 'legacy-v4') { 'legacy-v4-projection' } else { 'unavailable' }
+                contract = if ($adapter -in @('current-v5', 'current-v6')) { 'questionable.file_manager.android_global_focus_observation.v1' } elseif ($adapter -eq 'legacy-v4') { 'legacy-v4-projection' } else { 'unavailable' }
                 current_focus = $currentFocus
                 focused_app = $focusedApp
                 global_focus = $globalFocus

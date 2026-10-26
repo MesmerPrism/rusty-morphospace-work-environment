@@ -164,8 +164,10 @@ contract set from that template. The resolver rejects older provider pins that
 do not advertise QFM v5 inspected deployment, preflight/deploy, bounded
 diagnostic result/bundle, typed stop, shared-forward inventory, one typed JSON
 launch envelope on success or failure, the current-Quest launcher-export proof,
-runtime observation v5, global-focus observation v1, and read-only permission
-observation v1. Resolve the provider
+runtime observation v5 or v6, global-focus observation v1, and read-only permission
+observation v1. The example retains its supported v5 pin. For a v6 provider, set
+`runtime_observation_contract` to `questionable.file_manager.app_runtime_observation.v6`;
+the executable must advertise the exact configured runtime contract. Resolve the provider
 without touching a headset:
 
 ```powershell
@@ -186,10 +188,17 @@ The current File Manager consumer contract preserves owner-native result
 schemas rather than wrapping their payloads. Its `apk_launch_result.v1` outer envelope is exactly
 `{schema,succeeded,mutation,result,failure}`: success has non-null mutation
 and result with null failure; failure has null mutation/result with non-null
-failure. Explicit legacy-v3, legacy-v4, and current-v5 adapters keep installed
+failure. Explicit legacy-v3, legacy-v4, current-v5, and current-v6 adapters keep installed
 identity, process, task/top-resumed, and global Android focus distinct. Runtime
-v5 adds bounded `mCurrentFocus`/`mFocusedApp` facts through global-focus v1;
-these remain raw Android observations. Neither a PID, process liveness,
+v5 adds bounded `mCurrentFocus`/`mFocusedApp` facts through global-focus v1.
+Runtime v6 additionally retains the `pidof` exit code, separately typed
+presence corroboration (state, PID, process birth ticks, current-user UID,
+source and absence-authority boundary), and the native nullable `ProcessAlive`
+value. An empty `pidof` result can coexist with verified presence; inconclusive,
+unavailable or conflicting corroboration does not establish absence. The adapter
+projects these native facts independently without recomputing liveness. Missing
+families remain unavailable, and unrecognized runtime versions remain unknown.
+These remain raw Android observations. Neither a PID, process liveness,
 top-resumed state, target focus, nor FocusPlaceholder state establishes
 application/OpenXR readiness, an application effect, or wearer visibility.
 `apk permissions` is a separate exact-package, read-only fact family for

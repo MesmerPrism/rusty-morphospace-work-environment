@@ -191,9 +191,10 @@ if ($config.launcher_export_proof_contract -cne
     "questionable.file_manager.launcher_export_proof.v2") {
     throw "launcher_export_proof_contract must require the QFM v2 launcher proof contract."
 }
-if ($config.runtime_observation_contract -cne
-    "questionable.file_manager.app_runtime_observation.v5") {
-    throw "runtime_observation_contract must require the QFM v5 fact contract."
+if ($config.runtime_observation_contract -cnotin @(
+    "questionable.file_manager.app_runtime_observation.v5",
+    "questionable.file_manager.app_runtime_observation.v6")) {
+    throw "runtime_observation_contract must pin a supported QFM v5 or v6 fact contract."
 }
 if ($config.global_focus_observation_contract -cne
     "questionable.file_manager.android_global_focus_observation.v1") {
