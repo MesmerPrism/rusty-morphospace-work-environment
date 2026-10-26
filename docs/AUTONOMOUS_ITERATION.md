@@ -74,6 +74,12 @@ repository map remain bound. Commit the corrected source inside that scope and
 provide fresh candidate CAS, final source identities, and validation declarations.
 The original freeze, failed receipt and every transaction remain immutable.
 
+If an old NONPASS receipt instead pinned a mutable source file or Git index
+whose bytes are unavailable, use the independently authorized, nonaccepting
+`candidate_freeze.v4` route in [NONPASS Evidence Custody](NONPASS_EVIDENCE_CUSTODY.md).
+It preserves the failed history and records only the exact unavailable custody
+defect; ordinary v3 and all unaffected or accepted evidence remain strict.
+
 An executed frozen Return retains an exact byte copy of its consumed receipt
 under `receipts/<return-event-id>-retained-validation.json`. Earlier Return
 transactions without this owned copy do not gain revision authority retroactively.

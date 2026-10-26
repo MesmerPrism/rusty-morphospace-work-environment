@@ -1391,8 +1391,15 @@ function Test-MorphospaceValidationReceipt {
             $expectedEvidencePath = [IO.Path]::GetFullPath([string]$definition.selector.evidence.path)
             $matchingEvidenceReferences = @($gate.evidence_refs | Where-Object {
                 $referenceId = [string]$_
-                $artifactPathMap.ContainsKey($referenceId) -and
-                [string]$artifactPathMap[$referenceId] -ceq $expectedEvidencePath
+                if ($artifactPathMap.ContainsKey($referenceId)) {
+                    if ([string]$artifactPathMap[$referenceId] -ceq $expectedEvidencePath) {
+                        $true
+                    } elseif ([string]$receipt.schema -ceq 'rusty.morphospace.workflow.validation_receipt.v1' -and
+                        [string]$receipt.result -cin @('fail','partial','blocked') -and
+                        $artifactMap.ContainsKey('nonpass-evidence-custody')) {
+                        Assert-MorphospaceNonpassEvidenceSnapshotBinding -WorkspaceRoot $WorkspaceRoot -ReceiptPath $receiptPath -Receipt $receipt -Artifact $artifactMap[$referenceId] -ExpectedOriginPath $expectedEvidencePath -ExpectedOriginSha256 ([string]$definition.selector.evidence.sha256)
+                    }
+                }
             })
             if ($matchingEvidenceReferences.Count -ne 1) {
                 throw "Selected validation gate '$($gate.gate_id)' must reference exactly its bound external evidence artifact."

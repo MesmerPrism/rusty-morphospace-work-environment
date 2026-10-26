@@ -598,6 +598,10 @@ if($Scenario-in@('post-nonpass','validating-upgrade','validating-observation','d
  [IO.File]::AppendAllText((Join-Path $nonpassWorkspace '.git/info/exclude'),"`nlocal/`n")
  & git -C $nonpassWorkspace add --all;& git -C $nonpassWorkspace commit -qm 'Checkpoint authentic admitted fixture'
  }
+ # Reserve only the authored attempts' private namespaces before Freeze/Begin.
+ $nonpassStorageRepository=if($nestedPlanning){$seed.source_repository}else{$nonpassWorkspace}
+ $nonpassStoragePrefix=if($nestedPlanning){'/morphospace/'}else{'/'}
+ [IO.File]::AppendAllText((Join-Path $nonpassStorageRepository '.git/info/exclude'),"`n${nonpassStoragePrefix}receipts/u002-synthetic-nonpass-evidence/`n${nonpassStoragePrefix}receipts/u002-retained-blocked-evidence/`n",[Text.UTF8Encoding]::new($false))
  if($validatingUpgradeFixture){
   # A real committed source correction after Claim is legal before Freeze. Begin
   # must refresh this observation without granting any other target-state field.
@@ -700,7 +704,13 @@ if($validatingUpgradeFixture){
   # Copy only an actual committed native prefix. Relative ledger/context paths
   # and the unchanged exact map still name the same disposable owner sources.
   # New completion/receipt/Return records below come from native public owners.
-  $sourceMismatchWorkspace=Join-Path $HarnessRoot 'return-source-mismatch'
+  # The copied native prefix keeps its exact map/source pins. A separate outer
+  # Git owner supplies private custody storage without adding an inner .git.
+  $sourceMismatchStorage=Join-Path $HarnessRoot 'return-source-mismatch-storage'
+  [IO.Directory]::CreateDirectory($sourceMismatchStorage)|Out-Null
+  & git -C $sourceMismatchStorage init --quiet --initial-branch=main|Out-Null;if($LASTEXITCODE-ne0){throw 'Could not initialize mismatch custody storage owner.'}
+  [IO.File]::AppendAllText((Join-Path $sourceMismatchStorage '.git/info/exclude'),"`n/morphospace/receipts/u002-source-mismatch-blocked-evidence/`n",[Text.UTF8Encoding]::new($false))
+  $sourceMismatchWorkspace=Join-Path $sourceMismatchStorage 'morphospace'
   $sourceMismatchPrefixFingerprint=WorkspaceFingerprint $nonpassWorkspace
   Copy-Item -LiteralPath $nonpassWorkspace -Destination $sourceMismatchWorkspace -Recurse
   Assert-TC ((WorkspaceFingerprint $sourceMismatchWorkspace)-ceq$sourceMismatchPrefixFingerprint) 'mismatch branch copies exact authentic native prefix bytes'

@@ -77,9 +77,13 @@ function Get-BlockedSuccessorTerminalObservation {
     foreach($name in @('freeze_id','receipt_path','receipt_sha256')){if([string]$unit.candidate_freeze.$name-cne[string]$terminal.candidate_freeze.$name){throw "Blocked-successor candidate-freeze $name drifted."}}
     $freezePath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$terminal.candidate_freeze.receipt_path) -RequireLeaf
      $freezeDocument=Read-MorphospaceProtocolJson $freezePath
-    $freezeSchema=if([string]$freezeDocument.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v3'){'candidate-freeze-v3.schema.json'}else{'candidate-freeze-v1.schema.json'}
+    $freezeSchema=switch -CaseSensitive ([string]$freezeDocument.schema){
+        'rusty.morphospace.workflow.candidate_freeze.v4'{'candidate-freeze-v4.schema.json'}
+        'rusty.morphospace.workflow.candidate_freeze.v3'{'candidate-freeze-v3.schema.json'}
+        default{'candidate-freeze-v1.schema.json'}
+    }
     Assert-BlockedSuccessorSchema $freezePath $freezeSchema 'Blocked-successor candidate-freeze receipt is invalid.'
-    if([string]$freezeDocument.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v3'){
+    if([string]$freezeDocument.schema-cin@('rusty.morphospace.workflow.candidate_freeze.v3','rusty.morphospace.workflow.candidate_freeze.v4')){
         $revisionOwner=Import-Module (Join-Path $PSScriptRoot 'CandidateFreeze.psm1') -PassThru
         $freezeProof=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $Workspace -TransactionId "$($freezeDocument.freeze_id)-recorded-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath ([string]$terminal.unit_path) -ExpectedEventsPath 'iteration-events.jsonl'
         &$revisionOwner {param($w,$i) Assert-MorphospaceCandidateRevisionRecoveryBindings $w $i -Historical} $Workspace $freezeProof.intent

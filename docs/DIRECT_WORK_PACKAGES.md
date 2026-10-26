@@ -101,6 +101,34 @@ remaining limits and resource custody. Preserve meaningful ignored inputs and
 original evidence still authenticated by consumers before worktree archival;
 use the existing cleanup and evidence-relocation contracts for retirement.
 
+## Opt-in publication interface diagnostics
+
+For a final candidate that changes workflow runners or aggregate invocation
+forms, the owner provides a focused composition diagnostic:
+
+```powershell
+./scripts/Test-AffectedPublicationInterfaces.ps1 -RepositoryRoot . -BaseCommit $exactBase -HeadCommit $exactHead -EvidenceDirectory $newEvidenceDirectory
+```
+
+Run it on real Linux from the exact clean committed candidate, with a new
+retained evidence directory outside the source checkout. Put the selected
+Linux PowerShell runtime first on `PATH` in that invocation's process only so
+nested `pwsh` resolves the same runtime. The command reuses the canonical Quick
+selector, actual aggregate ownership parser, production graph/import and
+dependency children, phase binding self-test, artifact-reader contract controls,
+and existing source/dependency manifest APIs. It preserves the selector's actual
+escalation and full selection; it executes only these named diagnostics.
+The portable `-SelfTest` covers the finite WUA data row and malformed invocation
+forms, and is selected only for its owner or aggregate changes.
+
+This opt-in command adds no ordinary continuation gate. Its diagnostic result
+earns no CI, lifecycle, acceptance or publication credit. It does not exercise
+the candidate's managed projection publisher, guarded launch, leaf snapshot/cache
+publication, full required CI or merge. Successful child streams are retained as
+raw bytes; shared-launcher failures retain decoded details, not the original
+failed-child stream bytes. Preserve the outer command's original capture and
+follow the existing required publication route separately.
+
 ## Central issue queue
 
 Use the existing queue published by the adopted external planning authority.

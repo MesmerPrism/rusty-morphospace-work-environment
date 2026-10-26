@@ -42,8 +42,8 @@ try{
         [IO.Directory]::CreateDirectory((Join-Path $b 'scripts/lib'))|Out-Null;[IO.File]::Copy([IO.Path]::GetFullPath($RecoveryAdapterPath),$fixtureAdapterPath)
         [IO.File]::Copy((Join-Path $sourceRoot 'scripts/lib/MorphospaceProtocolCommon.psm1'),(Join-Path $b 'scripts/lib/MorphospaceProtocolCommon.psm1'))
         $allA=&$am {param($p)Get-NativeRecoverySourceIdentity $p} $a
-        $anchor=[ordered]@{repository=$allA.repository;commit=$allA.commit;tree=$allA.tree;artifacts=@($allA.artifacts|ForEach-Object{[ordered]@{path=$_.path;mode=$_.mode;size_bytes=$_.size_bytes;sha256=$_.sha256}})}
-        Write-TestJson (Join-Path $b 'config/native-nonpass-recovery-authority-binding.json') @{schema='rusty.morphospace.workflow.native_nonpass_recovery_authority_binding.v1';authorities=@($anchor)}
+        $anchor=[ordered]@{repository=$allA.repository;commit=$allA.commit;tree=$allA.tree;entrypoint='scripts/lib/NativeNonpassRecoveryAuthority.psm1';artifacts=@($allA.artifacts|ForEach-Object{[ordered]@{path=$_.path;mode=$_.mode;size_bytes=$_.size_bytes;sha256=$_.sha256}})}
+        Write-TestJson (Join-Path $b 'config/native-nonpass-recovery-authority-binding.json') @{schema='rusty.morphospace.workflow.native_nonpass_recovery_authority_binding.v2';authorities=@($anchor)}
         $head=Commit-Git $b 'bind independently adopted fixture A';Git $b @('checkout','main')|Out-Null;Git $b @('reset','--hard',$base)|Out-Null;Git $b @('merge','--no-ff','repair','-m','normal bound source landing')|Out-Null;$landing=Git $b @('rev-parse','HEAD');Git $b @('checkout','repair')|Out-Null
         $adapter=Import-Module $fixtureAdapterPath -Force -PassThru
     }

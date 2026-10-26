@@ -612,6 +612,8 @@ try{
 
     if($Scenario-cin@('All','NestedPositive','NestedCommitted','PostNonpass')){
         $postSeed=@(New-ReadonlyPlanningRetirementSeed (Join-Path $temp 'post-nonpass-seed'))[-1];$workspace=Join-Path $postSeed.source_repository 'morphospace';$planning=[string]$postSeed.source_repository;$mapPath=Join-Path $workspace 'repository-map.json'
+        # Declare the exact private custody namespace before the native Freeze.
+        [IO.File]::AppendAllText((Join-Path $planning '.git/info/exclude'),"`n/morphospace/receipts/u002-synthetic-nonpass-evidence/`n",[Text.UTF8Encoding]::new($false))
         Invoke-EnvelopeGit $planning @('add','morphospace')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-qm','Checkpoint synthetic admitted claim')|Out-Null
         $freezePath=Join-Path $temp 'post-nonpass-freeze.json';$null=New-RetirementNonpassFreezeRequest $workspace $mapPath $freezePath
         $automation=Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1';$common=@{WorkspaceRoot=$workspace;UnitId='u002';RepoMapPath=$mapPath;ValidationTier='quick'}
