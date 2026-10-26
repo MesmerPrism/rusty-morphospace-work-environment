@@ -219,11 +219,11 @@ function Get-NonpassCustodyCommittedInventory([string]$Workspace){
         # Candidate receipts or a caller-selected authority path never grant trust.
         $adapterPath=Join-Path $PSScriptRoot 'MorphospaceNativeNonpassRecoveryAuthorization.psm1'
         if(-not[IO.File]::Exists($adapterPath)){throw 'Nonpass custody independently trusted recovery authorization is unavailable.'}
-        $adapterModule=Import-Module (Join-Path $PSScriptRoot 'MorphospaceNativeNonpassRecoveryAuthorization.psm1') -PassThru
-        $adapter=$adapterModule.ExportedCommands['Assert-MorphospaceHistoricalNativeNonpassRecoveryAuthorization']
+        $historyAdapterModule=Import-Module (Join-Path $PSScriptRoot 'MorphospaceNativeNonpassRecoveryAuthorization.psm1') -PassThru
+        $adapter=$historyAdapterModule.ExportedCommands['Assert-MorphospaceHistoricalNativeNonpassRecoveryAuthorization']
         if($null-eq$adapter){throw 'Nonpass custody independently trusted recovery authorization is unavailable.'}
         $intentRelative="receipts/transactions/$($proof.intent.transaction_id).intent.json";$completionRelative="receipts/transactions/$($proof.intent.transaction_id).completion.json"
-        & $adapterModule.ExportedCommands['Assert-MorphospaceHistoricalNativeNonpassRecoveryAuthorization'] -WorkspaceRoot $Workspace -Request $document -Intent $proof.intent -Completion $proof.completion -ExecutorOrigin ([pscustomobject]@{source_qualification_path=[string]$document.recovery_authorization.source_qualification_path;request_path=$path;request_raw_sha256=Get-MorphospaceFileSha256 $path;intent_path=Resolve-MorphospaceWorkspacePath $Workspace $intentRelative -RequireLeaf;intent_raw_sha256=Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $Workspace $intentRelative -RequireLeaf);completion_path=Resolve-MorphospaceWorkspacePath $Workspace $completionRelative -RequireLeaf;completion_raw_sha256=Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $Workspace $completionRelative -RequireLeaf)})|Out-Null
+        & $historyAdapterModule.ExportedCommands['Assert-MorphospaceHistoricalNativeNonpassRecoveryAuthorization'] -WorkspaceRoot $Workspace -Request $document -Intent $proof.intent -Completion $proof.completion -ExecutorOrigin ([pscustomobject]@{source_qualification_path=[string]$document.recovery_authorization.source_qualification_path;request_path=$path;request_raw_sha256=Get-MorphospaceFileSha256 $path;intent_path=Resolve-MorphospaceWorkspacePath $Workspace $intentRelative -RequireLeaf;intent_raw_sha256=Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $Workspace $intentRelative -RequireLeaf);completion_path=Resolve-MorphospaceWorkspacePath $Workspace $completionRelative -RequireLeaf;completion_raw_sha256=Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $Workspace $completionRelative -RequireLeaf)})|Out-Null
         foreach($row in @($defect.rows)){$key=Get-MorphospaceCanonicalJsonSha256 $row;if(-not$keys.Add($key)){throw 'Nonpass custody cumulative inventory repeats a defect tuple.'};$rows+=,$row}
     }
     foreach($group in @($rows|Group-Object -Property return_event_id,receipt_path -CaseSensitive)){
@@ -264,10 +264,10 @@ function Assert-NonpassCustodyLiveAuthorization {
     if($PendingIntentPath){$bindings.mode='pending';$bindings.execution_intent_path=[IO.Path]::GetFullPath($PendingIntentPath);$bindings.execution_intent_raw_sha256=Get-MorphospaceFileSha256 $PendingIntentPath}
     $adapterPath=Join-Path $PSScriptRoot 'MorphospaceNativeNonpassRecoveryAuthorization.psm1'
     if(-not[IO.File]::Exists($adapterPath)){throw 'Nonpass custody independently trusted recovery authorization is unavailable.'}
-    $adapterModule=Import-Module (Join-Path $PSScriptRoot 'MorphospaceNativeNonpassRecoveryAuthorization.psm1') -PassThru
-    $adapter=$adapterModule.ExportedCommands['Assert-MorphospaceNativeNonpassRecoveryAuthorization']
+    $liveAdapterModule=Import-Module (Join-Path $PSScriptRoot 'MorphospaceNativeNonpassRecoveryAuthorization.psm1') -PassThru
+    $adapter=$liveAdapterModule.ExportedCommands['Assert-MorphospaceNativeNonpassRecoveryAuthorization']
     if($null-eq$adapter){throw 'Nonpass custody independently trusted recovery authorization is unavailable.'}
-    & $adapterModule.ExportedCommands['Assert-MorphospaceNativeNonpassRecoveryAuthorization'] -WorkspaceRoot $Workspace -Request $candidate -CurrentBindings ([pscustomobject]$bindings) -ExecutorRoot (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent)|Out-Null
+    & $liveAdapterModule.ExportedCommands['Assert-MorphospaceNativeNonpassRecoveryAuthorization'] -WorkspaceRoot $Workspace -Request $candidate -CurrentBindings ([pscustomobject]$bindings) -ExecutorRoot (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent)|Out-Null
 }
 function Assert-NonpassCustodyReceiptArtifacts {
     param([string]$WorkspaceRoot,[string]$ReceiptPath,[string]$RecoveryRequestPath='',[string]$ReturnEventId)

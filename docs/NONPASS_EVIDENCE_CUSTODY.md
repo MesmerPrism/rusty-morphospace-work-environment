@@ -69,6 +69,14 @@ The executor's committed authority binding pins the actual independent policy
 source and complete physical Git closure. An empty binding refuses execution;
 a caller-supplied authority directory is only a locator.
 
+Configured binding v2 also names the native module entrypoint in each protected
+source anchor. The loader joins that canonical module path to exactly one row
+of the already verified complete external source closure, then requires the
+fixed native recovery function exports. The request cannot select a module.
+Configured v1 bindings are unsupported; an empty binding continues to refuse.
+Changing the entrypoint requires the same protected committed owner source
+decision as changing the authority source anchor.
+
 Independently qualified repair source and a separate signed, finite owner
 decision must match the exact request and freshly observed owner state before
 any artifact staging or intent write. Existing static-assessment signatures

@@ -73,7 +73,8 @@ function Open-PinnedRecoveryAuthority([object]$Request,[string]$WorkspaceRoot){
         $raw=[byte[]]::new([int]$bindingHold.Length);$bindingHold.ReadExactly($raw)
         $binding=ConvertFrom-MorphospaceProtocolJsonBytes $raw
         Assert-MorphospaceExactPropertySet $binding @('schema','authorities') @() 'Recovery authority binding'
-        if([string]$binding.schema-cne'rusty.morphospace.workflow.native_nonpass_recovery_authority_binding.v1'-or@($binding.authorities).Count-eq0){throw 'Independent native recovery authority has not been adopted in this executor.'}
+        if(@($binding.authorities).Count-eq0){throw 'Independent native recovery authority has not been adopted in this executor.'}
+        if([string]$binding.schema-cne'rusty.morphospace.workflow.native_nonpass_recovery_authority_binding.v2'){throw 'Configured native recovery authority binding version is unsupported.'}
         if($null-eq$script:RecoverySourceScope){Assert-RecoveryBindingProgramOrigin $raw}
         $authority=Open-PinnedRecoveryAuthorityCore $Request $WorkspaceRoot $binding
         $authority.holds=@($authority.holds)+@($bindingHold)
@@ -84,7 +85,8 @@ function Open-PinnedRecoveryAuthority([object]$Request,[string]$WorkspaceRoot){
 }
 function Open-PinnedRecoveryAuthorityCore([object]$Request,[string]$WorkspaceRoot,[object]$binding){
     Assert-MorphospaceExactPropertySet $binding @('schema','authorities') @() 'Recovery authority binding'
-    if([string]$binding.schema-cne'rusty.morphospace.workflow.native_nonpass_recovery_authority_binding.v1'-or@($binding.authorities).Count-eq0){throw 'Independent native recovery authority has not been adopted in this executor.'}
+    if(@($binding.authorities).Count-eq0){throw 'Independent native recovery authority has not been adopted in this executor.'}
+    if([string]$binding.schema-cne'rusty.morphospace.workflow.native_nonpass_recovery_authority_binding.v2'){throw 'Configured native recovery authority binding version is unsupported.'}
     $root=[IO.Path]::GetFullPath([string]$Request.recovery_authorization.trusted_authority_root).TrimEnd('\','/')
     if($null-ne$script:RecoverySourceScope){
         Assert-RecoverySourceScope $WorkspaceRoot
@@ -102,7 +104,7 @@ function Open-PinnedRecoveryAuthorityCore([object]$Request,[string]$WorkspaceRoo
     $anchors=@($binding.authorities|Where-Object { [string]$_.commit-ceq$commit })
     if($anchors.Count-ne1){throw 'Recovery authority locator does not match an independently adopted source.'}
     $anchor=$anchors[0]
-    Assert-MorphospaceExactPropertySet $anchor @('repository','commit','tree','artifacts') @() 'Recovery authority source anchor'
+    Assert-MorphospaceExactPropertySet $anchor @('repository','commit','tree','entrypoint','artifacts') @() 'Recovery authority source anchor'
     if([string]$anchor.repository-cne'MesmerPrism/rusty-morphospace-work-environment'-or[string]$anchor.commit-cnotmatch'^[0-9a-f]{40}$'-or[string]$anchor.tree-cnotmatch'^[0-9a-f]{40}$'){throw 'Recovery authority source anchor is invalid.'}
     $origin=Invoke-RecoveryAuthorityGit $root @('remote','get-url','origin')
     if($origin-cne"https://github.com/$($anchor.repository).git"-and$origin-cne"https://github.com/$($anchor.repository)"){throw 'Recovery authority repository origin differs from its adopted owner.'}
@@ -139,7 +141,17 @@ function Open-PinnedRecoveryAuthorityCore([object]$Request,[string]$WorkspaceRoo
             }finally{$gitHash.Dispose();$rawHash.Dispose()}
         }
         if((Invoke-RecoveryAuthorityGit $root @('rev-parse','HEAD'))-cne$commit-or(Invoke-RecoveryAuthorityGit $root @('status','--porcelain=v2','--untracked-files=all'))){throw 'Recovery authority changed during authentication.'}
-        $module=Import-Module (Join-Path $root 'scripts/lib/NativeNonpassRecoveryAuthority.psm1') -PassThru -Scope Local -Force
+        $entrypoint=$anchor.entrypoint
+        if($entrypoint-isnot[string]-or-not$entrypoint.StartsWith('scripts/lib/',[StringComparison]::Ordinal)-or$entrypoint-cnotmatch'^(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.psm1$'-or$entrypoint-cmatch'(^|/)\.\.?(/|$)'){throw 'Recovery authority entrypoint is not a canonical native module path.'}
+        $authorityModuleRows=@($anchor.artifacts|Where-Object { [string]$_.path-ceq$entrypoint })
+        if($authorityModuleRows.Count-ne1){throw 'Recovery authority fixed module is absent from its verified source anchor.'}
+        $authorityModulePath=Join-Path $root ([string]$authorityModuleRows[0].path)
+        $modules=@(Import-Module $authorityModulePath -PassThru -Scope Local -Force)
+        if($modules.Count-ne1){throw 'Recovery authority entrypoint did not load exactly one module.'}
+        $module=$modules[0]
+        foreach($name in @('New-NativeNonpassRecoveryAuthorizationRequest','Assert-MorphospaceNativeNonpassRecoveryAuthorization','Assert-MorphospaceNativeNonpassRecoveryHistory','Invoke-NativeNonpassRecoveryAuthority')){
+            if(-not$module.ExportedCommands.ContainsKey($name)-or$module.ExportedCommands[$name].CommandType-ne[Management.Automation.CommandTypes]::Function){throw 'Recovery authority entrypoint lacks its fixed native function interface.'}
+        }
         return [pscustomobject]@{module=$module;holds=$holds;root=$root;commit=$commit;borrowed=$false}
     }catch{foreach($stream in $holds){$stream.Dispose()};throw}
 }

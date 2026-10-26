@@ -241,7 +241,7 @@ if(-not$AuthoritySourceRoot){
     $AuthoritySourceRoot=Join-Path $root 'adopted-authority-source'
     Expand-RecoveryFixtureSource ([string]$binding.authorities[0].commit) (Join-Path $root 'adopted-authority-source.zip') $AuthoritySourceRoot
 }
-. (Join-Path $AuthoritySourceRoot 'scripts/test-support/NativeNonpassRecoveryAuthorityFixture.ps1')
+. (Join-Path $repoRoot 'scripts/test-support/NativeNonpassRecoveryAuthorityFixture.ps1')
 Invoke-EnvelopeGit $source @('remote','add','origin','https://github.com/example/nonpass-source-fixture.git')|Out-Null
 Invoke-EnvelopeGit $ws @('add','--all')|Out-Null
 Invoke-EnvelopeGit $ws @('commit','-m','retain genuine pre-correction owner bytes')|Out-Null

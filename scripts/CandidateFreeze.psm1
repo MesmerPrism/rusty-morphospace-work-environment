@@ -596,7 +596,7 @@ function Assert-MorphospaceCandidateRevisionPredecessor {
     if(-not(Test-Json -Json ($old|ConvertTo-Json -Depth 100) -SchemaFile (Join-Path $owner "schemas/$oldSchema"))){throw 'Candidate revision predecessor schema is invalid.'}
     $frozen=Get-CandidateRevisionTransition $Workspace "$([string]$old.freeze_id)-recorded" $id
     [void](Get-MorphospaceFrozenCandidateTransition $Workspace $old $frozen.intent.target.state.document $frozen.intent.target.unit.document ([string]$predecessor.freeze.receipt_path))
-    if([string]$old.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v4'){$custody=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceNonpassCustodyCorrection.psm1') -PassThru;&$custody {param($w,$id)Assert-NonpassCustodyCommittedCorrection $w $id} $Workspace "$($old.freeze_id)-recorded-transition"}
+    if([string]$old.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v4'){$predecessorCustodyModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceNonpassCustodyCorrection.psm1') -PassThru;&$predecessorCustodyModule {param($w,$id)Assert-NonpassCustodyCommittedCorrection $w $id} $Workspace "$($old.freeze_id)-recorded-transition"}
     $originalUnit=$frozen.intent.target.unit.document|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String
     if([string]$old.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v1'){$originalUnit.PSObject.Properties.Remove('candidate_freeze')}else{$originalUnit.candidate_freeze=$old.predecessor.freeze}
     if((Get-MorphospaceCanonicalJsonSha256 $originalUnit)-cne[string]$old.expected.unit_sha256){throw 'Candidate revision original freeze changed its admitted unit authority.'}
@@ -625,7 +625,7 @@ function Assert-MorphospaceCandidateRevisionPredecessor {
         if(-not$artifactIds.Add([string]$artifact.artifact_id)){throw 'Candidate revision failed validation evidence repeats an artifact ID.'}
 
     }
-    if($CustodyRequestPath){$custody=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceNonpassCustodyCorrection.psm1') -PassThru;&$custody {param($w,$r,$p,$e)Assert-NonpassCustodyReceiptArtifacts $w $r $p $e} $Workspace ([string]$checkpoint.receipt) $CustodyRequestPath ([string]$returnEvent.event_id)}else{Assert-MorphospaceHistoricalNonpassArtifacts -WorkspaceRoot $Workspace -ReceiptPath ([string]$checkpoint.receipt) -ReturnEventId ([string]$returnEvent.event_id)}
+    if($CustodyRequestPath){$receiptCustodyModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceNonpassCustodyCorrection.psm1') -PassThru;&$receiptCustodyModule {param($w,$r,$p,$e)Assert-NonpassCustodyReceiptArtifacts $w $r $p $e} $Workspace ([string]$checkpoint.receipt) $CustodyRequestPath ([string]$returnEvent.event_id)}else{Assert-MorphospaceHistoricalNonpassArtifacts -WorkspaceRoot $Workspace -ReceiptPath ([string]$checkpoint.receipt) -ReturnEventId ([string]$returnEvent.event_id)}
     foreach($evidence in @($receipt.criteria)+@($receipt.gates)+@(if($null-ne$receipt.device_validation){$receipt.device_validation})){foreach($reference in @($evidence.evidence_refs)){if(-not$artifactIds.Contains([string]$reference)){throw 'Candidate revision failed receipt references unknown evidence.'}}}
     foreach($repository in @($old.final_repositories)){
         $revisions=@($receipt.repository_revisions|Where-Object{[string]$_.repo_id-ceq[string]$repository.repo_id})

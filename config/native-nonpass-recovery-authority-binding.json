@@ -1,10 +1,11 @@
 {
-  "schema": "rusty.morphospace.workflow.native_nonpass_recovery_authority_binding.v1",
+  "schema": "rusty.morphospace.workflow.native_nonpass_recovery_authority_binding.v2",
   "authorities": [
     {
       "repository": "MesmerPrism/rusty-morphospace-work-environment",
       "commit": "4cef59bb7cb7f23092022cda92cc749436111795",
       "tree": "ee7da0c019ec2e68cf789badff73ffc1897d3d46",
+      "entrypoint": "scripts/lib/NativeNonpassRecoveryAuthority.psm1",
       "artifacts": [
         {
           "path": ".gitattributes",
