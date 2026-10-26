@@ -71,14 +71,12 @@
     },
     "before_allowed_paths": {
       "type": "array",
-      "maxItems": 128,
       "uniqueItems": true,
       "items": { "$ref": "#/$defs/path" }
     },
     "after_allowed_paths": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 128,
       "uniqueItems": true,
       "items": { "$ref": "#/$defs/path" }
     },

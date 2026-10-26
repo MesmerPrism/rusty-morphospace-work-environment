@@ -630,6 +630,10 @@ The CLI is deliberately narrower than an autonomous coding agent:
   project/state/unit/event CAS, complete before/after paths, at least one
   project-approved addition, and dry-run input-hash replay; it retains captain,
   status, project authority, and every unit field except `allowed_repositories`;
+- its complete path sets have the same count domain as admitted unit paths;
+  a unit with more than 128 paths can still be amended. Canonical safe paths,
+  duplicate refusal, exact before-set equality, additive project ceilings and
+  admitted source-lock/ownership proofs remain mandatory;
 - it reads Git state but never runs checkout, reset, stash, commit, push, or
   force-push;
 - it never runs validation commands or device commands;
