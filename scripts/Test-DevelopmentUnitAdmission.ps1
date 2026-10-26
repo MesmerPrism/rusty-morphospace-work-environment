@@ -515,6 +515,7 @@ function Test-ValidationOnlyEmptyFreeze {
     $contractOutput|Write-Host
     Assert-Envelope ($LASTEXITCODE-eq0) 'genuine validation-only empty write scope failed the full current-work contract consumer'
     # Exercise the exact consumer block on copies; damage probes never rewrite owner evidence.
+    Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceUnitDeclaration.psm1')
     $consumerText=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Test-WorkflowContracts.ps1'))
     $scopeStart=$consumerText.IndexOf('        $writeRepositoryIds = ',[StringComparison]::Ordinal)
     $conflictEnd=$consumerText.IndexOf('both writable scope and a read-only dependency.', $scopeStart,[StringComparison]::Ordinal)

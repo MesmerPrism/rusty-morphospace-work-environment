@@ -52,6 +52,7 @@ Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalValidationD
 # Keep one stable shared-predicate module instance through nested owner tests.
 # A force reload can remove this script's exported command binding mid-run.
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceActiveUnitContractReviewCompatibility.psm1')
+Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceUnitDeclaration.psm1')
 
 Import-Module (Join-Path $PSScriptRoot 'test-support/IsolatedWorkflowSelfTest.psm1')
 
@@ -130,7 +131,10 @@ if((Get-WorkflowProcessEnvironmentDigest)-cne$before){throw 'Launcher modes chan
         foreach($entry in ([ordered]@{GIT_PAGER='hostile-pager';WEF002_UNOWNED_MARKER='hostile-unowned';PSExecutionPolicyPreference='hostile-policy';PSModulePath='hostile-module-path'}).GetEnumerator()){$start.Environment[[string]$entry.Key]=[string]$entry.Value}
         foreach($entry in ([ordered]@{GIT_PAGER='hostile-pager';WEF002_UNOWNED_MARKER='hostile-unowned';PSExecutionPolicyPreference='hostile-policy';PSModulePath='hostile-module-path'}).GetEnumerator()){if($start.Environment[[string]$entry.Key]-cne[string]$entry.Value){throw "Hostile workflow projection harness start environment omitted '$($entry.Key)'."}}
         $process=[Diagnostics.Process]::new();$process.StartInfo=$start;if(-not$process.Start()){throw 'Hostile workflow projection harness did not start.'};$stdoutTask=$process.StandardOutput.ReadToEndAsync();$stderrTask=$process.StandardError.ReadToEndAsync()
-        if(-not$process.WaitForExit(30000)){try{$process.Kill($true)}finally{[void]$process.WaitForExit(5000)};throw 'Hostile workflow projection harness exceeded 30 seconds.'}
+        # The fixed harness includes completion-preserving child controls. Its
+        # explicit timed-mode leaf keeps its deadline; the enclosing finite
+        # harness is observed through its actual exit, including on slow hosts.
+        $process.WaitForExit()
         if(-not[Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($stdoutTask,$stderrTask),5000)){throw 'Hostile workflow projection harness streams did not drain within 5 seconds.'}
         $stdout=$stdoutTask.GetAwaiter().GetResult();$stderr=$stderrTask.GetAwaiter().GetResult();if($stdout.Length+$stderr.Length-gt65536){throw 'Hostile workflow projection harness exceeded its 64 KiB output bound.'}
         if($process.ExitCode-ne0-or$stdout-cne'harness-closed'){throw "Hostile workflow projection harness failed with exit $($process.ExitCode): $stderr"}
@@ -715,7 +719,7 @@ function Test-CurrentUnitInstructionWorkspace {
         else { $_ }
     })
     foreach ($category in $changeCategories) {
-        Assert-Contract (($script:ChangeCategories -ccontains $category) -or $script:ChangeCategoryAliases.ContainsKey($category)) "$Context current unit has unknown change category '$category'."
+        Assert-Contract (Test-MorphospaceDeclaredChangeCategory -Category $category -Lifecycle $script:WorkflowLifecycle) "$Context current unit has unknown change category '$category'."
     }
 
     $instructionImpact = [string]$unit.instruction_impact
@@ -1626,7 +1630,7 @@ function Test-ProjectBundle {
             Test-ExactLegacyMappings -UnknownValues $unknownCategories -Mappings @($adoption.normalization.change_categories) -CurrentValues $script:ChangeCategories -Context "$Context historical unit '$unitId' change-category"
         } else {
             foreach ($category in $changeCategories) {
-                Assert-Contract (($script:ChangeCategories -contains $category) -or $script:ChangeCategoryAliases.ContainsKey($category)) "$Context unit '$unitId' has unknown change category '$category'."
+                Assert-Contract (Test-MorphospaceDeclaredChangeCategory -Category $category -Lifecycle $script:WorkflowLifecycle) "$Context unit '$unitId' has unknown change category '$category'."
             }
         }
 
@@ -2043,14 +2047,13 @@ function Test-ProjectBundle {
         Assert-Contract (@($effectiveAllowedRepositories).Count -gt 0) "$Context unit '$($unit.unit_id)' needs allowed repositories."
         $writeRepositoryIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         $allowedRepositoryIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $declarationWorkMode = if (($unit.PSObject.Properties.Name -contains 'work_mode') -and [string]$unit.work_mode -ceq 'validation-only' -and $effectiveWorkMode -ceq 'validation-only') { 'validation-only' } else { 'feature' }
+        foreach ($writeId in @(Get-MorphospaceWritableRepositoryIds -AllowedRepositories @($effectiveAllowedRepositories) -WorkMode $declarationWorkMode)) {
+            [void]$writeRepositoryIds.Add($writeId)
+        }
         foreach ($allowedRepo in @($effectiveAllowedRepositories)) {
             $repoId = [string]$allowedRepo.repo_id
             Assert-Contract ($allowedRepositoryIds.Add($repoId)) "$Context unit '$($unit.unit_id)' repeats writable repository '$repoId'."
-            # An explicit validation-only empty row declares membership, not write authority.
-            # Keep ordinary modes and every nonempty path scope disjoint from dependencies.
-            if (-not (($unit.PSObject.Properties.Name -contains 'work_mode') -and [string]$unit.work_mode -ceq 'validation-only' -and $effectiveWorkMode -ceq 'validation-only' -and $null -ne $allowedRepo.allowed_paths -and @($allowedRepo.allowed_paths).Count -eq 0)) {
-                [void]$writeRepositoryIds.Add($repoId)
-            }
             Assert-Contract ($repositoryMap.ContainsKey($repoId)) "$Context unit '$($unit.unit_id)' references undeclared repo '$repoId'."
             if ($effectiveWorkMode -ceq 'validation-only') {
                 Assert-Contract ($null -ne $allowedRepo.allowed_paths) "$Context validation-only unit '$($unit.unit_id)' repo '$repoId' needs an allowed-path array."
@@ -3199,12 +3202,14 @@ foreach ($historyArchiveContract in $historyArchiveContracts) {
     Assert-Contract (Test-Path -LiteralPath (Join-Path $RepoRoot $historyArchiveContract) -PathType Leaf) "Required history archive contract is missing: $historyArchiveContract"
 }
 if (-not $SkipOwnerSelfTests) {
-    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1","Test-CorrectActiveReadOnlyDependencies.ps1","Test-CorrectActiveProjectRepositoryScope.ps1","Test-ActiveWriteScopeAmendment.ps1","Test-DevelopmentUnitAdmission.ps1","Test-RecoveredProposalContinuation.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-AdmissionCompletionTimestampRecovery.ps1","Test-TransitionLedger.ps1","Test-HistoryArchiveValidation.ps1")) {
+    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1","Test-CorrectActiveReadOnlyDependencies.ps1","Test-CorrectActiveProjectRepositoryScope.ps1","Test-ActiveWriteScopeAmendment.ps1","Test-DevelopmentUnitAdmission.ps1","Test-RecoveredProposalContinuation.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-AdmissionCompletionTimestampRecovery.ps1","Test-TransitionLedger.ps1","Test-HistoryArchiveValidation.ps1","Test-ReadyDeclarationConsistency.ps1")) {
         $selfTestArguments = @()
         if ($selfTest -ceq 'Test-AdmissionCompletionTimestampRecovery.ps1') { $selfTestArguments = @('-SelfTest') }
+        if ($selfTest -ceq 'Test-ReadyDeclarationConsistency.ps1') { $selfTestArguments = @('-SelfTest') }
         # Match the existing focused-check budget; the observed complete run takes more than 240 seconds.
         $selfTestTimeoutSeconds = 240
         if ($selfTest -ceq 'Test-DevelopmentUnitAdmission.ps1') { $selfTestTimeoutSeconds = 900 }
+        if ($selfTest -ceq 'Test-ReadyDeclarationConsistency.ps1') { $selfTestTimeoutSeconds = 180 }
         try { [void](Invoke-IsolatedWorkflowSelfTest -RepositoryRoot $RepoRoot -Path (Join-Path $RepoRoot "scripts\$selfTest") -Arguments $selfTestArguments -TimeoutSeconds $selfTestTimeoutSeconds) }
         catch { Add-Failure -Message "$selfTest failed: $($_.Exception.Message)" }
     }

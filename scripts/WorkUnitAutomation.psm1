@@ -2,6 +2,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationAuthority.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceUnitDeclaration.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceValidationReceipt.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceHistoricalValidationDebtBaseline.psm1')
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceContentObservation.psm1') -Force -DisableNameChecking
@@ -549,6 +550,28 @@ function New-MorphospaceClaimPreflight {
         }) | Out-Null
     }
     & $addCheck 'contract-bindings' 'pass' 'completed' @()
+    $declarationReasons = New-Object System.Collections.Generic.List[string]
+    foreach ($category in @($Unit.change_categories)) {
+        if (-not (Test-MorphospaceDeclaredChangeCategory -Category ([string]$category) -Lifecycle $lifecycle)) {
+            $declarationReasons.Add('change-category-unknown') | Out-Null
+            $issues.Add("change-category-unknown: '$category'.") | Out-Null
+        }
+    }
+    $declarationWorkMode = if ($Unit.PSObject.Properties.Name -contains 'work_mode') { [string]$Unit.work_mode } else { 'feature' }
+    $writeIds = @(Get-MorphospaceWritableRepositoryIds -AllowedRepositories @($Unit.allowed_repositories) -WorkMode $declarationWorkMode)
+    $declaredDependencies = if ($Unit.PSObject.Properties.Name -contains 'read_only_dependencies') { @($Unit.read_only_dependencies) } else { @() }
+    foreach ($dependency in $declaredDependencies) {
+        if ($writeIds -ccontains [string]$dependency.repo_id) {
+            $declarationReasons.Add('writable-read-only-dependency-conflict') | Out-Null
+            $issues.Add("writable-read-only-dependency-conflict: '$([string]$dependency.repo_id)'.") | Out-Null
+        }
+    }
+    if ($declarationReasons.Count) {
+        & $addCheck 'unit-declaration-consistency' 'fail' 'completed' @($declarationReasons.ToArray())
+    } else {
+        & $addCheck 'unit-declaration-consistency' 'pass' 'completed' @()
+    }
+
     if (-not $guardProfileExplicit) {
         & $addCheck 'guard-profile' 'pass' 'skipped' @('legacy-risk-inference')
     } elseif ($guardReasonCodes.Count -gt 0) {
@@ -2453,6 +2476,12 @@ function Invoke-MorphospaceWorkUnitAutomation {
     }
     $graphScope = New-MorphospaceGraphScope -Unit $unit
     $claimPreflight = New-MorphospaceClaimPreflight -WorkspaceRoot $resolvedWorkspace -Unit $unit -State $state -Spec $spec -RepositoryMap $repoMap -RepositoryStates $repoStatesArray -ValidationMatrix $validationMatrix -ValidationTier $ValidationTier -Action $Action
+    if ($Action -in @('Ready', 'Claim')) {
+        $declarationCheck = @($claimPreflight.coverage.checks | Where-Object { [string]$_.check_id -ceq 'unit-declaration-consistency' })
+        if ($declarationCheck.Count -ne 1 -or [string]$declarationCheck[0].outcome -cne 'pass') {
+            throw "$Action preflight blocked: unit declaration $(@($declarationCheck[0].reason_codes) -join ' ')"
+        }
+    }
     $beforeCurrent = $state.current_unit
     $expectedPreStateSha256 = Get-MorphospaceCanonicalJsonSha256 $state
     $expectedPreUnitSha256 = Get-MorphospaceCanonicalJsonSha256 $unit
