@@ -678,8 +678,7 @@ function Test-MorphospaceEffectiveDevelopmentEnvelope {
  )
  $workspace=[IO.Path]::GetFullPath($WorkspaceRoot)
  $admissions=@(Get-ChildItem -LiteralPath (Resolve-MorphospaceWorkspacePath $workspace 'receipts') -File -Filter '*.json'|ForEach-Object{
-  $document=Read-MorphospaceProtocolJson $_.FullName
-  if([string]$document.schema-ceq'rusty.morphospace.workflow.development_unit_admission.v1'-and[string]$document.unit_id-ceq$UnitId){$document}
+  Read-MorphospaceProtocolJsonMatchingDiscriminator -Path $_.FullName -Schema 'rusty.morphospace.workflow.development_unit_admission.v1' -UnitId $UnitId
  })
  if($admissions.Count-eq0){
   $bootstrap=Get-PreparationProvenanceBootstrapOrigin $workspace $UnitId $RepositoryMapPath
@@ -723,8 +722,7 @@ function Get-MorphospaceUnitToolingContextProvenance {
  $unit=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace "iteration-units/$UnitId.json" -RequireLeaf)
  if(-not($unit.PSObject.Properties.Name-contains'tooling_context')){return $null}
  $admissions=@(Get-ChildItem -LiteralPath (Resolve-MorphospaceWorkspacePath $workspace 'receipts') -File -Filter '*.json'|ForEach-Object{
-  $value=Read-MorphospaceProtocolJson $_.FullName
-  if([string]$value.schema-ceq'rusty.morphospace.workflow.development_unit_admission.v1'-and[string]$value.unit_id-ceq$UnitId){$value}
+  Read-MorphospaceProtocolJsonMatchingDiscriminator -Path $_.FullName -Schema 'rusty.morphospace.workflow.development_unit_admission.v1' -UnitId $UnitId
  })
  if($admissions.Count-ne1){throw 'Tooling execution requires one exact owner admission.'}
  $proof=Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $workspace -Admission $admissions[0] -Phase Freeze -ReadOnlyReady

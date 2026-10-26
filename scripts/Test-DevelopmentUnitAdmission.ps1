@@ -158,6 +158,44 @@ function Test-EnvelopeFixtureScratchIsolation {
   }
 }
 if($SelfTest-or$FixtureScratchOnly){Test-EnvelopeFixtureScratchIsolation}
+function Test-AdmissionReceiptDiscriminatorDiscovery {
+  param([string]$Workspace,[string]$UnitId,[string]$AdmissionPath,[string]$RepositoryMapPath)
+  Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopeProvenance.psm1')
+  $owned=[Collections.Generic.List[string]]::new()
+  $receipts=Join-Path $Workspace 'receipts'
+  $schema='rusty.morphospace.workflow.development_unit_admission.v1'
+  $utf8=[Text.UTF8Encoding]::new($false,$true)
+  $baseline=Test-MorphospaceEffectiveDevelopmentEnvelope -WorkspaceRoot $Workspace -UnitId $UnitId -RepositoryMapPath $RepositoryMapPath
+  $baselineHash=Get-EnvelopeCanonicalJsonSha256 $baseline
+  try{
+    for($i=0;$i-lt248;$i++){
+      # Names deliberately have no admission prefix; discovery is content based.
+      $path=Join-Path $receipts ("discriminator-neutral-$i.json")
+      if([IO.File]::Exists($path)){throw 'Neutral receipt fixture path is occupied.'}
+      $owned.Add($path)
+      [IO.File]::WriteAllText($path,'{"schema":"neutral.receipt.v1","nested":{"proof":[1,true,null,{"text":"'+('n'*25000)+'"}]}}',$utf8)
+    }
+    $withNeutral=Test-MorphospaceEffectiveDevelopmentEnvelope -WorkspaceRoot $Workspace -UnitId $UnitId -RepositoryMapPath $RepositoryMapPath
+    Assert-Envelope ((Get-EnvelopeCanonicalJsonSha256 $withNeutral)-ceq$baselineHash) '248 complete neutral receipts changed genuine effective-envelope authority'
+    $damage=Join-Path $receipts 'discriminator-malformed-unrelated.json';$owned.Add($damage)
+    [IO.File]::WriteAllText($damage,'{"schema":"neutral.receipt.v1","nested":{"a":1,"A":2}}',$utf8)
+    $before=Get-EnvelopeWorkspaceByteInventorySha256 $Workspace;$message=$null
+    try{Test-MorphospaceEffectiveDevelopmentEnvelope -WorkspaceRoot $Workspace -UnitId $UnitId -RepositoryMapPath $RepositoryMapPath|Out-Null}catch{$message=$_.Exception.Message}
+    Assert-Envelope ($null-ne$message-and$message.Contains('Invalid JSON in')-and$message.Contains('Duplicate/case-fold JSON property')-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $Workspace)) 'native effective-envelope discovery skipped malformed unrelated receipt or wrote during refusal'
+    [IO.File]::Delete($damage)
+    $duplicate=Join-Path $receipts 'discriminator-second-current-owner.json';$owned.Add($duplicate)
+    [IO.File]::WriteAllBytes($duplicate,[IO.File]::ReadAllBytes($AdmissionPath))
+    $before=Get-EnvelopeWorkspaceByteInventorySha256 $Workspace;$message=$null
+    try{Test-MorphospaceEffectiveDevelopmentEnvelope -WorkspaceRoot $Workspace -UnitId $UnitId -RepositoryMapPath $RepositoryMapPath|Out-Null}catch{$message=$_.Exception.Message}
+    Assert-Envelope ($message-ceq'Effective development envelope requires one exact admission.'-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $Workspace)) 'native effective-envelope discovery accepted duplicate matching admissions or wrote during refusal'
+    [IO.File]::Delete($duplicate)
+    # Valid unrelated schema has no unit_id and must preserve old -and short circuit.
+    [IO.File]::WriteAllText($damage,'{"schema":"neutral.receipt.v1"}',$utf8)
+    $restored=Test-MorphospaceEffectiveDevelopmentEnvelope -WorkspaceRoot $Workspace -UnitId $UnitId -RepositoryMapPath $RepositoryMapPath
+    Assert-Envelope ((Get-EnvelopeCanonicalJsonSha256 $restored)-ceq$baselineHash) 'unrelated receipt without unit_id broke original short-circuit behavior'
+    Write-Host 'Admission receipt discriminator controls passed (248 complete neutral receipts; malformed unrelated and duplicate-owner no-write refusals; original short circuit).'
+  }finally{foreach($path in $owned){if([IO.File]::Exists($path)){[IO.File]::Delete($path)}}}
+}
 
 function Set-AdmissionReplacementInstructionPlan([object]$Admission,[object]$Template){
   $Admission.unit.instruction_impact='update'
@@ -248,6 +286,77 @@ function Test-AdmissionReplacementPostBegin([string]$Workspace,[object]$Admissio
   Write-Host 'Replacement continuation passed actual BeginValidation, instruction completion preview/execute, and mandatory provenance rereads.'
 }
 
+function Test-AdmissionContinuationSnapshotBatch {
+  param([string]$Workspace,[object]$Admission)
+  Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceDevelopmentContinuation.psm1') -Global
+  $snapshotBatchLedger=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1') -PassThru
+  $libRoot=Split-Path $snapshotBatchLedger.Path -Parent
+  $ownerRoot=Split-Path (Split-Path $libRoot -Parent) -Parent
+  $guardPaths=@((Join-Path $Workspace 'iteration-events.jsonl'),$snapshotBatchLedger.Path,(Join-Path $libRoot 'MorphospaceProtocolCommon.psm1'),(Join-Path $ownerRoot 'schemas/iteration-event.schema.json'),(Join-Path $ownerRoot 'schemas/iteration-event-v2.schema.json'))
+  $observation=&$snapshotBatchLedger {
+    param($workspace,$admission,$guardPaths)
+    $originalSnapshot=${function:Get-MorphospaceLedgerSnapshot}
+    $originalBatch=${function:New-MorphospaceReadOnlyLedgerBatch}
+    $script:AdmissionSnapshotOriginal=$originalSnapshot;$script:AdmissionSnapshotCount=0
+    $tokensBefore=@(if(Get-Variable -Scope Script -Name readOnlyLedgerBatches -ErrorAction SilentlyContinue){$script:readOnlyLedgerBatches.Keys});$tokensBefore=@($tokensBefore|Sort-Object)
+    Set-Item Function:script:Get-MorphospaceLedgerSnapshot {
+      param([string]$EventsPath)
+      $script:AdmissionSnapshotCount++
+      & $script:AdmissionSnapshotOriginal -EventsPath $EventsPath
+    }
+    try{
+      $continuation=Get-MorphospaceDevelopmentEnvelopeContinuation -WorkspaceRoot $workspace -Admission $admission
+      $count=$script:AdmissionSnapshotCount
+      $tokensAfter=@(if(Get-Variable -Scope Script -Name readOnlyLedgerBatches -ErrorAction SilentlyContinue){$script:readOnlyLedgerBatches.Keys});$tokensAfter=@($tokensAfter|Sort-Object)
+      if(($tokensBefore-join',')-cne($tokensAfter-join',')){throw 'Continuation success leaked a private ledger batch.'}
+      $kinds=@($continuation.records|ForEach-Object{$_.kind})
+      if(($kinds-join',')-cne'ready,claimed'-or$null-eq$continuation.admission_proof-or$continuation.records.Count-ne2){throw 'Snapshot control lacks its actual admission and Ready/Claim proof records.'}
+      foreach($record in @($continuation.records)){
+        if([string]$record.transition.intent.event.event_id-cne[string]$record.event.event_id-or[string]$record.transition.completion.event_id-cne[string]$record.event.event_id){throw 'Snapshot control lost an actual native suffix proof.'}
+      }
+      Write-Host ("Continuation actual snapshot count: {0}; actual suffix proofs: {1}" -f $count,$continuation.records.Count)
+      if($count-ne1){throw "Continuation must authenticate exactly one whole-ledger snapshot; observed $count."}
+      # Open the REAL native batch first, then damage an unheld completion.
+      # The original owner reader must reject it and close every held resource.
+      $claim=@($continuation.records|Where-Object kind -CEQ 'claimed')[0]
+      $completionPath=Join-Path $workspace ("receipts/transactions/{0}-transition.completion.json" -f $claim.event.event_id)
+      $completionBytes=[IO.File]::ReadAllBytes($completionPath)
+      $script:AdmissionDamageCompletionPath=$completionPath
+      $script:AdmissionBatchOriginal=$originalBatch
+      $script:AdmissionDamageApplied=$false
+      Set-Item Function:script:New-MorphospaceReadOnlyLedgerBatch {
+        param([string]$WorkspaceRoot)
+        $token=& $script:AdmissionBatchOriginal -WorkspaceRoot $WorkspaceRoot
+        $document=Read-MorphospaceProtocolJson $script:AdmissionDamageCompletionPath
+        $document.intent.sha256='0'*64
+        [IO.File]::WriteAllBytes($script:AdmissionDamageCompletionPath,(ConvertTo-MorphospaceProtocolJsonBytes $document))
+        $script:AdmissionDamageApplied=$true
+        return $token
+      }
+      try{
+        $errorMessage=$null
+        try{Get-MorphospaceDevelopmentEnvelopeContinuation -WorkspaceRoot $workspace -Admission $admission|Out-Null}catch{$errorMessage=$_.Exception.Message}
+        if(-not$script:AdmissionDamageApplied-or$null-eq$errorMessage-or-not$errorMessage.Contains('completion')){throw "Continuation failed to reject post-batch-open completion damage: $errorMessage"}
+        $damagedHash=Get-MorphospaceFileSha256 $completionPath
+        $expected=Read-MorphospaceProtocolJson $completionPath
+        if([string]$expected.intent.sha256-cne('0'*64)){throw 'Refusing continuation rewrote the damaged completion.'}
+        $afterFailure=@(if(Get-Variable -Scope Script -Name readOnlyLedgerBatches -ErrorAction SilentlyContinue){$script:readOnlyLedgerBatches.Keys});$afterFailure=@($afterFailure|Sort-Object)
+        if(($tokensBefore-join',')-cne($afterFailure-join',')){throw 'Continuation failure leaked a private ledger batch.'}
+        foreach($path in $guardPaths){
+          $handle=[IO.File]::Open($path,'Open','Read','None');$handle.Dispose()
+        }
+        if((Get-MorphospaceFileSha256 $completionPath)-cne$damagedHash){throw 'Resource-release control changed completion bytes.'}
+      }finally{[IO.File]::WriteAllBytes($completionPath,$completionBytes)}
+      [pscustomobject]@{snapshots=$count;suffix_records=$continuation.records.Count;post_open_completion_damage_rejected=$true;batch_tokens_restored=$true;file_guards_released=$true}
+    }finally{
+      Set-Item Function:script:Get-MorphospaceLedgerSnapshot $originalSnapshot
+      Set-Item Function:script:New-MorphospaceReadOnlyLedgerBatch $originalBatch
+      Remove-Variable AdmissionSnapshotOriginal,AdmissionSnapshotCount,AdmissionDamageCompletionPath,AdmissionBatchOriginal,AdmissionDamageApplied -Scope Script -ErrorAction SilentlyContinue
+    }
+  } $Workspace $Admission $guardPaths
+  Assert-Envelope ($observation.snapshots-eq1-and$observation.suffix_records-eq2-and$observation.post_open_completion_damage_rejected-and$observation.batch_tokens_restored-and$observation.file_guards_released) 'Continuation snapshot batch did not preserve native proof/refusal/resource-release semantics'
+}
+
 function Test-AdmissionReplacementContinuation {
   $root=Join-Path ([IO.Path]::GetTempPath()) ('workenv-replacement-continuation-'+[guid]::NewGuid().ToString('N'))
   try {
@@ -273,6 +382,7 @@ function Test-AdmissionReplacementContinuation {
     $readyRejected=$false;try{&$provenance {param($w,$a)Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $w -Admission $a -Phase Freeze} $workspace $admission|Out-Null}catch{$readyRejected=$true}
     Assert-Envelope ($readyRejected-and$before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $workspace)) 'replacement Ready provenance lost its explicit read-only boundary or wrote on rejection'
     &$automationModule {param($a)Invoke-MorphospaceWorkUnitAutomation @a -Action Claim -Timestamp '2026-08-25T00:02:20.0000000Z'} $arguments|Out-Null
+    Test-AdmissionContinuationSnapshotBatch -Workspace $workspace -Admission $admission
     &$provenance {param($w,$a)Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $w -Admission $a -Phase Freeze} $workspace $admission|Out-Null
     [IO.File]::AppendAllText((Join-Path $seed.source_repository 'morphospace/README.md'),'candidate change'+[Environment]::NewLine,[Text.UTF8Encoding]::new($false))
     Invoke-EnvelopeGit $seed.source_repository @('add','morphospace/README.md')|Out-Null;Invoke-EnvelopeGit $seed.source_repository @('commit','-m','replacement-candidate')|Out-Null
@@ -492,6 +602,7 @@ try {
   $inspect=& $automationModule {param($argsMap) Invoke-MorphospaceWorkUnitAutomation @argsMap -Action Inspect -Timestamp '2026-08-25T00:02:05.0000000Z'} $arguments
   $claim=& $automationModule {param($argsMap) Invoke-MorphospaceWorkUnitAutomation @argsMap -Action Claim -Timestamp '2026-08-25T00:02:10.0000000Z' -Execute} $arguments
   Assert-Envelope ($admit.transition -ceq 'development-unit-admitted' -and $ready.transition -ceq 'proposed-to-ready' -and $inspect.claim_preflight.ready_to_claim -and $claim.transition -ceq 'ready-to-active') 'additive preparation did not pass public current-work validation and ordinary Admit/Ready/Inspect/Claim'
+  Test-AdmissionReceiptDiscriminatorDiscovery -Workspace $workspace -UnitId 'u002' -AdmissionPath (Join-Path $workspace 'receipts/u002-admission.json') -RepositoryMapPath (Join-Path $workspace 'repository-map.json')
   # A permission-free library still uses the ordinary external owner lifecycle.
   # Owner writers create preparation/admission/Ready/Claim; only damage inputs
   # below are hand-authored, and no runtime or device authority is inferred.
