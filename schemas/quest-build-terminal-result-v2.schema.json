@@ -273,10 +273,7 @@
       ],
       "properties": {
         "artifact": {
-          "type": [
-            "object",
-            "null"
-          ]
+          "$ref": "#/$defs/artifact"
         },
         "source": {
           "type": [
@@ -312,6 +309,17 @@
     }
   },
   "$defs": {
+    "artifact": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["kind", "path", "sha256", "size_bytes"],
+      "properties": {
+        "kind": { "enum": ["single-base-apk", "jvm-preflight-result"] },
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "size_bytes": { "type": "integer", "minimum": 1 }
+      }
+    },
     "stream": {
       "oneOf": [
         {
