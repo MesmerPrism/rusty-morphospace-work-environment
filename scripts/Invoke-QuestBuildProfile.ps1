@@ -833,10 +833,15 @@ try {
                 $artifactInfo = Get-Item -LiteralPath $profile.Artifact
                 if ($artifactInfo.Length -le 0) { $terminal = New-TerminalResult "build" "failed" $profile $execution $preflight @("artifact-empty") $child.Streams $payload $TimeoutSeconds $child.ChildProcess }
                 else {
+                    $artifactKindMatches = $true
                     try { Assert-BuildArtifactKind $profile }
-                    catch { $failure = [InvalidOperationException]::new('Build artifact does not match its declared kind.', $_.Exception); $failure.Data['ReasonCode'] = 'artifact-kind-mismatch'; throw $failure }
-                    $payload.artifact = [ordered]@{ kind = $profile.ArtifactKind; path = $profile.Artifact; sha256 = Get-Sha256 $profile.Artifact; size_bytes = $artifactInfo.Length }
-                    $terminal = New-TerminalResult "build" "passed" $profile $execution $preflight @() $child.Streams $payload $TimeoutSeconds $child.ChildProcess
+                    catch { $artifactKindMatches = $false }
+                    if ($artifactKindMatches) {
+                        $payload.artifact = [ordered]@{ kind = $profile.ArtifactKind; path = $profile.Artifact; sha256 = Get-Sha256 $profile.Artifact; size_bytes = $artifactInfo.Length }
+                        $terminal = New-TerminalResult "build" "passed" $profile $execution $preflight @() $child.Streams $payload $TimeoutSeconds $child.ChildProcess
+                    } else {
+                        $terminal = New-TerminalResult "build" "failed" $profile $execution $preflight @('artifact-kind-mismatch') $child.Streams $payload $TimeoutSeconds $child.ChildProcess
+                    }
                 }
             }
         } else {

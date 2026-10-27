@@ -400,10 +400,19 @@ Export-ModuleMember -Function Assert-QuestBuildSourceCompositionCurrent
             if($exit-eq13){Assert-True ($invocation.Result.reason_codes-ccontains'child-exit-nonzero') 'Provider drift masked original child failure.'}
             Write-Utf8 $qm 'local Quest iteration'
         }
+        # One actual exit-zero child causes both observed provider drift and a
+        # typed artifact mismatch. Neither independent failure may be masked.
+        $p.artifact.kind='jvm-preflight-result'
+        $p.artifact.relative_path='out/provider-kind-mismatch.json'
+        $p.arguments=@($p.artifact.relative_path,'-ProviderMarker',$qm)
+        $mixed=Invoke-Runner Build (Write-Profile $p) @options -Receipt (Join-Path $profileRoot 'provider-kind-mismatch.receipt.json') -Retained
+        Assert-True ($mixed.ExitCode-eq1-and$mixed.Result.child_process.exit_code-eq0-and$mixed.Result.child_process.process_reaped-and$mixed.Result.child_process.stdout_eof-and$mixed.Result.child_process.stderr_eof-and$mixed.Result.child_process.raw_capture_complete-and$null-eq$mixed.Result.owner_payload.artifact) 'Mixed kind/provider failure lost actual closure or acquired artifact credit.'
+        Assert-True ($mixed.Result.reason_codes-ccontains'artifact-kind-mismatch'-and$mixed.Result.reason_codes-ccontains'source-provider-drift') "Mixed kind/provider failure lost an observed reason: $($mixed.Json)"
+        Write-Utf8 $qm 'local Quest iteration'
         Write-Host 'MODELED provider transport: authenticated local source/external dirt accepted.'
     } finally {
         [IO.File]::WriteAllBytes($manifest,$savedManifest);[IO.File]::WriteAllBytes($qm,$savedQm)
-        foreach($relative in @('out/provider-0.apk','out/provider-13.apk','captured.txt')) {
+        foreach($relative in @('out/provider-0.apk','out/provider-13.apk','out/provider-kind-mismatch.json','captured.txt')) {
             $owned=Join-Path $testRoot $relative
             if(Test-Path -LiteralPath $owned -PathType Leaf){Remove-Item -LiteralPath $owned -Force}
         }
