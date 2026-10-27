@@ -49,6 +49,7 @@ $developmentUnitAdmissionBatchChecks = @(
     'tooling-context','tooling-context-product-negative','tooling-context-provenance-negative',
     'tooling-context-recovery-after-artifact','tooling-context-recovery-after-event',
     'tooling-context-recovery-after-intent','tooling-context-recovery-after-projection',
+    'tooling-context-validating-upgrade',
     'tooling-legacy-reclassification-helper','tooling-legacy-reclassification-integration',
     'tooling-preparation-integration'
 )
@@ -1318,7 +1319,9 @@ function Resolve-AffectedStaticOwnerPathRoot([object]$Node,[object]$Index,[objec
     if ($Depth -gt 4) { throw 'Module Name path root derivation is recursive or ambiguous.' }
     $node = Get-AffectedUnwrappedPathAst $Node
     if ($node -is [Management.Automation.Language.CommandAst]) {
-        if (-not (Test-AffectedStaticBuiltinCommand -Command $node -SourceAst $Index.ast -Name Split-Path -Module Microsoft.PowerShell.Management -Facts $Index.builtin_facts) -or $node.CommandElements.Count -ne 3 -or $node.CommandElements[1] -isnot [Management.Automation.Language.CommandParameterAst] -or $node.CommandElements[1].ParameterName -ine 'Parent' -or $null -ne $node.CommandElements[1].Argument -or $node.CommandElements[2] -isnot [Management.Automation.Language.VariableExpressionAst] -or $node.CommandElements[2].VariablePath.UserPath -ine 'PSScriptRoot') { throw 'Module Name path root is not a fixed importer-owned parent.' }
+        $parent = @($node.CommandElements | Where-Object { $_ -is [Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -ieq 'Parent' -and $null -eq $_.Argument })
+        $path = @($node.CommandElements | Where-Object { $_ -is [Management.Automation.Language.VariableExpressionAst] -and $_.VariablePath.UserPath -ieq 'PSScriptRoot' -and -not $_.Splatted })
+        if (-not (Test-AffectedStaticBuiltinCommand -Command $node -SourceAst $Index.ast -Name Split-Path -Module Microsoft.PowerShell.Management -Facts $Index.builtin_facts) -or $node.CommandElements.Count -ne 3 -or $parent.Count -ne 1 -or $path.Count -ne 1 -or @($node.Redirections).Count -ne 0) { throw 'Module Name path root is not a fixed importer-owned parent.' }
         return [IO.Path]::GetDirectoryName([IO.Path]::GetDirectoryName($Index.absolute_path))
     }
     if ($node -isnot [Management.Automation.Language.VariableExpressionAst]) { throw 'Module Name path root is not a fixed owner-root expression.' }
@@ -1526,7 +1529,40 @@ function Get-AffectedAuditedModuleMemberTarget([string]$Importer, [Management.Au
     } else { throw "Audited module-member invocation changed its closed callback/argument contract: $key" }
     return [pscustomobject]@{key=$key;operation=$operation;target=[string]$declaration.import_path}
 }
-function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [object[]]$DynamicImportDeclarations = @(), [Collections.Generic.HashSet[string]]$TrackedPaths = $null) {
+function Get-AffectedGraphExternalBindings([object]$Index,[object]$Scope,[string]$Variable) {
+    $result = [Collections.Generic.List[object]]::new()
+    foreach ($assignment in @($Index.module_binding_assignments)) {
+        if (-not [object]::ReferenceEquals((Get-AffectedLexicalImportScope $assignment),$Scope)) { continue }
+        $leaves = @($assignment.Left.FindAll({param($node) $node -is [Management.Automation.Language.VariableExpressionAst]},$true))
+        $matched = @($leaves | Where-Object { ([string]$_.VariablePath.UserPath -replace '(?i)^(?:local|private):','') -ieq $Variable })
+        if ($matched.Count -eq 0) { continue }
+        if ($assignment.Left -isnot [Management.Automation.Language.VariableExpressionAst] -or $assignment.Left.VariablePath.UserPath -like 'private:*' -or $assignment.Operator -ne [Management.Automation.Language.TokenKind]::Equals) { throw "Graph external binding has an unsupported storage write: $Variable" }
+        $result.Add([pscustomobject]@{path_values=@(Get-AffectedIndexedLiteralScriptPaths $assignment.Right)})
+    }
+    return $result.ToArray()
+}
+function Get-AffectedGraphLiteralScriptPath([object]$Node,[string]$Value,[object]$Index,[object]$Scope,[string]$Root) {
+    $node = Get-AffectedUnwrappedPathAst $Node
+    $base = [IO.Path]::GetDirectoryName($Index.absolute_path)
+    if ($Value.Replace('\','/') -notmatch '^tools/') {
+        $full = if ($Value.Replace('\','/') -match '^scripts/') { [IO.Path]::GetFullPath((Join-Path $Root $Value)) } else { [IO.Path]::GetFullPath((Join-Path $base $Value)) }
+        if (-not $full.StartsWith($Root.TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) { throw 'Graph script path escapes the owner root.' }
+        return [IO.Path]::GetRelativePath($Root,$full).Replace('\','/')
+    }
+    if ($node -is [Management.Automation.Language.CommandAst]) {
+        if (-not (Test-AffectedStaticBuiltinCommand -Command $node -SourceAst $Index.ast -Name Join-Path -Module Microsoft.PowerShell.Management -Facts $Index.builtin_facts) -or
+            $node.CommandElements.Count -ne 3 -or $node.CommandElements[2] -isnot [Management.Automation.Language.StringConstantExpressionAst] -or
+            [string]$node.CommandElements[2].Value -cne $Value) { throw 'Graph script path is not one actual builtin Join-Path target.' }
+        $base = Get-AffectedStaticOwnerPathRoot -Node $node.CommandElements[1] -Index $Index -Scope $Scope -Root $Root
+    } elseif ($node -is [Management.Automation.Language.StringConstantExpressionAst]) {
+        if ($Value.Replace('\','/') -match '^(?:scripts|tools)/') { $base = $Root }
+    } else { throw 'Graph script path has an unsupported actual target expression.' }
+    if ([IO.Path]::IsPathRooted($Value) -or $Value.Contains(':') -or $Value.Replace('\','/') -match '(?:^|/)\.\.?/') { throw 'Graph script path is not canonical.' }
+    $full = [IO.Path]::GetFullPath((Join-Path $base $Value))
+    if (-not $full.StartsWith($Root.TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) { throw 'Graph script path escapes the owner root.' }
+    return [IO.Path]::GetRelativePath($Root,$full).Replace('\','/')
+}
+function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [object[]]$DynamicImportDeclarations = @(), [Collections.Generic.HashSet[string]]$TrackedPaths = $null, [object[]]$ExternalDependencyDeclarations = @()) {
     $root = [IO.Path]::GetFullPath($Root).TrimEnd('\','/')
     $rootPrefix = $root + [IO.Path]::DirectorySeparatorChar
     # Construction-local only; each reused export fact retains exact path/SHA.
@@ -1553,6 +1589,21 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
         }
         $declarations[$key] = $declaration
     }
+    # Existing canonical registry declarations describe external command boundaries.
+    # Activate a complete importer group only for an actual declared external module
+    # import; do not reinterpret legacy tracked callback declarations or native calls.
+    $externalDeclarations = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach ($declaration in @($ExternalDependencyDeclarations)) {
+        if ($declaration.PSObject.Properties.Name -cnotcontains 'classification') { continue }
+        $properties = @($declaration.PSObject.Properties.Name); [Array]::Sort($properties,[StringComparer]::Ordinal)
+        $key = "$([string]$declaration.importer)|$(([string]$declaration.variable).ToLowerInvariant())"
+        if (($properties -join ',') -cne 'classification,count,importer,variable' -or [string]$declaration.classification -cne 'authenticated-external-command' -or
+            [string]$declaration.importer -cnotmatch '^scripts/[^:]+\.ps(?:m)?1$' -or [string]$declaration.variable -cnotmatch '^[A-Za-z_][A-Za-z0-9_:.-]*$' -or
+            [int]$declaration.count -lt 1 -or $externalDeclarations.ContainsKey($key)) { throw "Graph external dependency declaration is invalid or duplicate: $key" }
+        $externalDeclarations[$key] = [pscustomobject]@{ importer=[string]$declaration.importer;variable=[string]$declaration.variable;count=[int]$declaration.count }
+    }
+    $externalGroups = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $externalObserved = [Collections.Generic.Dictionary[string,int]]::new([StringComparer]::Ordinal)
     $observedDeclarations = [Collections.Generic.Dictionary[string,int]]::new([StringComparer]::Ordinal)
     $auditedMemberOperations = [Collections.Generic.Dictionary[string,int]]::new([StringComparer]::Ordinal)
     $nodes = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -1563,7 +1614,7 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
     $analysisKeyByPath = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
     function Add-AffectedTrackedImportPath([string]$RelativePath) {
         $normalized = $RelativePath.Replace('\','/')
-        if ($normalized -cnotmatch '^scripts/[^:]+\.ps(?:m)?1$' -or $normalized -match '(?:^|/)\.\.?/') { throw "Owner import is not a canonical repository-relative .ps1/.psm1 path: $RelativePath" }
+        if ($normalized -cnotmatch '^(?:scripts|tools)/[^:]+\.ps(?:m)?1$' -or $normalized -match '(?:^|/)\.\.?/') { throw "Owner import is not a canonical repository-relative .ps1/.psm1 path: $RelativePath" }
         $absolute = [IO.Path]::GetFullPath((Join-Path $root $normalized))
         if (-not $absolute.StartsWith($rootPrefix,[StringComparison]::OrdinalIgnoreCase)) { throw "Owner import escapes the repository: $RelativePath" }
         if (-not $TrackedPaths.Contains($normalized) -or -not [IO.File]::Exists($absolute)) { throw "Owner import is absent or untracked: $normalized" }
@@ -1586,11 +1637,17 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
         # untracked fixture-local paths remain outside the tracked-byte graph.
         foreach ($assignmentRecord in @($analysis.assignment_records)) {
             foreach ($assignmentValue in @($assignmentRecord.path_values)) {
-                $assignmentFull = if ($assignmentValue.Replace('\','/') -match '^scripts/') { [IO.Path]::GetFullPath((Join-Path $root $assignmentValue)) } else { [IO.Path]::GetFullPath((Join-Path $directory $assignmentValue)) }
+                $assignmentFull = if ($assignmentValue.Replace('\','/') -match '^(?:scripts|tools)/') { [IO.Path]::GetFullPath((Join-Path $root $assignmentValue)) } else { [IO.Path]::GetFullPath((Join-Path $directory $assignmentValue)) }
                 if ($assignmentFull.StartsWith($rootPrefix,[StringComparison]::OrdinalIgnoreCase)) {
                     $assignmentRelative = [IO.Path]::GetRelativePath($root,$assignmentFull).Replace('\','/')
                     if ($TrackedPaths.Contains($assignmentRelative)) { [void]$importEdges.Add($assignmentRelative) }
                 }
+            }
+        }
+        foreach ($candidateImport in @($analysis.imports)) {
+            if (@($candidateImport.path_values).Count -eq 0 -and @($candidateImport.variables).Count -eq 1) {
+                $key = "$importer|$(([string]$candidateImport.variables[0]).ToLowerInvariant())"
+                if ($externalDeclarations.ContainsKey($key)) { [void]$externalGroups.Add($importer) }
             }
         }
         foreach ($importRecord in @($analysis.imports)) {
@@ -1606,6 +1663,14 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
                 if ($variables.Count -ne 1) { throw "Owner Import-Module is neither a literal nor one statically/audit-bound variable edge: $importer :: $($import.Extent.Text)" }
                 $variable = [string]$variables[0]
                 $scope = $importRecord.scope
+                $externalKey = "$importer|$($variable.ToLowerInvariant())"
+                if ($externalGroups.Contains($importer) -and $externalDeclarations.ContainsKey($externalKey)) {
+                    if (-not (Test-AffectedStaticBuiltinCommand -Command $import -SourceAst $analysis.ast -Name Import-Module -Module Microsoft.PowerShell.Core -Facts $analysis.builtin_facts)) { throw 'Graph external import does not prove builtin Import-Module.' }
+                    $bindings = @(Get-AffectedGraphExternalBindings -Index $analysis -Scope $scope -Variable $variable)
+                    if ($bindings.Count -gt 1 -or @($bindings | Where-Object { @($_.path_values).Count -ne 0 }).Count -ne 0) { throw "Graph external import has ambiguous or tracked literal bindings: $externalKey" }
+                    $externalObserved[$externalKey] = 1 + $(if ($externalObserved.ContainsKey($externalKey)) { $externalObserved[$externalKey] } else { 0 })
+                    continue
+                }
                 $boundValues = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
                 foreach ($assignmentRecord in @(Get-AffectedIndexedScopeAssignmentRecords -Index $analysis -Scope $scope -Variable $variable)) {
                     if (@($assignmentRecord.path_values).Count -ne 1) { throw "Static import variable assignment is not one literal script path: $importer|$variable" }
@@ -1655,7 +1720,8 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
             $pathValues = @($invocationRecord.path_values)
             $invocationValues = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
             if ($pathValues.Count -eq 1) {
-                [void]$invocationValues.Add([string]$pathValues[0])
+                $resolvedPath = Get-AffectedGraphLiteralScriptPath -Node $firstElement -Value ([string]$pathValues[0]) -Index $analysis -Scope $invocationRecord.scope -Root $root
+                [void]$invocationValues.Add($resolvedPath)
             } elseif ($pathValues.Count -gt 1) {
                 throw "Owner invocation contains multiple literal tracked-script candidates: $importer :: $($invocation.Extent.Text)"
             } else {
@@ -1698,6 +1764,13 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
                     if ($variables.Count -ne 1) { throw "Dynamic owner invocation does not contain one exact callable variable: $importer :: $($invocation.Extent.Text)" }
                     $variable = [string]$variables[0]
                     $scope = $invocationRecord.scope
+                    $externalKey = "$importer|$($variable.ToLowerInvariant())"
+                    if ($externalGroups.Contains($importer) -and $externalDeclarations.ContainsKey($externalKey)) {
+                        $externalBindings = @(Get-AffectedGraphExternalBindings -Index $analysis -Scope $scope -Variable $variable)
+                        if ($externalBindings.Count -gt 1 -or @($externalBindings | Where-Object { @($_.path_values).Count -ne 0 }).Count -ne 0) { throw "Graph external command has ambiguous or tracked literal bindings: $externalKey" }
+                        $externalObserved[$externalKey] = 1 + $(if ($externalObserved.ContainsKey($externalKey)) { $externalObserved[$externalKey] } else { 0 })
+                        continue
+                    }
                     $boundValues = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
                     $nonPathBinding = $false
                     $searchedScopes = [Collections.Generic.HashSet[object]]::new()
@@ -1730,6 +1803,7 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
                     } else {
                         $scriptBlockParameter = Test-AffectedIndexedScriptBlockParameter -Index $analysis -Scope $scope -Variable $variable
                         $moduleScopeInvocation = [bool]$invocationRecord.has_scriptblock_argument
+                        if ($externalGroups.Contains($importer) -and -not $scriptBlockParameter -and -not $moduleScopeInvocation) { throw "Graph external command lacks an exact declaration: $importer|$variable" }
                         if ($nonPathBinding -or $scriptBlockParameter -or $moduleScopeInvocation -or $variable -match '(?i)(?:git|pwsh|powershell|python|executable|command)$') { continue }
                         $key = "$importer|$variable"
                         if (-not $declarations.ContainsKey($key)) { throw "Dynamic owner invocation lacks an exact declaration: $key" }
@@ -1741,7 +1815,7 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
                 }
             }
             foreach ($invocationValue in @(ConvertTo-AffectedOrdinalUniqueStrings @($invocationValues))) {
-                $invocationFull = if ($invocationValue.Replace('\','/') -match '^scripts/') { [IO.Path]::GetFullPath((Join-Path $root $invocationValue)) } else { [IO.Path]::GetFullPath((Join-Path $directory $invocationValue)) }
+                $invocationFull = if ($invocationValue.Replace('\','/') -match '^(?:scripts|tools)/') { [IO.Path]::GetFullPath((Join-Path $root $invocationValue)) } else { [IO.Path]::GetFullPath((Join-Path $directory $invocationValue)) }
                 if (-not $invocationFull.StartsWith($rootPrefix,[StringComparison]::OrdinalIgnoreCase)) { throw "Owner invocation escapes the repository: $importer :: $invocationValue" }
                 [void]$importEdges.Add([IO.Path]::GetRelativePath($root,$invocationFull).Replace('\','/'))
             }
@@ -1750,6 +1824,12 @@ function New-AffectedTrackedImportGraph([string]$Root, [string[]]$Entrypoints, [
         [Array]::Sort($orderedEdges,[StringComparer]::Ordinal)
         $edges[$importer] = $orderedEdges
         foreach ($edge in $orderedEdges) { Add-AffectedTrackedImportPath $edge }
+    }
+    foreach ($key in @($externalDeclarations.Keys)) {
+        $declaration = $externalDeclarations[$key]
+        if (-not $externalGroups.Contains([string]$declaration.importer)) { continue }
+        $count = if ($externalObserved.ContainsKey($key)) { [int]$externalObserved[$key] } else { 0 }
+        if ($count -ne [int]$declaration.count) { throw "Graph external declaration invocation count differs: $key expected $($declaration.count), observed $count" }
     }
     foreach ($key in @($declarations.Keys)) {
         $declaration = $declarations[$key]
@@ -1870,9 +1950,13 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
     $registrationAudit = Assert-MorphospaceAffectedWorkEnvironmentLeafRegistration -Root $Root -Registry $Registry
     $ownerEntrypoints = @($registrationAudit.owner_entrypoints)
     $dynamicImports = @(
+        [pscustomobject]@{ importer='scripts/InitialValidationProfileClosureCorrection.psm1'; variable='script:initialProfileLedger'; count=3; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/ActiveUnitRetirement.psm1'; variable='scope.ledger'; count=2; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-LocalSkillBootstrap.ps1'; variable='boundary'; count=2; import_path='scripts/Install-LocalSkills.ps1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-AuthorityRecordReadiness.ps1'; variable='processModule'; count=1; import_path='scripts/lib/MorphospaceAuthorityProcess.psm1' },
+        [pscustomobject][ordered]@{ importer='scripts/Test-DevelopmentUnitAdmission.ps1'; variable='script:AdmissionBatchOriginal'; count=1; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
+        [pscustomobject][ordered]@{ importer='scripts/Test-DevelopmentUnitAdmission.ps1'; variable='script:AdmissionSnapshotOriginal'; count=1; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
+        [pscustomobject][ordered]@{ importer='scripts/Test-ProtocolFoundation.ps1'; variable='script:DiscriminatorOriginalConverter'; count=1; import_path='scripts/lib/MorphospaceProtocolCommon.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='ModulePath'; count=2; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='observationDamage'; count=1; import_path='scripts/Test-TransitionLedger.ps1' },
         [pscustomobject][ordered]@{ importer='scripts/Test-TransitionLedger.ps1'; variable='script:originalIntentAssert'; count=1; import_path='scripts/lib/MorphospaceTransitionLedger.psm1' },
@@ -1892,13 +1976,13 @@ function Get-AffectedProtocolCommonOwnerChecks([string]$Root, [object]$Registry)
     # but their tracked owner closures consume ProtocolCommon. Keep their
     # supplementary graph roots explicit so both source bindings and selection
     # expectations include them without adding duplicate cumulative execution.
-    $supplementaryEntrypoints = @('scripts/Test-InheritedCandidateMaterialization.ps1','scripts/Test-RecoveredPreparedAdmission.ps1')
+    $supplementaryEntrypoints = @('scripts/Test-InheritedCandidateMaterialization.ps1','scripts/Test-RecoveredPreparedAdmission.ps1','scripts/Test-InitialValidationProfileClosureCorrection.ps1')
     foreach ($supplementary in $supplementaryEntrypoints) {
         if (-not $trackedPaths.Contains($supplementary)) { throw "Supplementary ProtocolCommon owner entrypoint is absent or untracked: $supplementary" }
     }
     $graphEntrypoints = @(ConvertTo-AffectedOrdinalUniqueStrings @($ownerEntrypoints + $supplementaryEntrypoints))
     $graphClock = [Diagnostics.Stopwatch]::StartNew()
-    $graph = New-AffectedTrackedImportGraph -Root $Root -Entrypoints $graphEntrypoints -DynamicImportDeclarations $dynamicImports -TrackedPaths $trackedPaths
+    $graph = New-AffectedTrackedImportGraph -Root $Root -Entrypoints $graphEntrypoints -DynamicImportDeclarations $dynamicImports -TrackedPaths $trackedPaths -ExternalDependencyDeclarations @($Registry.dependency_declarations)
     $graphClock.Stop()
     foreach ($requiredInvocationEdge in @(
         @('scripts/Test-HistoryArchiveValidation.ps1','scripts/Test-HistoryArchiveCheckpoint.ps1'),
@@ -2067,6 +2151,89 @@ $module = Import-Module (Join-Path $OwnerDirectory 'scripts/lib/FixtureExports.p
         Write-Utf8 (Join-Path $ownerGraphFixture 'scripts/Test-ModuleExport.ps1') $moduleExportFixtureSource
         Write-Host 'Typed module export binding and nested-callee fixtures passed.'
     } finally { if ([IO.Directory]::Exists($ownerGraphFixture)) { Remove-Item -LiteralPath $ownerGraphFixture -Recurse -Force } }
+}
+function Invoke-AffectedRootAndExternalImportSelfTest {
+    $fixture = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-real-import-forms-' + [guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'scripts'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'tools'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $fixture 'manifests'))
+    try {
+        $tracked = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($path in @('scripts/RootConsumer.psm1','scripts/Provider.psm1','tools/Test-DirectWorkPackage.ps1','manifests/workflow-lifecycle.portable.json')) { [void]$tracked.Add($path) }
+        $rootSource = "& (Join-Path (Split-Path `$PSScriptRoot -Parent) 'tools/Test-DirectWorkPackage.ps1') -Path 'package.json'`n"
+        Write-Utf8 (Join-Path $fixture 'scripts/RootConsumer.psm1') $rootSource
+        Write-Utf8 (Join-Path $fixture 'tools/Test-DirectWorkPackage.ps1') "`$data = Get-Content -LiteralPath (Join-Path (Split-Path `$PSScriptRoot -Parent) 'manifests/workflow-lifecycle.portable.json')`n"
+        Write-Utf8 (Join-Path $fixture 'manifests/workflow-lifecycle.portable.json') '{}'
+        $providerSource = @'
+function Resolve-Provider($binding, $composition, [string]$Git) {
+    $modulePath = Get-ProviderModulePath $binding.Path
+    $module = Import-Module $modulePath -Force -PassThru -DisableNameChecking
+    $assertion = $module.ExportedCommands['Assert-QuestBuildSourceCompositionCurrent']
+    & $assertion -Composition $composition | Out-Null
+    & $Git -C $binding.Path rev-parse HEAD
+}
+'@
+        Write-Utf8 (Join-Path $fixture 'scripts/Provider.psm1') $providerSource
+        $external = @('Git','assertion','modulePath') | ForEach-Object { [pscustomobject][ordered]@{ importer='scripts/Provider.psm1';variable=$_;count=1;classification='authenticated-external-command' } }
+        $failures = [Collections.Generic.List[string]]::new()
+        try {
+            $graph = New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @('scripts/RootConsumer.psm1') -TrackedPaths $tracked
+            Assert-True (@($graph.edges['scripts/RootConsumer.psm1']).Count -eq 1 -and $graph.edges['scripts/RootConsumer.psm1'][0] -ceq 'tools/Test-DirectWorkPackage.ps1') 'Repository-parent tool invocation lost its exact tracked edge.'
+        } catch { $failures.Add('repository-parent: ' + $_.Exception.Message) }
+        try {
+            $graph = New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @('scripts/Provider.psm1') -TrackedPaths $tracked -ExternalDependencyDeclarations $external
+            Assert-True (@($graph.nodes).Count -eq 1 -and @($graph.edges['scripts/Provider.psm1']).Count -eq 0) 'External provider import invented a tracked repository target.'
+        } catch { $failures.Add('external-group: ' + $_.Exception.Message) }
+        Assert-True ($failures.Count -eq 0) ('Actual import forms are unsupported: ' + ($failures -join '; '))
+        # Independent expected data coverage uses the existing production resolver.
+        $records = foreach ($path in $tracked) {
+            $raw = [IO.File]::ReadAllBytes((Join-Path $fixture $path))
+            $header = [Text.Encoding]::UTF8.GetBytes("blob $($raw.Length)`0")
+            [pscustomobject]@{path=$path;mode='100644';type='blob';blob=[Convert]::ToHexString([Security.Cryptography.SHA1]::HashData([byte[]]($header+$raw))).ToLowerInvariant()}
+        }
+        $closure = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/RootConsumer.psm1' -Inventory ([pscustomobject]@{records=@($records)}) -DynamicDeclarations @()
+        Assert-True ($closure.resolution.mode -ceq 'exact' -and ($closure.paths -join ',') -ceq 'manifests/workflow-lifecycle.portable.json,scripts/RootConsumer.psm1,tools/Test-DirectWorkPackage.ps1') 'Repository-parent tool or its literal data dependency left the exact production closure.'
+        foreach ($damage in @('import-missing','assertion-missing','git-missing','duplicate','count-minus','count-plus','wrong-importer','wrong-class','extra-import','extra-assertion','extra-git','unknown-command','ambiguous-binding','tracked-decoy','shadow-import','case-ambiguous','wrapped-binding')) {
+            $damagedSource = $providerSource
+            $damagedDeclarations = @($external | ForEach-Object { [pscustomobject][ordered]@{importer=$_.importer;variable=$_.variable;count=$_.count;classification=$_.classification} })
+            switch ($damage) {
+                'import-missing' { $damagedDeclarations=@($damagedDeclarations | Where-Object variable -CNE modulePath) }
+                'assertion-missing' { $damagedDeclarations=@($damagedDeclarations | Where-Object variable -CNE assertion) }
+                'git-missing' { $damagedDeclarations=@($damagedDeclarations | Where-Object variable -CNE Git) }
+                'duplicate' { $damagedDeclarations+= $damagedDeclarations[0] }
+                'count-minus' { $damagedDeclarations[0].count=0 }
+                'count-plus' { $damagedDeclarations[0].count=2 }
+                'wrong-importer' { foreach($row in $damagedDeclarations){$row.importer='scripts/Other.psm1'} }
+                'wrong-class' { $damagedDeclarations[0].classification='unreviewed-external' }
+                'extra-import' { $damagedSource=$providerSource.Replace('    $assertion =',"    Import-Module `$modulePath`n    `$assertion =") }
+                'extra-assertion' { $damagedSource=$providerSource.Replace('    & $Git',"    & `$assertion -Composition `$composition`n    & `$Git") }
+                'extra-git' { $damagedSource=$providerSource.Replace('    & $Git',"    & `$Git --version`n    & `$Git") }
+                'unknown-command' { $damagedSource=$providerSource.Replace('    & $Git',"    & `$UnknownExecutable --version`n    & `$Git") }
+                'ambiguous-binding' { $damagedSource=$providerSource.Replace('    $module =',"    `$modulePath = Get-OtherModulePath`n    `$module =") }
+                'tracked-decoy' { $damagedSource=$providerSource.Replace('Get-ProviderModulePath $binding.Path',"'Provider.psm1'") }
+                'shadow-import' { $damagedSource="function Import-Module { 'not builtin' }`n"+$providerSource }
+                'case-ambiguous' { $damagedSource=$providerSource.Replace('    $module =',"    `$MODULEPATH = Get-OtherModulePath`n    `$module =") }
+                'wrapped-binding' { $damagedSource=$providerSource.Replace('    $module =',"    [string]`$modulePath = Get-OtherModulePath`n    `$module =") }
+            }
+            Write-Utf8 (Join-Path $fixture 'scripts/Provider.psm1') $damagedSource
+            Assert-AffectedThrows { New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @('scripts/Provider.psm1') -TrackedPaths $tracked -ExternalDependencyDeclarations $damagedDeclarations } '*' "External provider group accepted damage: $damage"
+        }
+        Write-Utf8 (Join-Path $fixture 'scripts/Provider.psm1') $providerSource
+        foreach ($damage in @('wrong-root','unbound-root','escape','missing','shadow-join','shadow-parent')) {
+            $damagedSource=$rootSource
+            switch ($damage) {
+                'wrong-root' { $damagedSource=$rootSource.Replace('(Split-Path $PSScriptRoot -Parent)','$PSScriptRoot') }
+                'unbound-root' { $damagedSource=$rootSource.Replace('(Split-Path $PSScriptRoot -Parent)','$ForeignRoot') }
+                'escape' { $damagedSource=$rootSource.Replace('tools/Test-DirectWorkPackage.ps1','../outside.ps1') }
+                'missing' { $damagedSource=$rootSource.Replace('tools/Test-DirectWorkPackage.ps1','tools/Absent.ps1') }
+                'shadow-join' { $damagedSource="function Join-Path { 'untrusted' }`n"+$rootSource }
+                'shadow-parent' { $damagedSource="function Split-Path { 'untrusted' }`n"+$rootSource }
+            }
+            Write-Utf8 (Join-Path $fixture 'scripts/RootConsumer.psm1') $damagedSource
+            Assert-AffectedThrows { New-AffectedTrackedImportGraph -Root $fixture -Entrypoints @('scripts/RootConsumer.psm1') -TrackedPaths $tracked } '*' "Repository-parent tool accepted damage: $damage"
+        }
+        Write-Host 'Repository-parent tool and complete provider binding group passed.'
+    } finally { if ([IO.Directory]::Exists($fixture)) { Remove-Item -LiteralPath $fixture -Recurse -Force } }
 }
 function Invoke-AffectedAuditedModuleMemberSelfTest {
     $fixture = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-audited-member-' + [guid]::NewGuid().ToString('N'))
@@ -2797,6 +2964,10 @@ function Invoke-AffectedCallableScopeSelfTest {
     } finally { if ([IO.Directory]::Exists($fixture)) { Remove-Item -LiteralPath $fixture -Recurse -Force } }
 }
 function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]$Registry) {
+    # This real nested module callback is deliberately declared, not exempted as
+    # an external executable. A missing/wrong row invalidates its exact consumers.
+    $admissionLedgerRows = @($Registry.dependency_declarations | Where-Object { [string]$_.importer -ceq 'scripts/Test-DevelopmentUnitAdmission.ps1' -and [string]$_.variable -ceq 'transitionLedgerModule' })
+    Assert-True ($admissionLedgerRows.Count -eq 1 -and [int]$admissionLedgerRows[0].count -eq 1 -and @($admissionLedgerRows[0].target_paths).Count -eq 1 -and [string]$admissionLedgerRows[0].target_paths[0] -ceq 'scripts/lib/MorphospaceTransitionLedger.psm1') 'Current admission ledger callback lacks its exact one-call tracked-module declaration.'
     Invoke-AffectedCallableScopeSelfTest
     Invoke-AffectedFallbackReceiptSelfTest -Root $Root -Registry $Registry
     Invoke-AffectedDependencyDemandEquivalenceSelfTest
@@ -2984,6 +3155,27 @@ function Invoke-AffectedPerCheckDependencyClosureSelfTest([string]$Root,[object]
         $aliasCountDamage = $aliasDeclaration | ConvertTo-Json -Depth 8 | ConvertFrom-Json -Depth 8 -DateKind String; $aliasCountDamage.count = 2
         Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($aliasCountDamage) } '*declaration count changed*' 'Case-variant declaration alias bypassed exact observation count validation.'
         Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Entry.ps1' -Inventory $inventory -DynamicDeclarations @($declaration,$aliasDeclaration) } '*invalid or duplicate identity*' 'Case-variant duplicate declarations were treated as distinct PowerShell variable identities.'
+
+        # Match the actual admission fixture: a saved Get-Module result is used
+        # once inside a function. Supplying the module as an ordinary argument is
+        # not a second callable site. The tracked target oracle is independent.
+        Write-Utf8 (Join-Path $fixture 'scripts/Fallback.ps1') "`$transitionLedgerPath = Join-Path `$PSScriptRoot 'Dynamic.psm1'`n`$transitionLedgerModule = @(Get-Module -All | Where-Object { `$_.Path -eq `$transitionLedgerPath } | Select-Object -Last 1)[0]`nfunction Invoke-AdmissionLedgerFixture { & `$transitionLedgerModule { param(`$a) Start-MorphospaceTransitionLedger @a } @{} }`nInvoke-AdmissionLedgerFixture`n"
+        $admissionLedger = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='transitionLedgerModule';count=1;target_paths=@('scripts/Dynamic.psm1')}
+        $admissionMissing = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @()
+        Assert-True ($admissionMissing.resolution.mode -ceq 'all-tracked-scripts-fallback' -and @($admissionMissing.resolution.fallback_reasons | Where-Object { $_.variable -ceq 'transitionLedgerModule' }).Count -eq 1) 'Undeclared nested ledger module callback bypassed fallback.'
+        $admissionExact = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($admissionLedger)
+        Assert-True ($admissionExact.resolution.mode -ceq 'exact' -and @($admissionExact.resolution.fallback_reasons).Count -eq 0 -and ($admissionExact.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Fallback.ps1') 'Declared nested ledger module callback lost its exact tracked target.'
+        foreach ($damagedCount in @(0,2)) {
+            $admissionCount = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='transitionLedgerModule';count=$damagedCount;target_paths=@('scripts/Dynamic.psm1')}
+            $countMessage = if ($damagedCount -eq 0) { '*invalid or duplicate identity*' } else { '*declaration count changed*' }
+            Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($admissionCount) } $countMessage 'Nested ledger callback accepted a damaged declaration count.'
+        }
+        $admissionAbsent = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='transitionLedgerModule';count=1;target_paths=@('scripts/Absent.psm1')}
+        Assert-AffectedThrows { Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($admissionAbsent) } '*target is absent from the exact head*' 'Nested ledger callback accepted an untracked target.'
+        $admissionWrong = [pscustomobject][ordered]@{importer='scripts/Fallback.ps1';variable='transitionLedgerModule';count=1;target_paths=@('scripts/Static.psm1')}
+        $admissionWrongTarget = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $fixture -Entrypoint 'scripts/Fallback.ps1' -Inventory $inventory -DynamicDeclarations @($admissionWrong)
+        Assert-AffectedThrows { Assert-True (($admissionWrongTarget.paths -join ',') -ceq 'scripts/Dynamic.psm1,scripts/Fallback.ps1') 'Nested ledger independent exact target oracle rejected wrong tracked target.' } '*independent exact target oracle*' 'Wrong tracked module target escaped the independent ledger oracle.'
+        Write-Host 'Admission ledger module callback controls passed: missing, exact, count-zero, count-two, absent-target, wrong-target.'
 
         $compiled = Test-MorphospaceAffectedValidationRegistry -Registry $Registry -RepositoryRoot $Root -SchemaPath (Join-Path $Root 'schemas/affected-validation-registry-v1.schema.json')
         $head = (& git -C $Root rev-parse HEAD).Trim()
@@ -3201,6 +3393,7 @@ if ($runReusePhase) {
 }
 
 if ($runGraphPhase) {
+    Invoke-AffectedRootAndExternalImportSelfTest
     $focusedRegistry = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'manifests/affected-validation-registry.json')
     [void](Test-MorphospaceAffectedValidationRegistry -Registry $focusedRegistry -RepositoryRoot $repoRoot -SchemaPath (Join-Path $repoRoot 'schemas/affected-validation-registry-v1.schema.json'))
     $focusedAudit = Invoke-AffectedGraphIndexSelfTest -Root $repoRoot -Registry $focusedRegistry
@@ -3400,6 +3593,8 @@ if ($runFullSelector -or $runExecutorPassPhase) {
         }
     }
     $workflowContractsSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/Test-WorkflowContracts.ps1') -Raw
+    $workflowSelfTestSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/test-support/IsolatedWorkflowSelfTest.psm1') -Raw
+    $workEnvironmentSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/Test-WorkEnvironment.ps1') -Raw
     $executorSource = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/Invoke-AffectedValidation.ps1') -Raw
     $phaseRunnerPath = Join-Path $repoRoot 'scripts/Invoke-AffectedValidationSelfTestPhase.ps1'
     $phaseRunnerSource = Get-Content -LiteralPath $phaseRunnerPath -Raw
@@ -3423,7 +3618,8 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     Assert-True ([long]$checkEvidenceSchema.'$defs'.artifact.properties.bytes.maximum -eq 134217728 -and [long]$checkEvidenceSchema.'$defs'.artifact.properties.bytes.maximum -gt $phaseManifestCanonicalUpperBound -and [int]$checkEvidenceSchema.'$defs'.artifact.allOf[0].else.properties.bytes.maximum -eq 10485760) 'Outer evidence does not cover the maximum escaped-Unicode phase receipt domain while retaining the ordinary artifact ceiling.'
     Assert-True (@($checkEvidenceSchema.required) -ccontains 'plan_sha256') 'Affected check evidence does not retain the original plan identity required by inner phase artifacts.'
     Assert-True ($phaseRunnerSource.Contains('$startInfo.Environment.Clear()') -and $phaseRunnerSource.Contains('$phaseChildEnvironment') -and -not $phaseRunnerSource.Contains("Environment.Remove('GIT_PAGER')")) 'Affected phase runner does not rebuild its second-hop child from the closed projection.'
-    Assert-True ($workflowContractsSource.Contains('$start.Environment.Clear()') -and $workflowContractsSource.Contains("`$runtimeNames=@('COMSPEC','HOME','PATH','PATHEXT','SYSTEMROOT','TEMP','TMP','TMPDIR','WINDIR')") -and $workflowContractsSource.Contains("@('GIT_PAGER','WEF002_UNOWNED_MARKER','PSExecutionPolicyPreference','PSModulePath')") -and $workflowContractsSource.Contains('$process.StandardOutput.BaseStream.ReadAsync') -and $workflowContractsSource.Contains('$process.StandardError.BaseStream.ReadAsync') -and $workflowContractsSource.Contains('$stdout.Length+$stderr.Length-gt10485760') -and $workflowContractsSource.Contains("if(`$StandardDeltaOnly)") -and $workflowContractsSource.Contains("-TimeoutSeconds 900") -and $workflowContractsSource.Contains('[void](Invoke-IsolatedWorkflowSelfTest -Path (Join-Path $RepoRoot "scripts\$selfTest") -Arguments $selfTestArguments -TimeoutSeconds $selfTestTimeoutSeconds)') -and -not $workflowContractsSource.Contains('[Environment]::SetEnvironmentVariable') -and -not $workflowContractsSource.Contains('Get-ChildItem Env:') -and -not $workflowContractsSource.Contains('Remove-Item -LiteralPath "Env:')) 'Workflow-contract owner/Standard launcher does not retain one closed, bounded, nonrecursive child environment path.'
+    Assert-True ($workflowSelfTestSource.Contains('$start.Environment.Clear()') -and $workflowSelfTestSource.Contains("`$runtimeNames=@('COMSPEC','HOME','PATH','PATHEXT','SYSTEMROOT','TEMP','TMP','TMPDIR','WINDIR')") -and $workflowContractsSource.Contains("@('GIT_PAGER','WEF002_UNOWNED_MARKER','PSExecutionPolicyPreference','PSModulePath')") -and $workflowSelfTestSource.Contains('$process.StandardOutput.BaseStream.ReadAsync') -and $workflowSelfTestSource.Contains('$process.StandardError.BaseStream.ReadAsync') -and $workflowSelfTestSource.Contains('$stdout.Length+$stderr.Length-gt10485760') -and $workflowContractsSource.Contains("if(`$StandardDeltaOnly)") -and $workflowContractsSource.Contains("-TimeoutSeconds 900") -and $workflowContractsSource.Contains('[void](Invoke-IsolatedWorkflowSelfTest -RepositoryRoot $RepoRoot -Path (Join-Path $RepoRoot "scripts\$selfTest") -Arguments $selfTestArguments -TimeoutSeconds $selfTestTimeoutSeconds)') -and -not ($workflowContractsSource+$workflowSelfTestSource).Contains('[Environment]::SetEnvironmentVariable') -and -not ($workflowContractsSource+$workflowSelfTestSource).Contains('Get-ChildItem Env:') -and -not ($workflowContractsSource+$workflowSelfTestSource).Contains('Remove-Item -LiteralPath "Env:')) 'Workflow-contract owner/Standard launcher does not retain one shared closed child environment path and its timed bounds.'
+    Assert-True ($workflowContractsSource.Contains("Import-Module (Join-Path `$PSScriptRoot 'test-support/IsolatedWorkflowSelfTest.psm1')") -and $workEnvironmentSource.Contains("Import-Module (Join-Path `$PSScriptRoot 'test-support/IsolatedWorkflowSelfTest.psm1')") -and -not $workflowContractsSource.Contains('function Invoke-IsolatedWorkflowSelfTest {') -and $workflowSelfTestSource.Contains('[ValidateRange(1,900)][int]$TimeoutSeconds = 240') -and $workflowSelfTestSource.Contains('[switch]$CompletionPreserving') -and $workEnvironmentSource.Contains('-Arguments $quickTestArguments -CompletionPreserving)') -and $workEnvironmentSource.Contains('name = "automation:work-unit"; script = "Test-WorkUnitAutomation.ps1"; arguments = @()') -and $workEnvironmentSource.Contains('-Path $automationTestPath -Arguments $automationTest.arguments -TimeoutSeconds 900)')) 'Aggregate isolation does not share the existing owner or preserve timed defaults, WUA bounds and completion-preserving NONPASS dispatch.'
     Assert-True (@($checkEvidenceSchema.required) -ccontains 'environment' -and @($checkEvidenceSchema.properties.child.required) -ccontains 'failure_kind') 'Affected check evidence does not bind the closed child environment and typed failure distinction.'
     $trackedPowerShellPattern = [string]$checkEvidenceSchema.'$defs'.trackedPowerShellPath.pattern
     $declarationScriptPattern = [string]$checkEvidenceSchema.'$defs'.scriptPath.pattern
@@ -3644,7 +3840,65 @@ if ($runFullSelector -or $runExecutorPassPhase) {
     $directWindowsBody = [string]$workflowJobs['standard-windows']
     $segmentedWindowsBody = [string]$workflowJobs['affected-windows-segments']
     Assert-True ($directWindowsBody.Contains("WINDOWS_DIRECT: `${{ needs.select.outputs.windows_direct }}") -and $directWindowsBody.Contains("`$env:SEGMENT_RESULT -cne 'skipped'") -and $segmentedWindowsBody.Contains("needs.select.outputs.windows_direct == 'false'")) 'Opt-in direct Windows mode does not exclude segmented execution or bind its skipped dependency.'
-    Assert-True ($directWindowsBody.Contains('Invoke-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PR_BASE -HeadCommit $env:PR_HEAD') -and $directWindowsBody.Contains('-Platform windows -OutPath $evidencePath') -and $directWindowsBody.Contains("`$expectedIds -join ','") -and $directWindowsBody.Contains('Test-Json -Json (Get-Content -LiteralPath $evidencePath -Raw) -SchemaFile ./schemas/affected-validation-evidence-v1.schema.json')) 'Direct Windows mode does not execute and verify the exact selected union.'
+    Assert-True ($directWindowsBody.Contains('Invoke-AffectedValidation.ps1 -RepositoryRoot . -BaseCommit $env:PR_BASE -HeadCommit $env:PR_HEAD') -and $directWindowsBody.Contains('-Platform windows -OutPath $evidencePath') -and $directWindowsBody.Contains("`$expectedIds -join ','")) 'Direct Windows mode does not execute and verify the exact selected union.'
+    # Independently require the same read/closed-schema/parse contract in all
+    # three direct producers; their full PASS coverage checks remain separate.
+    $directRawRead = '$evidenceRaw = Get-Content -LiteralPath $evidencePath -Raw'
+    $directSchemaCall = 'Test-Json -Json $evidenceRaw -SchemaFile ./schemas/affected-validation-evidence-v1.schema.json -ErrorAction Stop'
+    $directRawParse = '$evidence = $evidenceRaw | ConvertFrom-Json -Depth 64'
+    $assertDirectRawSchema = {
+        param([string]$Body,[string]$Producer)
+        $readIndex = $Body.IndexOf($directRawRead,[StringComparison]::Ordinal)
+        $schemaIndex = $Body.IndexOf($directSchemaCall,[StringComparison]::Ordinal)
+        $parseIndex = $Body.IndexOf($directRawParse,[StringComparison]::Ordinal)
+        Assert-True ($readIndex -ge 0 -and $schemaIndex -gt $readIndex -and $parseIndex -gt $schemaIndex) "Direct producer '$Producer' omits its ordered aggregate raw/schema binding."
+    }
+    $directSchemaCases = 0
+    foreach ($producer in @('quick-linux','standard-windows','main-linux-delta')) {
+        $body = [string]$workflowJobs[$producer]
+        & $assertDirectRawSchema $body $producer
+        $directSchemaCases++
+        $damagedBodies = @(
+            $body.Replace($directRawRead,''),
+            $body.Replace($directRawRead,'$evidenceRaw = Get-Content -LiteralPath $wrongEvidencePath -Raw'),
+            $body.Replace($directSchemaCall,'$true'),
+            $body.Replace($directSchemaCall,'Test-Json -Json "{}" -SchemaFile ./schemas/affected-validation-evidence-v1.schema.json -ErrorAction Stop')
+        )
+        foreach ($damagedBody in $damagedBodies) {
+            Assert-AffectedThrows { & $assertDirectRawSchema $damagedBody $producer } '*ordered aggregate raw/schema binding*' "Direct producer '$producer' accepted damaged raw/schema conformance."
+            $directSchemaCases++
+        }
+        $readIndex = $body.IndexOf($directRawRead,[StringComparison]::Ordinal)
+        $parseEnd = $body.IndexOf($directRawParse,[StringComparison]::Ordinal) + $directRawParse.Length
+        $actualSchemaCheck = [scriptblock]::Create($body.Substring($readIndex,$parseEnd-$readIndex))
+        $schemaPath = [IO.Path]::GetTempFileName()
+        $schemaFixture = [pscustomobject][ordered]@{
+            schema='rusty.morphospace.workflow.affected_validation_evidence.v1'
+            repository='MesmerPrism/rusty-morphospace-work-environment'
+            base=[pscustomobject]@{commit=('a'*40);tree=('b'*40)}
+            head=[pscustomobject]@{commit=('c'*40);tree=('d'*40)}
+            plan_sha256=('e'*64);platform=$(if($producer-ceq'standard-windows'){'windows'}else{'linux'})
+            runner=[pscustomobject]@{os_description='Fixture OS';powershell_version='7.6.0'}
+            check_results=@([pscustomobject]@{check_id='fixture-pass';command_path='scripts/Test-Example.ps1';command_blob_sha1=('f'*40);mode='executed';result='pass';started=$true;failure_kind=$null;exit_code=0;timed_out=$false;output_truncated=$false;post_kill_drain_timed_out=$false;stdout_sha256=('0'*64);stderr_sha256=('0'*64);stdout_bytes=0;stderr_bytes=0})
+            result='pass'
+            claims=[pscustomobject]@{historical_aggregate_reused=$false;acceptance_authority=$false;publication_authority=$false}
+        }
+        Push-Location $repoRoot
+        try {
+            Write-Utf8 $schemaPath ($schemaFixture | ConvertTo-Json -Depth 12)
+            & { param([scriptblock]$Check,[string]$Path) $evidencePath=$Path; . $Check } $actualSchemaCheck $schemaPath
+            $directSchemaCases++
+            # Parsing accepts valid JSON with an unknown property; the actual
+            # closed schema call must refuse it independently of parser damage.
+            $schemaFixture | Add-Member -NotePropertyName unexpected_property -NotePropertyValue $true
+            $invalidJson = $schemaFixture | ConvertTo-Json -Depth 12
+            $null = $invalidJson | ConvertFrom-Json
+            Write-Utf8 $schemaPath $invalidJson
+            Assert-AffectedThrows { & { param([scriptblock]$Check,[string]$Path) $evidencePath=$Path; . $Check } $actualSchemaCheck $schemaPath } '*' "Direct producer '$producer' accepted schema-invalid valid JSON."
+            $directSchemaCases++
+        } finally { Pop-Location; [IO.File]::Delete($schemaPath) }
+    }
+    Write-Host "Direct sibling aggregate raw/schema conformance passed $directSchemaCases focused controls."
     Assert-True ($directWindowsBody.Contains('AffectedCacheFinalized') -and $directWindowsBody.Contains('cache_ready=true') -and $directWindowsBody.Contains('inventoryPath') -and $directWindowsBody.Contains("steps.direct.outputs.evidence_ready == 'true'")) 'Direct Windows mode lacks finalized cache and typed aggregate retention.'
     foreach ($invalidMode in @('unexpected','')) { Assert-AffectedThrows { Invoke-WorkflowSelectionGate -JobBody $directWindowsBody -SelectionVariable 'WINDOWS_SELECTED' -SelectionValue 'true' -SegmentResultVariable 'SEGMENT_RESULT' -WindowsDirect $invalidMode } '*execution mode must be exactly true or false*' 'Windows reducer accepted an invalid direct execution mode.' }
     Invoke-WorkflowSelectionGate -JobBody $directWindowsBody -SelectionVariable 'WINDOWS_SELECTED' -SelectionValue 'true' -SegmentResultVariable 'SEGMENT_RESULT' -SegmentResult 'skipped' -WindowsDirect 'true'
@@ -5246,6 +5500,45 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         param($Artifacts,$Phase,$Binding,$Source,$PlanSha256,$SchemaPath)
         Assert-MorphospaceAffectedCheckPhaseArtifactSet -Artifacts $Artifacts -Phase $Phase -ExpectedBinding $Binding -ExpectedSource $Source -ExpectedPlanSha256 $PlanSha256 -PhaseReceiptSchemaPath $SchemaPath
     } @($fixtureContractArtifacts.ToArray()) $fixtureContractPhase $fixtureContractExpectedBinding $fixtureContractExpectedSource $fixtureContractPlanSha256 (Join-Path $repoRoot 'schemas/affected-validation-self-test-phase-receipt-v1.schema.json'))
+    $fixtureContractSchemaPath = Join-Path $repoRoot 'schemas/affected-validation-self-test-phase-receipt-v1.schema.json'
+    # BudgetSeconds is an estimate unless the producer enforces a
+    # timeout. Genuine completion beyond it must retain exact chronology.
+    $advisoryPhaseArtifacts = [Collections.Generic.List[object]]::new()
+    foreach ($phaseArtifact in @($fixtureContractArtifacts.ToArray())) {
+        [byte[]]$phaseBytes = [byte[]]([byte[]]$phaseArtifact.bytes).Clone()
+        if ([string]$phaseArtifact.path -cin @('trust-self-executor.start.json','trust-self-executor.terminal.json')) {
+            $advisoryDocument = [Text.UTF8Encoding]::new($false,$true).GetString($phaseBytes) | ConvertFrom-Json -Depth 64 -DateKind String
+            $advisoryDocument.budget_seconds = 1; $advisoryDocument.started_at = '2026-09-01T00:00:00Z'
+            if ([string]$phaseArtifact.path -ceq 'trust-self-executor.terminal.json') { $advisoryDocument.ended_at = '2026-09-01T00:00:03Z'; $advisoryDocument.elapsed_ms = 3000 }
+            $phaseBytes = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $advisoryDocument) + "`n")
+        }
+        $advisoryPhaseArtifacts.Add([pscustomobject][ordered]@{path=[string]$phaseArtifact.path;bytes=$phaseBytes})
+    }
+    [void](& $fixtureContractEvidenceModule { param($Artifacts,$Binding,$Source,$PlanSha256,$SchemaPath) Assert-MorphospaceAffectedCheckPhaseArtifactSet -Artifacts $Artifacts -Phase 'trust-self-executor' -ExpectedBinding $Binding -ExpectedSource $Source -ExpectedPlanSha256 $PlanSha256 -PhaseReceiptSchemaPath $SchemaPath } @($advisoryPhaseArtifacts.ToArray()) $fixtureContractExpectedBinding $fixtureContractExpectedSource $fixtureContractPlanSha256 $fixtureContractSchemaPath)
+    foreach ($damage in @('elapsed-mismatch','start-budget','budget-range','enforced-timeout','nonzero-exit','forged-timeout','forged-exit')) {
+        $damagedAdvisoryArtifacts = [Collections.Generic.List[object]]::new()
+        foreach ($phaseArtifact in @($advisoryPhaseArtifacts.ToArray())) {
+            [byte[]]$phaseBytes = [byte[]]([byte[]]$phaseArtifact.bytes).Clone()
+            if ([string]$phaseArtifact.path -cin @('trust-self-executor.start.json','trust-self-executor.terminal.json')) {
+                $damageDocument = [Text.UTF8Encoding]::new($false,$true).GetString($phaseBytes) | ConvertFrom-Json -Depth 64 -DateKind String
+                if ($damage -ceq 'budget-range') { $damageDocument.budget_seconds = 601 }
+                if ([string]$phaseArtifact.path -ceq 'trust-self-executor.start.json' -and $damage -ceq 'start-budget') { $damageDocument.budget_seconds = 2 }
+                if ([string]$phaseArtifact.path -ceq 'trust-self-executor.terminal.json') {
+                    if ($damage -ceq 'elapsed-mismatch') { $damageDocument.elapsed_ms = 5001 }
+                    if ($damage -ceq 'enforced-timeout') { $damageDocument.result = 'code-fail'; $damageDocument.child.timed_out = $true; $damageDocument.child.exit_code = $null }
+                    if ($damage -ceq 'nonzero-exit') { $damageDocument.result = 'code-fail'; $damageDocument.child.exit_code = 17 }
+                    if ($damage -ceq 'forged-timeout') { $damageDocument.child.timed_out = $true }
+                    if ($damage -ceq 'forged-exit') { $damageDocument.child.exit_code = 17 }
+                }
+                $phaseBytes = [Text.UTF8Encoding]::new($false).GetBytes((ConvertTo-MorphospaceCanonicalJson -Value $damageDocument) + "`n")
+            }
+            $damagedAdvisoryArtifacts.Add([pscustomobject][ordered]@{path=[string]$phaseArtifact.path;bytes=$phaseBytes})
+        }
+        $expectedDamage = switch ($damage) { 'elapsed-mismatch' { '*chronology or budget*' } 'start-budget' { '*terminal timing contract*' } 'budget-range' { '*schema*' } 'forged-timeout' { '*schema*' } 'forged-exit' { '*schema*' } default { '*identity or result*' } }
+        Assert-AffectedThrows { [void](& $fixtureContractEvidenceModule { param($Artifacts,$Binding,$Source,$PlanSha256,$SchemaPath) Assert-MorphospaceAffectedCheckPhaseArtifactSet -Artifacts $Artifacts -Phase 'trust-self-executor' -ExpectedBinding $Binding -ExpectedSource $Source -ExpectedPlanSha256 $PlanSha256 -PhaseReceiptSchemaPath $SchemaPath } @($damagedAdvisoryArtifacts.ToArray()) $fixtureContractExpectedBinding $fixtureContractExpectedSource $fixtureContractPlanSha256 $fixtureContractSchemaPath) } $expectedDamage "Advisory phase-artifact reader accepted $damage damage."
+    }
+    Write-Host 'Phase-artifact advisory completion and strict timing/outcome damage controls passed.'
+
     Remove-Item -LiteralPath $fixtureContractProjectionPath -Force
     Remove-Item -LiteralPath $fixtureContractPhaseRoot -Recurse -Force
     Write-Host "Schema-valid fixture phase receipt and artifact-set contract passed in $([long]$phaseArtifactClock.Elapsed.TotalMilliseconds)ms."
@@ -5836,7 +6129,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     [void](Invoke-TestGit $fixture @('commit', '-m', 'shared automation receipt contract'))
     $automationReceiptHead = Invoke-TestGit $fixture @('rev-parse', 'HEAD')
     $automationReceiptPlan = Resolve-MorphospaceAffectedValidation -RepositoryRoot $fixture -BaseRevision $rematerializationProducerHead -HeadRevision $automationReceiptHead -RegistryPath (Join-Path $fixture 'manifests/affected-validation-registry.json') -RequestedTier quick
-    $automationReceiptExpectedChecks = @(($workflowConsumerFixtureChecks + $developmentUnitAdmissionBatchChecks) | Sort-Object)
+    $automationReceiptExpectedChecks = @(($workflowConsumerFixtureChecks + $developmentUnitAdmissionBatchChecks + @('initial-validation-profile-closure')) | Sort-Object)
     $automationReceiptActualChecks = @($automationReceiptPlan.selected_checks.check_id); [Array]::Sort($automationReceiptActualChecks, [System.StringComparer]::Ordinal)
     Assert-True (($automationReceiptActualChecks -join ',') -ceq ($automationReceiptExpectedChecks -join ',')) "Shared automation receipt selected the wrong exact closure: $($automationReceiptActualChecks -join ',')."
     foreach ($checkId in @('history-archive-checkpoint','history-archive-checkpoint-selftest','work-environment-deep')) { Assert-True (@($automationReceiptPlan.selected_checks.check_id) -cnotcontains $checkId) "Shared automation receipt change incorrectly selected '$checkId'." }
@@ -5891,18 +6184,20 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     # Every path from the combined raw-CAS and historical-debt candidate has a
     # single exact owner class.  Test each path independently so command-path
     # selection cannot conceal an unmapped or ambiguous shared-module route.
-    $validationAuthorityClosureChecks=@('authority-record-readiness','authority-runner-fast','authority-runner-handoff','transition-ledger','trust-migration-authority','validation-authority-launcher','validation-execution-authority') + $workflowConsumerFixtureChecks
+    $validationAuthorityClosureChecks=@('authority-record-readiness','authority-runner-fast','authority-runner-handoff','quest-build-executor-selection','transition-ledger','trust-migration-authority','validation-authority-launcher','validation-execution-authority') + $workflowConsumerFixtureChecks
     $preparationRepositoryScopeConsumerChecks=@(
         'active-development-envelope-extension',
         'tooling-context','tooling-context-product-negative','tooling-context-provenance-negative',
         'tooling-context-recovery-after-artifact','tooling-context-recovery-after-event',
         'tooling-context-recovery-after-intent','tooling-context-recovery-after-projection',
+        'tooling-context-validating-upgrade',
         'tooling-legacy-reclassification-helper','tooling-legacy-reclassification-integration',
         'tooling-preparation-integration',
         'active-unit-retirement-amendment-recovery','active-unit-retirement-nested-damage',
         'active-unit-retirement-nested-map-guards','active-unit-retirement-nested-positive',
         'active-unit-retirement-nested-recovery',
         'workflow-contracts','normal-validation-selector','active-write-scope-amendment',
+        'initial-validation-profile-closure',
         'completed-transition-semantic-correction','correct-active-project-repository-scope',
         'correct-active-read-only-dependencies','development-unit-admission',
         'recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','validating-candidate-rematerialization',
@@ -5940,14 +6235,18 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     $preparationRepositoryScopeConsumers=@($registry.checks | Where-Object {
         @($_.consume_path_sets) -ccontains 'preparation-repository-scope'
     } | ForEach-Object { [string]$_.check_id } | Sort-Object)
-    $expectedPreparationRepositoryScopeConsumers=@($preparationRepositoryScopeConsumerChecks | Sort-Object)
-    Assert-True (($preparationRepositoryScopeTriggers -join '|') -ceq ($expectedPreparationRepositoryScopeConsumers -join '|')) 'Preparation-repository-scope trigger consumers differ from the exact focused inventory.'
+    # Evidence-only consumers do not expand the focused preparation trigger closure.
+    $expectedPreparationRepositoryScopeTriggers=@($preparationRepositoryScopeConsumerChecks | Sort-Object)
+    $expectedPreparationRepositoryScopeConsumers=@(($preparationRepositoryScopeConsumerChecks + @('bootstrap-validation-receipt','nonpass-evidence-recovery','nonpass-receipt-evidence')) | Sort-Object)
+    Assert-True (($preparationRepositoryScopeTriggers -join '|') -ceq ($expectedPreparationRepositoryScopeTriggers -join '|')) 'Preparation-repository-scope trigger consumers differ from the exact focused inventory.'
     Assert-True (($preparationRepositoryScopeConsumers -join '|') -ceq ($expectedPreparationRepositoryScopeConsumers -join '|')) 'Preparation-repository-scope evidence consumers differ from the exact focused inventory.'
     $externalProtectedOwners = [ordered]@{
         '.github/workflows/static-admission.yml' = 'external-validation-adapter'
         '.github/workflows/validate.yml' = 'selector-trust-root'
         'config/external-owner-authorization.json' = 'external-owner-authorization-core'
         'config/external-validation-authority.json' = 'external-validation-verifier'
+        'config/native-nonpass-recovery-authority-binding.json' = 'native-nonpass-recovery-binding'
+        'config/native-nonpass-recovery-authority.json' = 'native-nonpass-recovery-authority'
         'manifests/affected-validation-registry.json' = 'affected-validation-registry'
         'schemas/external-owner-authorization-policy-v1.schema.json' = 'external-owner-authorization-core'
         'schemas/external-owner-authorization-request-v1.schema.json' = 'external-owner-authorization-core'
@@ -5964,7 +6263,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
     }
     $externalPolicy = Read-MorphospaceProtocolJson -Path (Join-Path $repoRoot 'config/external-validation-authority.json')
     $mandatoryProtectedPaths = @($externalPolicy.mandatory_protected_paths)
-    Assert-True ($mandatoryProtectedPaths.Count -eq 17) "External validation authority protected-path inventory changed from the expected 17 paths: $($mandatoryProtectedPaths.Count)."
+    Assert-True ($mandatoryProtectedPaths.Count -eq 19) "External validation authority protected-path inventory changed from the expected 19 paths: $($mandatoryProtectedPaths.Count)."
     Assert-True ($externalProtectedOwners.Count -eq $mandatoryProtectedPaths.Count) 'External protected-path ownership fixture does not cover the complete mandatory inventory.'
     $affectedModule = Get-Module MorphospaceAffectedValidation
     foreach ($protectedPath in $mandatoryProtectedPaths) {
@@ -5975,6 +6274,17 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
                 if (Test-MorphospaceAffectedPathSetMatch -Path $Path -Patterns @($PathSets[$pathSetId])) { [string]$pathSetId }
             }
         } ([string]$protectedPath) $compiledRegistry.path_sets)
+        if ([string]$protectedPath -ceq 'config/native-nonpass-recovery-authority-binding.json') {
+            $trackedBinding = @(& git -C $repoRoot ls-tree --name-only HEAD -- ([string]$protectedPath))
+            if ($LASTEXITCODE -ne 0) { throw 'Protected native binding fixture could not inspect exact HEAD.' }
+            if ($trackedBinding.Count -eq 0) {
+                # A protects this exact future B path before its implementation
+                # exists. No file or ownership adoption is inferred from policy.
+                Assert-True (-not (Test-Path -LiteralPath (Join-Path $repoRoot ([string]$protectedPath)))) 'Future protected native binding must remain physically absent until its owner is delivered.'
+                Assert-True ($matchingPathSets.Count -eq 0) 'Absent future native binding unexpectedly has a delivered owner.'
+                continue
+            }
+        }
         Assert-True ($matchingPathSets.Count -eq 1) "Mandatory external protected path '$protectedPath' must have exactly one path-set owner; found '$($matchingPathSets -join ',')'."
         $expectedOwner = [string]$externalProtectedOwners[[string]$protectedPath]
         Assert-True ([string]$matchingPathSets[0] -ceq $expectedOwner) "Mandatory external protected path '$protectedPath' belongs to '$($matchingPathSets[0])' instead of '$expectedOwner'."
@@ -5984,16 +6294,26 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         })
         Assert-True ($specializedCoverage.Count -gt 0) "Mandatory external protected path '$protectedPath' has no specialized or selector check coverage through '$expectedOwner'."
     }
+    # This existing source contract independently requires its known consumer.
+    # Registry trigger removal must not also remove the expected coverage.
+    $sourceOnlyPublicationFixtureChecks = @(
+        if ([IO.File]::Exists((Join-Path $repoRoot 'schemas/source-delivery-disposition-v1.schema.json'))) {
+            'source-only-publication-inputs'
+        }
+    )
     $proportionalMappings = @(
         [pscustomobject]@{ path='scripts/Test-CanonicalTextBytes.ps1'; checks=@('canonical-text-bytes','external-owner-authorization','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/New-ExternalOwnerAuthorizationComment.ps1'; checks=@('canonical-text-bytes','external-owner-authorization','public-boundary'); exact_checks=$true },
-        [pscustomobject]@{ path='scripts/lib/ExternalOwnerAuthorization.psm1'; checks=@('authority-runner-fast','canonical-text-bytes','external-owner-authorization','external-validation-github-adapter','historical-validation-debt-baseline','prepared-push-transaction-suffix-reconciliation','public-boundary'); exact_checks=$true },
+        [pscustomobject]@{ path='scripts/lib/ExternalOwnerAuthorization.psm1'; checks=@('authority-runner-fast','canonical-text-bytes','external-owner-authorization','external-validation-github-adapter','historical-validation-debt-baseline','native-nonpass-recovery-authority','native-nonpass-recovery-source-scope','prepared-push-transaction-suffix-reconciliation','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-ExternalOwnerAuthorization.ps1'; checks=@('canonical-text-bytes','external-owner-authorization','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='schemas/external-validation-authority-assessment-v1.schema.json'; checks=@('canonical-text-bytes','external-owner-authorization','external-validation-authority','external-validation-github-adapter','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-ExternalValidationAuthoritySelfTest.ps1'; checks=@('external-validation-authority','external-validation-github-adapter','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-ExternalValidationAuthorityGitHubAdapterSelfTest.ps1'; checks=@('external-validation-github-adapter','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='schemas/historical-validation-debt-phase-receipt-v1.schema.json'; checks=@('historical-validation-debt-baseline','historical-validation-debt-phase-runner','work-unit-automation') },
         [pscustomobject]@{ path='scripts/Test-BlockedSupersessionTerminalValidation.ps1'; checks=@('blocked-supersession-terminal-validation') },
+        [pscustomobject]@{ path='scripts/InitialValidationProfileClosureCorrection.psm1'; checks=@('bootstrap-validation-receipt','initial-validation-profile-closure','public-boundary'); exact_checks=$true },
+        [pscustomobject]@{ path='schemas/initial-validation-profile-closure-correction-v1.schema.json'; checks=@('bootstrap-validation-receipt','initial-validation-profile-closure','public-boundary'); exact_checks=$true },
+        [pscustomobject]@{ path='scripts/Test-InitialValidationProfileClosureCorrection.ps1'; checks=@('bootstrap-validation-receipt','initial-validation-profile-closure','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-CorrectActiveUnitContract.ps1'; checks=@('correct-active-unit-contract') },
         [pscustomobject]@{ path='schemas/active-unit-supersession-v1.schema.json'; checks=@('active-unit-supersession','work-unit-automation') },
         [pscustomobject]@{ path='scripts/ActiveUnitSupersession.psm1'; checks=@('active-unit-supersession','work-unit-automation') },
@@ -6008,15 +6328,15 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         [pscustomobject]@{ path='tools/Test-ApkRunTransaction.ps1'; checks=@('apk-run-transaction'); expected_tier='quick' },
         [pscustomobject]@{ path='schemas/work-unit-automation-receipt-v2.schema.json'; checks=@('automation-receipt-v2-compatibility') },
         [pscustomobject]@{ path='scripts/Test-AutomationReceiptV2Compatibility.ps1'; checks=@('automation-receipt-v2-compatibility') },
-        [pscustomobject]@{ path='scripts/WorkUnitAutomation.psm1'; checks=@('automation-receipt-v2-compatibility','normal-validation-selector','work-unit-automation','workflow-contracts') },
+        [pscustomobject]@{ path='scripts/WorkUnitAutomation.psm1'; checks=@('initial-validation-profile-closure','automation-receipt-v2-compatibility','normal-validation-selector','work-unit-automation','workflow-contracts') },
         [pscustomobject]@{ path='scripts/DevelopmentEnvelopeProvenance.psm1'; checks=@('development-envelope-preparation','development-unit-admission','public-boundary','workflow-contracts','work-unit-automation') },
         [pscustomobject]@{ path='scripts/DevelopmentEnvelopeRepreparation.psm1'; checks=@('automation-receipt-v2-compatibility','development-unit-admission','public-boundary','workflow-contracts','development-envelope-preparation','normal-validation-selector','work-unit-automation','validating-candidate-rematerialization') },
         [pscustomobject]@{ path='scripts/Test-HistoricalValidationDebtBaseline.ps1'; checks=@('historical-validation-debt-baseline') },
         [pscustomobject]@{ path='scripts/Test-HistoricalValidationDebtPhaseRunner.ps1'; checks=@('historical-validation-debt-phase-runner') },
         [pscustomobject]@{ path='scripts/Test-OwnershipAuthority.ps1'; checks=@('ownership-authority') },
         [pscustomobject]@{ path='scripts/Test-TransitionLedger.ps1'; checks=@('transition-ledger') },
-        [pscustomobject]@{ path='schemas/development-unit-admission-v1.schema.json'; checks=@('development-unit-admission','recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','active-unit-retirement-continuation') + $workflowConsumerFixtureChecks + $developmentUnitAdmissionBatchChecks; exact_checks=$true },
-        [pscustomobject]@{ path='scripts/DevelopmentUnitAdmission.psm1'; checks=@('development-unit-admission','recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','active-unit-retirement-continuation') + $workflowConsumerFixtureChecks + $developmentUnitAdmissionBatchChecks; exact_checks=$true },
+        [pscustomobject]@{ path='schemas/development-unit-admission-v1.schema.json'; checks=@('development-unit-admission','recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','active-unit-retirement-continuation') + $workflowConsumerFixtureChecks + $developmentUnitAdmissionBatchChecks + $sourceOnlyPublicationFixtureChecks; exact_checks=$true },
+        [pscustomobject]@{ path='scripts/DevelopmentUnitAdmission.psm1'; checks=@('development-unit-admission','recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','active-unit-retirement-continuation') + $workflowConsumerFixtureChecks + $developmentUnitAdmissionBatchChecks + $sourceOnlyPublicationFixtureChecks; exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-DevelopmentUnitAdmission.ps1'; checks=@('development-unit-admission','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-AdmissionCompletionTimestampRecovery.ps1'; checks=@('admission-completion-timestamp-recovery','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/Test-RecoveredProposalContinuation.ps1'; checks=@('recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','public-boundary'); exact_checks=$true },
@@ -6024,7 +6344,7 @@ if (-not [IO.File]::Exists('$(& $escapeLiteral $survivorReadyPath)')) {
         [pscustomobject]@{ path='scripts/Test-RecoveredPreparationRetirement.ps1'; checks=@('recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','public-boundary'); exact_checks=$true },
         [pscustomobject]@{ path='scripts/test-support/ActiveUnitRetirementFixture.ps1'; checks=@('active-unit-retirement','recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','public-boundary') + $completeCandidateBatchChecks; exact_checks=$true },
         [pscustomobject]@{ path='scripts/test-support/RecoveredProposalContinuation.ps1'; checks=@('recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','public-boundary'); exact_checks=$true },
-        [pscustomobject]@{ path='scripts/test-support/DevelopmentAdmissionFixture.ps1'; checks=@('development-unit-admission','recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','public-boundary') + $developmentUnitAdmissionBatchChecks; exact_checks=$true },
+        [pscustomobject]@{ path='scripts/test-support/DevelopmentAdmissionFixture.ps1'; checks=@('development-unit-admission','recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','public-boundary') + $developmentUnitAdmissionBatchChecks + $sourceOnlyPublicationFixtureChecks; exact_checks=$true },
         [pscustomobject]@{ path='examples/hello-morphospace-v2/morphospace/iteration-units/hello-001.json'; checks=@('development-unit-admission','recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','blocked-successor-preparation','workflow-contracts','public-boundary') },
         [pscustomobject]@{ path='scripts/AdmissionCompletionTimestampRecovery.psm1'; checks=@('admission-completion-timestamp-recovery','recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','workflow-contracts','work-unit-automation','public-boundary') },
         [pscustomobject]@{ path='schemas/admission-completion-timestamp-recovery-v1.schema.json'; checks=@('admission-completion-timestamp-recovery','recovered-proposal-continuation','recovered-prepared-admission','recovered-preparation-retirement','workflow-contracts','work-unit-automation','public-boundary') },

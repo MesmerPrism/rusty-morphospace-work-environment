@@ -139,7 +139,33 @@ function Test-MorphospaceFeatureLockFingerprint {
     $copy=$Lock|ConvertTo-Json -Depth 48|ConvertFrom-Json
     $copy.lock_fingerprint='0'*64
     $bytes=[Text.UTF8Encoding]::new($false).GetBytes(($copy|ConvertTo-Json -Depth 48 -Compress))
-    return [string]$Lock.lock_fingerprint -ceq (Get-MorphospaceSha256Bytes $bytes)
+    if ([string]$Lock.lock_fingerprint -ceq (Get-MorphospaceSha256Bytes $bytes)) { return $true }
+    # New-ProjectWorkspace v2 predates canonical fingerprints. Its finite
+    # initial featureless producer has a known field order, even when a later
+    # canonical protocol artifact has sorted the same object's properties.
+    # Reconstruct only that exact value; never search permutations or discard
+    # fields to make an unknown legacy fingerprint fit.
+    $source=$Lock|ConvertTo-Json -Depth 48|ConvertFrom-Json -DateKind String
+    $fields=@('$schema','schema','project_id','project_revision','revision','generated_at','resolver_version','lock_fingerprint','default_activation','activation_rule','selected_features','denied_features','features','effect_union')
+    $axes=@('permissions','services','activities','queries','tools','assets','shaders','native_libraries','commands','routes','streams','inputs','scenes','markers')
+    if(((@($source.PSObject.Properties.Name|Sort-Object -CaseSensitive))-join ',')-cne((@($fields|Sort-Object -CaseSensitive))-join ',')-or
+       $null-eq$source.effect_union-or
+       ((@($source.effect_union.PSObject.Properties.Name|Sort-Object -CaseSensitive))-join ',')-cne((@($axes|Sort-Object -CaseSensitive))-join ',')){return $false}
+    if([string]$source.'$schema'-cnotmatch'^https://raw\.githubusercontent\.com/MesmerPrism/rusty-morphospace-work-environment/(?:[0-9a-f]{40}|v[0-9]+\.[0-9]+\.[0-9]+|main)/schemas/feature-lock-v2\.schema\.json$'){return $false}
+    if($source.project_id-isnot[string]-or[string]$source.project_id-cnotmatch'^[a-z0-9][a-z0-9-]{1,127}$'){return $false}
+    $effects=[ordered]@{};foreach($axis in $axes){$effects[$axis]=@()}
+    $initial=[pscustomobject][ordered]@{
+        '$schema'=$source.'$schema';schema='rusty.morphospace.workflow.feature_lock.v2'
+        project_id=$source.project_id;project_revision=1;revision=1
+        generated_at='1970-01-01T00:00:00Z';resolver_version='rusty-morphospace-feature-resolver/2'
+        lock_fingerprint=('0'*64);default_activation='disabled';activation_rule='selected-lock-and-runtime-input'
+        selected_features=@();denied_features=@();features=@();effect_union=[pscustomobject]$effects
+    }
+    $source.lock_fingerprint='0'*64
+    if((Get-MorphospaceCanonicalJsonSha256 $initial)-cne(Get-MorphospaceCanonicalJsonSha256 $source)){return $false}
+    $producer=$initial|ConvertTo-Json -Depth 48|ConvertFrom-Json
+    $producerBytes=[Text.UTF8Encoding]::new($false).GetBytes(($producer|ConvertTo-Json -Depth 48 -Compress))
+    return [string]$Lock.lock_fingerprint -ceq (Get-MorphospaceSha256Bytes $producerBytes)
 }
 
 function Skip-MorphospaceJsonWhitespace {
@@ -222,6 +248,157 @@ function ConvertFrom-MorphospaceProtocolJsonBytes {
     } catch {
         throw "Invalid JSON in $Context`: $($_.Exception.Message)"
     }
+}
+
+# Discovery validates the complete captured document without allocating a
+# PowerShell object graph for unrelated receipts. Matching and unusual field
+# shapes still use the original DTO reader and PowerShell caller semantics.
+if (-not ('MorphospaceProtocolJsonDiscriminatorV1' -as [type])) {
+    Microsoft.PowerShell.Utility\Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
+public sealed class MorphospaceProtocolJsonDiscriminatorV1 {
+    public bool SchemaIsString;
+    public bool UnitIdIsString;
+    public string Schema;
+    public string UnitId;
+    public static MorphospaceProtocolJsonDiscriminatorV1 Inspect(byte[] bytes) {
+        if(bytes.Length>16777216) throw new FormatException("Protocol JSON exceeds the 16 MiB safety bound.");
+        if(bytes.Length>=3 && bytes[0]==239 && bytes[1]==187 && bytes[2]==191) throw new FormatException("UTF-8 BOM is not allowed in protocol JSON.");
+        foreach(byte b in bytes) if(b==0) throw new FormatException("NUL bytes are not allowed in protocol JSON.");
+        return new Parser(new UTF8Encoding(false,true).GetString(bytes)).Read();
+    }
+    private sealed class Parser {
+        private readonly string text;
+        private int index;
+        private readonly MorphospaceProtocolJsonDiscriminatorV1 result=new MorphospaceProtocolJsonDiscriminatorV1();
+        internal Parser(string value) { text=value; }
+        private static bool White(char c) { return c==' ' || c=='\t' || c=='\r' || c=='\n'; }
+        private static bool Field(string key,string expected) {
+            if(key.Length!=expected.Length) return false;
+            for(int i=0;i<key.Length;i++) {
+                char c=key[i]; if(c>127) return false;
+                if(c>='A' && c<='Z') c=(char)(c+32);
+                if(c!=expected[i]) return false;
+            }
+            return true;
+        }
+        private void Space() { while(index<text.Length && White(text[index])) index++; }
+        private void Require(bool condition) { if(!condition) throw new FormatException("Invalid strict protocol JSON."); }
+        internal MorphospaceProtocolJsonDiscriminatorV1 Read() {
+            Space(); Require(index<text.Length && text[index]=='{');
+            Value(0,true); Space(); Require(index==text.Length); return result;
+        }
+        private string Value(int depth,bool root=false) {
+            Require(depth<=64); Space(); Require(index<text.Length);
+            char c=text[index];
+            if(c=='"') return String();
+            if(c=='{') {
+                index++; Space();
+                var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if(index<text.Length && text[index]=='}') { index++; return null; }
+                while(true) {
+                    string key=String(); Require(seen.Add(key)); Space();
+                    Require(index<text.Length && text[index++]==':'); Space();
+                    bool isString=index<text.Length && text[index]=='"';
+                    string value=Value(depth+1);
+                    // Non-ASCII member names use the original PowerShell lookup.
+                    if(root && Field(key,"schema")) { result.SchemaIsString=isString; result.Schema=value; }
+                    if(root && Field(key,"unit_id")) { result.UnitIdIsString=isString; result.UnitId=value; }
+                    Space(); Require(index<text.Length); char delimiter=text[index++];
+                    if(delimiter=='}') return null;
+                    Require(delimiter==','); Space(); Require(index<text.Length && text[index]!='}');
+                }
+            }
+            if(c=='[') {
+                index++; Space();
+                if(index<text.Length && text[index]==']') { index++; return null; }
+                while(true) {
+                    Value(depth+1); Space(); Require(index<text.Length); char delimiter=text[index++];
+                    if(delimiter==']') return null;
+                    Require(delimiter==','); Space(); Require(index<text.Length && text[index]!=']');
+                }
+            }
+            foreach(string literal in new[]{"true","false","null"}) {
+                if(index+literal.Length<=text.Length && System.String.CompareOrdinal(text,index,literal,0,literal.Length)==0) { index+=literal.Length; return null; }
+            }
+            int start=index;
+            if(c=='-') { index++; Require(index<text.Length); }
+            Require(text[index]>='0' && text[index]<='9');
+            if(text[index]=='0') index++;
+            else while(index<text.Length && text[index]>='0' && text[index]<='9') index++;
+            Require(index==text.Length || White(text[index]) || text[index]==',' || text[index]==']' || text[index]=='}');
+            long number;
+            Require(Int64.TryParse(text.Substring(start,index-start),NumberStyles.AllowLeadingSign,CultureInfo.InvariantCulture,out number));
+            return null;
+        }
+        private int Hex() {
+            Require(index+4<=text.Length); int value=0;
+            for(int i=0;i<4;i++) {
+                char c=text[index++]; int digit=c>='0' && c<='9'?c-'0':c>='a' && c<='f'?c-'a'+10:c>='A' && c<='F'?c-'A'+10:-1;
+                Require(digit>=0); value=(value<<4)|digit;
+            }
+            return value;
+        }
+        private string String() {
+            Require(index<text.Length && text[index++]=='"'); var builder=new StringBuilder();
+            while(index<text.Length) {
+                char c=text[index++]; if(c=='"') return builder.ToString(); Require(c>=32);
+                if(c!='\\') builder.Append(c);
+                else {
+                    Require(index<text.Length);
+                    // The original PowerShell escape switch is case-insensitive.
+                    switch(Char.ToLowerInvariant(text[index++])) {
+                        case '"': builder.Append('"'); break;
+                        case '\\': builder.Append('\\'); break;
+                        case '/': builder.Append('/'); break;
+                        case 'b': builder.Append('\b'); break;
+                        case 'f': builder.Append('\f'); break;
+                        case 'n': builder.Append('\n'); break;
+                        case 'r': builder.Append('\r'); break;
+                        case 't': builder.Append('\t'); break;
+                        case 'u':
+                            int code=Hex();
+                            if(code>=0xD800 && code<=0xDBFF) {
+                                Require(index+6<=text.Length && text[index]=='\\' && text[index+1]=='u'); index+=2;
+                                int low=Hex(); Require(low>=0xDC00 && low<=0xDFFF); builder.Append((char)code); builder.Append((char)low);
+                            } else { Require(code<0xDC00 || code>0xDFFF); builder.Append((char)code); }
+                            break;
+                        default: throw new FormatException("Invalid strict protocol JSON escape.");
+                    }
+                }
+                Require(builder.Length<=1048576);
+            }
+            throw new FormatException("Unterminated strict protocol JSON string.");
+        }
+    }
+}
+'@
+}
+
+function Read-MorphospaceProtocolJsonMatchingDiscriminator {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Schema,
+        [Parameter(Mandatory = $true)][string]$UnitId
+    )
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    if (-not [System.IO.File]::Exists($fullPath)) { throw "Required JSON file is missing: $Path" }
+    $bytes = [System.IO.File]::ReadAllBytes($fullPath)
+    $scan = $null
+    try { $scan = [MorphospaceProtocolJsonDiscriminatorV1]::Inspect($bytes) }
+    catch {
+        # The original reader owns failure details and any uncommon supported
+        # grammar. Never turn a scanner refusal into an unrelated-file skip.
+    }
+    if ($null -ne $scan -and $scan.SchemaIsString) {
+        if ([string]$scan.Schema -cne $Schema) { return }
+        if ($scan.UnitIdIsString -and [string]$scan.UnitId -cne $UnitId) { return }
+    }
+    $document = ConvertFrom-MorphospaceProtocolJsonBytes -Bytes $bytes -Context "'$Path'"
+    if ([string]$document.schema -ceq $Schema -and [string]$document.unit_id -ceq $UnitId) { return $document }
 }
 
 function Read-MorphospaceProtocolJson {
@@ -910,7 +1087,7 @@ Microsoft.PowerShell.Core\Export-ModuleMember -Function `
     Get-MorphospaceSha256Bytes, Get-MorphospaceFileSha256, Get-MorphospaceStreamSha256, `
     ConvertTo-MorphospaceCanonicalJson, ConvertTo-MorphospaceProtocolJsonBytes, Get-MorphospaceCanonicalJsonSha256, `
     Get-MorphospaceFeatureLockFingerprint, Test-MorphospaceFeatureLockFingerprint, `
-        Read-MorphospaceProtocolJson, ConvertFrom-MorphospaceProtocolJsonBytes, Write-MorphospaceManagedProtocolJsonAtomic, `
+        Read-MorphospaceProtocolJson, Read-MorphospaceProtocolJsonMatchingDiscriminator, ConvertFrom-MorphospaceProtocolJsonBytes, Write-MorphospaceManagedProtocolJsonAtomic, `
     ConvertTo-MorphospaceProtocolRelativePath, Resolve-MorphospaceWorkspacePath, `
     Get-MorphospaceManagedControlPath, ConvertTo-MorphospaceUtcTimestamp, `
     ConvertFrom-MorphospaceInvariantTimestamp, Test-MorphospaceStrictUtcTimestamp, `

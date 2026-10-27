@@ -1,24 +1,24 @@
 # Rusty Morphospace Project Workflow
 
-Use this reference for composition, activation, source work, lifecycle,
-validation and instruction impact. Recovery and audit remain in owner runbooks.
-Here, `<work-environment>` is the locator's `work_environment_root`; read its
-named runbooks under `<work-environment>/docs/`.
+`<work-environment>` is the installed locator's `work_environment_root`.
 
 ## Resume and scope
 
-Use `docs/DIRECT_WORK_PACKAGES.md#agent-and-framework-adaptation` for framework practices.
+See `docs/DIRECT_WORK_PACKAGES.md#agent-and-framework-adaptation`.
+Queue: `<work-environment>/docs/DIRECT_WORK_PACKAGES.md#central-issue-queue`; optional ignored
+`<work-environment>/local/local.paths.json` `repos.planning_authority` locates authority AGENTS/README.
+Reload questions: `$meta-quest-workflow` feedback guide first, then app ABI/lifetime.
 
-Read the nearest project instructions, then its `morphospace/project.spec.json`,
-`feature.lock.json`, `workspace.state.json`, current unit when present, and only
-the compact-state-named event tail and receipts. Check Git status for every
-repository in scope.
+Read nearest project instructions, `morphospace/project.spec.json`,
+`feature.lock.json`, `workspace.state.json`, the current unit when present and
+only the compact-state-named tail/receipts. Check Git status for in-scope repos.
 
-The project spec owns composition. The feature lock owns the permitted
-feature/effect closure. Workspace state is a resume projection; it does not
-replace immutable unit, event, or receipt evidence. Work only inside the
-intersection of project and current-unit repositories and paths. Preserve
-dirty, detached, divergent, blocked, interrupted, and historical state.
+Project spec and feature lock own composition and feature/effect closure.
+Workspace state resumes work; immutable unit/event/receipt evidence is authoritative.
+Write only within both project and current-unit scopes. Preserve dirty, detached,
+divergent, blocked, interrupted and historical state.
+
+New contexts before seal: `<work-environment>/docs/TOOLING_CONTEXT.md`.
 
 For ordinary continuation, use
 `<work-environment>/docs/CURRENT_WORK_VALIDATION.md`: preserve

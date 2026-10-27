@@ -52,114 +52,102 @@ Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceHistoricalValidationD
 # Keep one stable shared-predicate module instance through nested owner tests.
 # A force reload can remove this script's exported command binding mid-run.
 Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceActiveUnitContractReviewCompatibility.psm1')
+Import-Module (Join-Path $RepoRoot 'scripts\lib\MorphospaceUnitDeclaration.psm1')
 
-function New-IsolatedWorkflowSelfTestStartInfo {
-    param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [string[]]$Arguments = @()
-    )
-    $hostPath = [Environment]::ProcessPath
-    if ([string]::IsNullOrWhiteSpace($hostPath) -or -not [IO.File]::Exists($hostPath)) {
-        $hostPath = (Get-Command pwsh -ErrorAction Stop).Source
-    }
-    $start=[Diagnostics.ProcessStartInfo]::new()
-    $start.FileName=$hostPath;$start.WorkingDirectory=$RepoRoot;$start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
-    foreach($argument in @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$Path)+@($Arguments)){[void]$start.ArgumentList.Add([string]$argument)}
-    $start.Environment.Clear()
-    $runtimeNames=@('COMSPEC','HOME','PATH','PATHEXT','SYSTEMROOT','TEMP','TMP','TMPDIR','WINDIR')
-    foreach($name in $runtimeNames){$value=[Environment]::GetEnvironmentVariable($name,'Process');if($null-ne$value){$start.Environment[$name]=[string]$value}}
-    if(@($start.Environment.Keys|Where-Object{[string]$_-like'GIT_*'-or$runtimeNames-cnotcontains[string]$_}).Count-ne0){throw 'Isolated workflow self-test environment projection is not closed.'}
-    return $start
-}
-
-function Invoke-IsolatedWorkflowSelfTest {
-    param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [string[]]$Arguments = @(),
-        [ValidateRange(1,900)][int]$TimeoutSeconds = 240
-    )
-
-    $parentEnvironmentBefore = Get-WorkflowProcessEnvironmentDigest
-    $start=New-IsolatedWorkflowSelfTestStartInfo -Path $Path -Arguments $Arguments
-    $process=[Diagnostics.Process]::new();$process.StartInfo=$start
-    $stdout=[IO.MemoryStream]::new();$stderr=[IO.MemoryStream]::new();$stdoutBuffer=[byte[]]::new(8192);$stderrBuffer=[byte[]]::new(8192);$stdoutTask=$null;$stderrTask=$null;$deadline=[DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds);$started=$false;$runFailure=$null;$cleanupFailure=$null;$exitCode=$null
-    try {
-        if(-not$process.Start()){throw "Isolated workflow self-test '$([IO.Path]::GetFileName($Path))' did not start."};$started=$true
-        $stdoutTask=$process.StandardOutput.BaseStream.ReadAsync($stdoutBuffer,0,$stdoutBuffer.Length)
-        $stderrTask=$process.StandardError.BaseStream.ReadAsync($stderrBuffer,0,$stderrBuffer.Length)
-        while($null-ne$stdoutTask-or$null-ne$stderrTask){
-            if([DateTimeOffset]::UtcNow-ge$deadline){throw "Isolated workflow self-test '$([IO.Path]::GetFileName($Path))' exceeded its $TimeoutSeconds second bound."}
-            $pending=[Collections.Generic.List[Threading.Tasks.Task]]::new();$labels=[Collections.Generic.List[string]]::new()
-            if($null-ne$stdoutTask){$pending.Add($stdoutTask);$labels.Add('stdout')};if($null-ne$stderrTask){$pending.Add($stderrTask);$labels.Add('stderr')}
-            $completed=[Threading.Tasks.Task]::WaitAny([Threading.Tasks.Task[]]$pending.ToArray(),100)
-            if($completed-lt0){continue};$label=$labels[$completed]
-            if($label-ceq'stdout'){$read=$stdoutTask.GetAwaiter().GetResult();if($read-eq0){$stdoutTask=$null}else{$stdout.Write($stdoutBuffer,0,$read);$stdoutTask=$process.StandardOutput.BaseStream.ReadAsync($stdoutBuffer,0,$stdoutBuffer.Length)}}else{$read=$stderrTask.GetAwaiter().GetResult();if($read-eq0){$stderrTask=$null}else{$stderr.Write($stderrBuffer,0,$read);$stderrTask=$process.StandardError.BaseStream.ReadAsync($stderrBuffer,0,$stderrBuffer.Length)}}
-            if($stdout.Length+$stderr.Length-gt10485760){throw "Isolated workflow self-test '$([IO.Path]::GetFileName($Path))' exceeded its combined 10 MiB output bound."}
-        }
-        if(-not$process.HasExited){$remaining=[Math]::Max(1,[int]($deadline-[DateTimeOffset]::UtcNow).TotalMilliseconds);if(-not$process.WaitForExit($remaining)){throw "Isolated workflow self-test '$([IO.Path]::GetFileName($Path))' exceeded its $TimeoutSeconds second bound."}}
-        $exitCode=$process.ExitCode
-    } catch {
-        $runFailure=$_.Exception
-    } finally {
-        if($started-and-not$process.HasExited){try{$process.Kill($true)}catch{$cleanupFailure=$_.Exception};if(-not$process.WaitForExit(5000)-and$null-eq$cleanupFailure){$cleanupFailure=[TimeoutException]::new('Isolated workflow self-test killed child did not exit within 5 seconds.')}}
-        $drains=[Collections.Generic.List[Threading.Tasks.Task]]::new();if($null-ne$stdoutTask){$drains.Add($stdoutTask)};if($null-ne$stderrTask){$drains.Add($stderrTask)}
-        if($drains.Count-gt0){try{if(-not[Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]$drains.ToArray(),5000)-and$null-eq$cleanupFailure){$cleanupFailure=[TimeoutException]::new('Isolated workflow self-test streams did not drain within 5 seconds after child termination.')}}catch{if($null-eq$cleanupFailure){$cleanupFailure=$_.Exception}}}
-        $stdoutBytes=$stdout.ToArray();$stderrBytes=$stderr.ToArray();$stdout.Dispose();$stderr.Dispose();$process.Dispose()
-    }
-    if((Get-WorkflowProcessEnvironmentDigest)-cne$parentEnvironmentBefore){throw 'Isolated workflow self-test changed parent environment bytes.'}
-    if($null-ne$cleanupFailure){throw $cleanupFailure};if($null-ne$runFailure){throw $runFailure}
-    if ($exitCode -ne 0) {
-        $detail = ([Text.UTF8Encoding]::new($false).GetString($stdoutBytes)+[Environment]::NewLine+[Text.UTF8Encoding]::new($false).GetString($stderrBytes)).Trim()
-        throw "Isolated workflow self-test '$([IO.Path]::GetFileName($Path))' failed with exit $exitCode.$([Environment]::NewLine)$detail"
-    }
-    return [pscustomobject][ordered]@{exit_code=$exitCode;stdout=$stdoutBytes;stderr=$stderrBytes}
-}
-
-function Get-WorkflowProcessEnvironmentDigest {
-    [string[]]$names=@([Environment]::GetEnvironmentVariables('Process').Keys|ForEach-Object{[string]$_});if($names.Count-gt1){[Array]::Sort($names,[StringComparer]::Ordinal)}
-    $text=[Text.StringBuilder]::new();foreach($name in $names){[void]$text.Append($name);[void]$text.Append("`0");[void]$text.Append([string][Environment]::GetEnvironmentVariable($name,'Process'));[void]$text.Append("`0")}
-    return ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.UTF8Encoding]::new($false).GetBytes($text.ToString())))).ToLowerInvariant()
-}
+Import-Module (Join-Path $PSScriptRoot 'test-support/IsolatedWorkflowSelfTest.psm1')
 
 function Assert-IsolatedWorkflowSelfTestProjection {
     $probe=Join-Path ([IO.Path]::GetTempPath()) ('.wef002-workflow-environment-'+[Guid]::NewGuid().ToString('N')+'.ps1')
     $harness=Join-Path ([IO.Path]::GetTempPath()) ('.wef002-workflow-environment-harness-'+[Guid]::NewGuid().ToString('N')+'.ps1')
+    $moduleFixture=Join-Path ([IO.Path]::GetTempPath()) ('.wef002-workflow-modules-'+[Guid]::NewGuid().ToString('N'))
+    $parentModule=Join-Path $moduleFixture 'parent/WorkflowSelfTestFixture.psm1'
+    $childModule=Join-Path $moduleFixture 'child/WorkflowSelfTestFixture.psm1'
     $process=$null
     try{
-        [IO.File]::WriteAllText($probe,"foreach(`$name in @('GIT_PAGER','WEF002_UNOWNED_MARKER')){if(`$null-ne[Environment]::GetEnvironmentVariable(`$name,'Process')){[Console]::Error.Write(`$name);exit 91}};[Console]::Out.Write('closed')`n",[Text.UTF8Encoding]::new($false))
-        [IO.File]::WriteAllText($harness,@'
-param([string]$ContractPath,[string]$RepositoryRoot,[string]$ProbePath)
+        foreach($path in @($parentModule,$childModule)){[void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path))}
+        [IO.File]::WriteAllText($parentModule,"function Get-WorkflowSelfTestFixtureIdentity { 'parent' }; Export-ModuleMember -Function Get-WorkflowSelfTestFixtureIdentity`n",[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($childModule,"function Get-WorkflowSelfTestFixtureIdentity { 'child' }; Export-ModuleMember -Function Get-WorkflowSelfTestFixtureIdentity`n",[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($probe,@'
+param([string]$Mode='closed',[string]$ParentModulePath,[string]$ChildModulePath)
 $ErrorActionPreference='Stop'
-$RepoRoot=$RepositoryRoot
+foreach($name in @('GIT_PAGER','WEF002_UNOWNED_MARKER')){if($null-ne[Environment]::GetEnvironmentVariable($name,'Process')){[Console]::Error.Write($name);exit 91}}
+switch($Mode){
+    'completion' {Start-Sleep -Milliseconds 1600;[Console]::Out.Write('completed');break}
+    'failure' {[Console]::Out.Write('failed-out');[Console]::Error.Write('failed-err');exit 23}
+    'streams' {[Console]::Out.Write('o'*262144);[Console]::Error.Write('e'*262144);break}
+    'module-shared' {
+        Import-Module $ParentModulePath;Import-Module $ChildModulePath
+        $module=Get-Module WorkflowSelfTestFixture
+        if(@($module).Count-ne2){throw 'Same-host fixture did not load both real same-name module instances.'}
+        $refused=$false;try{& $module {Get-WorkflowSelfTestFixtureIdentity}}catch{$refused=$_.Exception.Message-like'*WorkflowSelfTestFixture WorkflowSelfTestFixture*'}
+        if(-not$refused){throw 'Same-host fixture did not demonstrate ambiguous module dispatch.'}
+        [Console]::Out.Write('shared-refused');break
+    }
+    'module-child' {
+        Import-Module $ChildModulePath
+        $module=Get-Module WorkflowSelfTestFixture
+        if(@($module).Count-ne1){throw 'Fresh child fixture did not select exactly one module.'}
+        [Console]::Out.Write((& $module {Get-WorkflowSelfTestFixtureIdentity}));break
+    }
+    default {[Console]::Out.Write('closed')}
+}
+'@,[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($harness,@'
+param([string]$LauncherPath,[string]$RepositoryRoot,[string]$ProbePath,[string]$ParentModulePath,[string]$ChildModulePath)
+$ErrorActionPreference='Stop'
 foreach($entry in ([ordered]@{GIT_PAGER='hostile-pager';WEF002_UNOWNED_MARKER='hostile-unowned'}).GetEnumerator()){if([Environment]::GetEnvironmentVariable([string]$entry.Key,'Process')-cne[string]$entry.Value){throw "Hostile harness control '$($entry.Key)' was not present by value."}}
-$tokens=$null;$parseErrors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($ContractPath,[ref]$tokens,[ref]$parseErrors);if($parseErrors.Count-ne0){throw 'Could not parse workflow-contract launcher functions in hostile harness.'}
-foreach($functionName in @('Get-WorkflowProcessEnvironmentDigest','New-IsolatedWorkflowSelfTestStartInfo','Invoke-IsolatedWorkflowSelfTest')){$definition=@($ast.FindAll({param($node)$node-is[Management.Automation.Language.FunctionDefinitionAst]-and$node.Name-ceq$functionName},$true));if($definition.Count-ne1){throw "Expected one '$functionName' launcher function."};Invoke-Expression $definition[0].Extent.Text}
+Import-Module $LauncherPath
 $before=Get-WorkflowProcessEnvironmentDigest
-$start=New-IsolatedWorkflowSelfTestStartInfo -Path $ProbePath
+$start=New-IsolatedWorkflowSelfTestStartInfo -RepositoryRoot $RepositoryRoot -Path $ProbePath
 foreach($name in @('GIT_PAGER','WEF002_UNOWNED_MARKER','PSExecutionPolicyPreference','PSModulePath')){if($start.Environment.ContainsKey($name)){throw "Projected start environment retained forbidden control '$name'."}}
-$result=Invoke-IsolatedWorkflowSelfTest -Path $ProbePath
+$result=Invoke-IsolatedWorkflowSelfTest -RepositoryRoot $RepositoryRoot -Path $ProbePath
 if((Get-WorkflowProcessEnvironmentDigest)-cne$before){throw 'Closed launcher changed hostile harness parent environment bytes.'}
 if([Text.UTF8Encoding]::new($false).GetString([byte[]]$result.stdout)-cne'closed'){throw 'Closed launcher probe did not return its exact marker.'}
+$completion=Invoke-IsolatedWorkflowSelfTest -RepositoryRoot $RepositoryRoot -Path $ProbePath -Arguments @('-Mode','completion') -CompletionPreserving -TimeoutSeconds 1
+if($completion.exit_code-ne0-or[Text.UTF8Encoding]::new($false).GetString([byte[]]$completion.stdout)-cne'completed'){throw 'Completion-preserving launcher did not retain actual completion beyond the supplied timed-mode bound.'}
+$timedRefused=$false;try{Invoke-IsolatedWorkflowSelfTest -RepositoryRoot $RepositoryRoot -Path $ProbePath -Arguments @('-Mode','completion') -TimeoutSeconds 1|Out-Null}catch{$timedRefused=$_.Exception.Message-like'*exceeded its 1 second bound*'}
+if(-not$timedRefused){throw 'Timed launcher did not retain its explicit deadline.'}
+$failed=$false;try{Invoke-IsolatedWorkflowSelfTest -RepositoryRoot $RepositoryRoot -Path $ProbePath -Arguments @('-Mode','failure') -CompletionPreserving|Out-Null}catch{$failed=$_.Exception.Message-like'*exit 23*failed-out*failed-err*'}
+if(-not$failed){throw 'Launcher did not propagate actual child failure and its two streams.'}
+$streams=Invoke-IsolatedWorkflowSelfTest -RepositoryRoot $RepositoryRoot -Path $ProbePath -Arguments @('-Mode','streams')
+if($streams.exit_code-ne0-or[Text.UTF8Encoding]::new($false).GetString([byte[]]$streams.stdout)-cne('o'*262144)-or[Text.UTF8Encoding]::new($false).GetString([byte[]]$streams.stderr)-cne('e'*262144)){throw 'Launcher did not observe actual exit and complete concurrent stdout/stderr bytes.'}
+# This fixture covers same-name process composition, not native recovery authority.
+$shared=Invoke-IsolatedWorkflowSelfTest -RepositoryRoot $RepositoryRoot -Path $ProbePath -Arguments @('-Mode','module-shared','-ParentModulePath',$ParentModulePath,'-ChildModulePath',$ChildModulePath) -CompletionPreserving
+if([Text.UTF8Encoding]::new($false).GetString([byte[]]$shared.stdout)-cne'shared-refused'){throw 'Same-host composition control did not refuse ambiguous module dispatch.'}
+Import-Module $ParentModulePath
+$parentModule=Get-Module WorkflowSelfTestFixture
+if(@($parentModule).Count-ne1-or(& $parentModule {Get-WorkflowSelfTestFixtureIdentity})-cne'parent'){throw 'Parent fixture did not select its original module identity.'}
+$isolated=Invoke-IsolatedWorkflowSelfTest -RepositoryRoot $RepositoryRoot -Path $ProbePath -Arguments @('-Mode','module-child','-ChildModulePath',$ChildModulePath) -CompletionPreserving
+$parentAfter=Get-Module WorkflowSelfTestFixture
+if([Text.UTF8Encoding]::new($false).GetString([byte[]]$isolated.stdout)-cne'child'-or@($parentAfter).Count-ne1-or-not[object]::ReferenceEquals($parentModule,$parentAfter)-or(& $parentAfter {Get-WorkflowSelfTestFixtureIdentity})-cne'parent'){throw 'Child module loading changed the parent module object or legacy dispatch result.'}
+if((Get-WorkflowProcessEnvironmentDigest)-cne$before){throw 'Launcher modes changed hostile harness parent environment bytes.'}
 [Console]::Out.Write('harness-closed')
 '@,[Text.UTF8Encoding]::new($false))
         $before=Get-WorkflowProcessEnvironmentDigest
         $hostPath=[Environment]::ProcessPath;if([string]::IsNullOrWhiteSpace($hostPath)-or-not[IO.File]::Exists($hostPath)){$hostPath=(Get-Command pwsh -ErrorAction Stop).Source}
         $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName=$hostPath;$start.WorkingDirectory=$RepoRoot;$start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
-        foreach($argument in @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$harness,'-ContractPath',$PSCommandPath,'-RepositoryRoot',$RepoRoot,'-ProbePath',$probe)){[void]$start.ArgumentList.Add([string]$argument)}
+        foreach($argument in @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$harness,'-LauncherPath',(Join-Path $PSScriptRoot 'test-support/IsolatedWorkflowSelfTest.psm1'),'-RepositoryRoot',$RepoRoot,'-ProbePath',$probe,'-ParentModulePath',$parentModule,'-ChildModulePath',$childModule)){[void]$start.ArgumentList.Add([string]$argument)}
         $start.Environment.Clear();foreach($name in @('COMSPEC','HOME','PATH','PATHEXT','SYSTEMROOT','TEMP','TMP','TMPDIR','WINDIR')){$value=[Environment]::GetEnvironmentVariable($name,'Process');if($null-ne$value){$start.Environment[$name]=[string]$value}}
         foreach($entry in ([ordered]@{GIT_PAGER='hostile-pager';WEF002_UNOWNED_MARKER='hostile-unowned';PSExecutionPolicyPreference='hostile-policy';PSModulePath='hostile-module-path'}).GetEnumerator()){$start.Environment[[string]$entry.Key]=[string]$entry.Value}
         foreach($entry in ([ordered]@{GIT_PAGER='hostile-pager';WEF002_UNOWNED_MARKER='hostile-unowned';PSExecutionPolicyPreference='hostile-policy';PSModulePath='hostile-module-path'}).GetEnumerator()){if($start.Environment[[string]$entry.Key]-cne[string]$entry.Value){throw "Hostile workflow projection harness start environment omitted '$($entry.Key)'."}}
         $process=[Diagnostics.Process]::new();$process.StartInfo=$start;if(-not$process.Start()){throw 'Hostile workflow projection harness did not start.'};$stdoutTask=$process.StandardOutput.ReadToEndAsync();$stderrTask=$process.StandardError.ReadToEndAsync()
-        if(-not$process.WaitForExit(30000)){try{$process.Kill($true)}finally{[void]$process.WaitForExit(5000)};throw 'Hostile workflow projection harness exceeded 30 seconds.'}
+        # The fixed harness includes completion-preserving child controls. Its
+        # explicit timed-mode leaf keeps its deadline; the enclosing finite
+        # harness is observed through its actual exit, including on slow hosts.
+        $process.WaitForExit()
         if(-not[Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($stdoutTask,$stderrTask),5000)){throw 'Hostile workflow projection harness streams did not drain within 5 seconds.'}
         $stdout=$stdoutTask.GetAwaiter().GetResult();$stderr=$stderrTask.GetAwaiter().GetResult();if($stdout.Length+$stderr.Length-gt65536){throw 'Hostile workflow projection harness exceeded its 64 KiB output bound.'}
         if($process.ExitCode-ne0-or$stdout-cne'harness-closed'){throw "Hostile workflow projection harness failed with exit $($process.ExitCode): $stderr"}
         if((Get-WorkflowProcessEnvironmentDigest)-cne$before){throw 'Hostile workflow projection harness changed caller environment bytes.'}
-    }finally{if($null-ne$process){$process.Dispose()};if([IO.File]::Exists($probe)){Remove-Item -LiteralPath $probe -Force};if([IO.File]::Exists($harness)){Remove-Item -LiteralPath $harness -Force}}
+    }finally{
+        if($null-ne$process){$process.Dispose()};if([IO.File]::Exists($probe)){Remove-Item -LiteralPath $probe -Force};if([IO.File]::Exists($harness)){Remove-Item -LiteralPath $harness -Force}
+        foreach($path in @($parentModule,$childModule)){if([IO.File]::Exists($path)){[IO.File]::Delete($path)};if([IO.Directory]::Exists([IO.Path]::GetDirectoryName($path))){[IO.Directory]::Delete([IO.Path]::GetDirectoryName($path))}}
+        if([IO.Directory]::Exists($moduleFixture)){[IO.Directory]::Delete($moduleFixture)}
+    }
 }
 
 Assert-IsolatedWorkflowSelfTestProjection
-if($StandardDeltaOnly){[void](Invoke-IsolatedWorkflowSelfTest -Path (Join-Path $RepoRoot 'scripts\Test-WorkUnitAutomation.ps1') -TimeoutSeconds 900);Write-Host 'Work Unit Automation Standard delta passed through the closed workflow-contract launcher.';return}
+if($StandardDeltaOnly){[void](Invoke-IsolatedWorkflowSelfTest -RepositoryRoot $RepoRoot -Path (Join-Path $RepoRoot 'scripts\Test-WorkUnitAutomation.ps1') -TimeoutSeconds 900);Write-Host 'Work Unit Automation Standard delta passed through the closed workflow-contract launcher.';return}
 
 function Test-HistoricalDebtCaptureUnsafeAttribution {
     param([AllowNull()][object]$Attribution)
@@ -731,7 +719,7 @@ function Test-CurrentUnitInstructionWorkspace {
         else { $_ }
     })
     foreach ($category in $changeCategories) {
-        Assert-Contract (($script:ChangeCategories -ccontains $category) -or $script:ChangeCategoryAliases.ContainsKey($category)) "$Context current unit has unknown change category '$category'."
+        Assert-Contract (Test-MorphospaceDeclaredChangeCategory -Category $category -Lifecycle $script:WorkflowLifecycle) "$Context current unit has unknown change category '$category'."
     }
 
     $instructionImpact = [string]$unit.instruction_impact
@@ -1642,7 +1630,7 @@ function Test-ProjectBundle {
             Test-ExactLegacyMappings -UnknownValues $unknownCategories -Mappings @($adoption.normalization.change_categories) -CurrentValues $script:ChangeCategories -Context "$Context historical unit '$unitId' change-category"
         } else {
             foreach ($category in $changeCategories) {
-                Assert-Contract (($script:ChangeCategories -contains $category) -or $script:ChangeCategoryAliases.ContainsKey($category)) "$Context unit '$unitId' has unknown change category '$category'."
+                Assert-Contract (Test-MorphospaceDeclaredChangeCategory -Category $category -Lifecycle $script:WorkflowLifecycle) "$Context unit '$unitId' has unknown change category '$category'."
             }
         }
 
@@ -2059,14 +2047,13 @@ function Test-ProjectBundle {
         Assert-Contract (@($effectiveAllowedRepositories).Count -gt 0) "$Context unit '$($unit.unit_id)' needs allowed repositories."
         $writeRepositoryIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         $allowedRepositoryIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $declarationWorkMode = if (($unit.PSObject.Properties.Name -contains 'work_mode') -and [string]$unit.work_mode -ceq 'validation-only' -and $effectiveWorkMode -ceq 'validation-only') { 'validation-only' } else { 'feature' }
+        foreach ($writeId in @(Get-MorphospaceWritableRepositoryIds -AllowedRepositories @($effectiveAllowedRepositories) -WorkMode $declarationWorkMode)) {
+            [void]$writeRepositoryIds.Add($writeId)
+        }
         foreach ($allowedRepo in @($effectiveAllowedRepositories)) {
             $repoId = [string]$allowedRepo.repo_id
             Assert-Contract ($allowedRepositoryIds.Add($repoId)) "$Context unit '$($unit.unit_id)' repeats writable repository '$repoId'."
-            # An explicit validation-only empty row declares membership, not write authority.
-            # Keep ordinary modes and every nonempty path scope disjoint from dependencies.
-            if (-not (($unit.PSObject.Properties.Name -contains 'work_mode') -and [string]$unit.work_mode -ceq 'validation-only' -and $effectiveWorkMode -ceq 'validation-only' -and $null -ne $allowedRepo.allowed_paths -and @($allowedRepo.allowed_paths).Count -eq 0)) {
-                [void]$writeRepositoryIds.Add($repoId)
-            }
             Assert-Contract ($repositoryMap.ContainsKey($repoId)) "$Context unit '$($unit.unit_id)' references undeclared repo '$repoId'."
             if ($effectiveWorkMode -ceq 'validation-only') {
                 Assert-Contract ($null -ne $allowedRepo.allowed_paths) "$Context validation-only unit '$($unit.unit_id)' repo '$repoId' needs an allowed-path array."
@@ -3215,13 +3202,15 @@ foreach ($historyArchiveContract in $historyArchiveContracts) {
     Assert-Contract (Test-Path -LiteralPath (Join-Path $RepoRoot $historyArchiveContract) -PathType Leaf) "Required history archive contract is missing: $historyArchiveContract"
 }
 if (-not $SkipOwnerSelfTests) {
-    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1","Test-CorrectActiveReadOnlyDependencies.ps1","Test-CorrectActiveProjectRepositoryScope.ps1","Test-ActiveWriteScopeAmendment.ps1","Test-DevelopmentUnitAdmission.ps1","Test-RecoveredProposalContinuation.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-AdmissionCompletionTimestampRecovery.ps1","Test-TransitionLedger.ps1","Test-HistoryArchiveValidation.ps1")) {
+    foreach ($selfTest in @("Test-LegacyEmbeddedPushPlanCompatibility.ps1","Test-PreparedPublicationReconstruction.ps1","Test-ResolveBlocker.ps1","Test-CorrectResolvedBlockerEvidence.ps1","Test-HistoricalBlockerResolutionIntentBindingCorrection.ps1","Test-CorrectActiveReadOnlyDependencies.ps1","Test-CorrectActiveProjectRepositoryScope.ps1","Test-ActiveWriteScopeAmendment.ps1","Test-DevelopmentUnitAdmission.ps1","Test-RecoveredProposalContinuation.ps1","Test-CompletedTransitionSemanticCorrection.ps1","Test-AdmissionCompletionTimestampRecovery.ps1","Test-TransitionLedger.ps1","Test-HistoryArchiveValidation.ps1","Test-ReadyDeclarationConsistency.ps1")) {
         $selfTestArguments = @()
         if ($selfTest -ceq 'Test-AdmissionCompletionTimestampRecovery.ps1') { $selfTestArguments = @('-SelfTest') }
+        if ($selfTest -ceq 'Test-ReadyDeclarationConsistency.ps1') { $selfTestArguments = @('-SelfTest') }
         # Match the existing focused-check budget; the observed complete run takes more than 240 seconds.
         $selfTestTimeoutSeconds = 240
         if ($selfTest -ceq 'Test-DevelopmentUnitAdmission.ps1') { $selfTestTimeoutSeconds = 900 }
-        try { [void](Invoke-IsolatedWorkflowSelfTest -Path (Join-Path $RepoRoot "scripts\$selfTest") -Arguments $selfTestArguments -TimeoutSeconds $selfTestTimeoutSeconds) }
+        if ($selfTest -ceq 'Test-ReadyDeclarationConsistency.ps1') { $selfTestTimeoutSeconds = 180 }
+        try { [void](Invoke-IsolatedWorkflowSelfTest -RepositoryRoot $RepoRoot -Path (Join-Path $RepoRoot "scripts\$selfTest") -Arguments $selfTestArguments -TimeoutSeconds $selfTestTimeoutSeconds) }
         catch { Add-Failure -Message "$selfTest failed: $($_.Exception.Message)" }
     }
 }

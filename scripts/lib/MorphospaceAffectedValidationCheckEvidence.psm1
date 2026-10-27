@@ -164,16 +164,15 @@ function Get-MorphospaceAffectedCheckDependencyManifest {
     return @((Get-MorphospaceAffectedCheckDependencyClosure -Check $Check -CompiledRegistry $CompiledRegistry -Inventory $Inventory -RepositoryRoot $RepositoryRoot).manifest)
 }
 
-function Get-MorphospaceAffectedCheckDependencyClosure {
+function Merge-MorphospaceAffectedCheckDependencyClosure {
     param(
         [Parameter(Mandatory = $true)][object]$Check,
         [Parameter(Mandatory = $true)][object]$CompiledRegistry,
         [Parameter(Mandatory = $true)][object]$Inventory,
-        [Parameter(Mandatory = $true)][string]$RepositoryRoot
+        [Parameter(Mandatory = $true)][object]$Static
     )
     $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    $static = Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $RepositoryRoot -Entrypoint ([string]$Check.command_path) -Inventory $Inventory -DynamicDeclarations @($CompiledRegistry.dependency_declarations)
-    foreach ($path in @($static.paths)) { [void]$paths.Add([string]$path) }
+    foreach ($path in @($Static.paths)) { [void]$paths.Add([string]$path) }
     foreach ($entry in @($Inventory.records)) {
         if ([string]$entry.type -cne 'blob' -or @('100644','100755') -cnotcontains [string]$entry.mode) { continue }
         foreach ($pathSetId in @($Check.consume_path_sets)) {
@@ -185,8 +184,36 @@ function Get-MorphospaceAffectedCheckDependencyClosure {
     }
     return [pscustomobject][ordered]@{
         manifest=@(Get-MorphospaceAffectedCheckManifestRecords -Inventory $Inventory -Paths @($paths) -Context 'Affected check dependency')
-        resolution=$static.resolution
+        resolution=($Static.resolution|ConvertTo-Json -Depth 30 -Compress|ConvertFrom-Json -Depth 30 -DateKind String)
     }
+}
+
+function Get-MorphospaceAffectedCheckDependencyClosure {
+    param(
+        [Parameter(Mandatory = $true)][object]$Check,
+        [Parameter(Mandatory = $true)][object]$CompiledRegistry,
+        [Parameter(Mandatory = $true)][object]$Inventory,
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot
+    )
+    $static=Resolve-MorphospaceAffectedCheckDependencyClosure -RepositoryRoot $RepositoryRoot -Entrypoint ([string]$Check.command_path) -Inventory $Inventory -DynamicDeclarations @($CompiledRegistry.dependency_declarations)
+    return Merge-MorphospaceAffectedCheckDependencyClosure -Check $Check -CompiledRegistry $CompiledRegistry -Inventory $Inventory -Static $static
+}
+
+function Get-MorphospaceAffectedCheckDependencyClosures {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Checks,
+        [Parameter(Mandatory = $true)][object]$CompiledRegistry,
+        [Parameter(Mandatory = $true)][object]$Inventory,
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot
+    )
+    $static=Resolve-MorphospaceAffectedCheckDependencyClosures -RepositoryRoot $RepositoryRoot -Entrypoints @($Checks|ForEach-Object{[string]$_.command_path}) -Inventory $Inventory -DynamicDeclarations @($CompiledRegistry.dependency_declarations)
+    $result=@{}
+    foreach($check in $Checks){
+        $id=[string]$check.check_id
+        if([string]::IsNullOrWhiteSpace($id)-or$result.ContainsKey($id)){throw 'Affected dependency batch check identity is empty or repeated.'}
+        $result[$id]=Merge-MorphospaceAffectedCheckDependencyClosure -Check $check -CompiledRegistry $CompiledRegistry -Inventory $Inventory -Static $static[[string]$check.command_path]
+    }
+    return $result
 }
 
 function Get-MorphospaceAffectedCheckEvidenceDefinition {
@@ -354,7 +381,8 @@ function Assert-MorphospaceAffectedCheckPhaseArtifactSet {
         $endedAt=[DateTimeOffset]::ParseExact([string]$terminal.ended_at,'yyyy-MM-ddTHH:mm:ssZ',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AssumeUniversal)
     } catch { throw 'Affected check phase terminal chronology is invalid.' }
     $serializedElapsed=[long]($endedAt-$startedAt).TotalMilliseconds
-    if($serializedElapsed-lt 0 -or [Math]::Abs($serializedElapsed-[long]$terminal.elapsed_ms)-gt 1000 -or [long]$terminal.elapsed_ms-gt(([long]$terminal.budget_seconds*1000)+1000)){throw 'Affected check phase terminal chronology or budget is invalid.'}
+    # The producer records advisory estimates; enforced timeout remains a failed outcome.
+    if($serializedElapsed-lt 0 -or [Math]::Abs($serializedElapsed-[long]$terminal.elapsed_ms)-gt 1000){throw 'Affected check phase terminal chronology or budget is invalid.'}
     if([string]$terminal.child.stdout.path-cne$stdoutPath -or [string]$terminal.child.stderr.path-cne$stderrPath){throw 'Affected check phase terminal stream paths are invalid.'}
     $expectedPaths=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach($path in @($startPath,$stdoutPath,$stderrPath,$terminalPath)){[void]$expectedPaths.Add($path)}
@@ -919,4 +947,4 @@ function Read-MorphospaceAffectedCheckInventory {
     return [pscustomobject][ordered]@{inventory=$inventory;inventory_sha256=Get-MorphospaceAffectedCheckBytesSha256 $inventoryBytes;candidate_snapshots=@($candidateSnapshots.ToArray())}
 }
 
-Export-ModuleMember -Function Get-MorphospaceAffectedCheckBytesSha256, Get-MorphospaceAffectedCheckRunnerBinding, Get-MorphospaceAffectedCheckRunnerSourceManifest, Get-MorphospaceAffectedCheckDependencyManifest, Get-MorphospaceAffectedCheckDependencyClosure, New-MorphospaceAffectedCheckBinding, Get-MorphospaceAffectedCheckArtifactReferences, Assert-MorphospaceAffectedCheckEnvironmentEvidence, New-MorphospaceAffectedCheckSnapshot, Get-MorphospaceAffectedCheckPhaseArtifacts, Restore-MorphospaceAffectedCheckArtifacts, Test-MorphospaceAffectedCheckReceipt, Find-MorphospaceAffectedReusableCheckReceipt, Write-MorphospaceAffectedCheckReceipt, Write-MorphospaceAffectedCheckCache, Write-MorphospaceAffectedCheckInventory, Read-MorphospaceAffectedCheckInventory
+Export-ModuleMember -Function Get-MorphospaceAffectedCheckBytesSha256, Get-MorphospaceAffectedCheckRunnerBinding, Get-MorphospaceAffectedCheckRunnerSourceManifest, Get-MorphospaceAffectedCheckDependencyManifest, Get-MorphospaceAffectedCheckDependencyClosure, Get-MorphospaceAffectedCheckDependencyClosures, New-MorphospaceAffectedCheckBinding, Get-MorphospaceAffectedCheckArtifactReferences, Assert-MorphospaceAffectedCheckEnvironmentEvidence, New-MorphospaceAffectedCheckSnapshot, Get-MorphospaceAffectedCheckPhaseArtifacts, Restore-MorphospaceAffectedCheckArtifacts, Test-MorphospaceAffectedCheckReceipt, Find-MorphospaceAffectedReusableCheckReceipt, Write-MorphospaceAffectedCheckReceipt, Write-MorphospaceAffectedCheckCache, Write-MorphospaceAffectedCheckInventory, Read-MorphospaceAffectedCheckInventory

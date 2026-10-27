@@ -119,7 +119,31 @@ function Assert-PreparationProvenanceCommittedTransaction {
    param($root,$id,$successor,$historical,$incomplete)
    $workspace=[IO.Path]::GetFullPath($root);$intentRelative=Get-MorphospaceLedgerPath $workspace $id intent;$completionRelative=Get-MorphospaceLedgerPath $workspace $id completion
    $intentAbsolute=Resolve-MorphospaceWorkspacePath $workspace $intentRelative -RequireLeaf;$completionAbsolute=Resolve-MorphospaceWorkspacePath $workspace $completionRelative
-   $intent=Read-MorphospaceLedgerJson $intentAbsolute;Assert-MorphospaceLedgerIntent $intent $id;Assert-MorphospaceLedgerArtifactNamespace $workspace $id $intent
+   # Reuse only immutable intent semantics owned by an already active ledger
+   # invocation. Mode-specific completion/placement/projection checks below stay
+   # fresh; a standalone call still authenticates its intent independently.
+   $batchToken=''
+   if(Get-Variable -Scope Script -Name readOnlyLedgerBatches -ErrorAction SilentlyContinue){
+    $tokens=@($script:readOnlyLedgerBatches.Keys|Where-Object{
+     $scope=$script:readOnlyLedgerBatches[$_]
+     $scope.workspace-ceq$workspace-and$scope.thread-eq[Threading.Thread]::CurrentThread.ManagedThreadId
+    }|Sort-Object -CaseSensitive)
+    if($tokens.Count-gt0){
+     $owner=$script:readOnlyLedgerBatches[$tokens[0]]
+     foreach($token in $tokens){
+      $scope=$script:readOnlyLedgerBatches[$token]
+      if(-not[object]::ReferenceEquals($scope.intents,$owner.intents)-or
+         $scope.observation.path-cne$owner.observation.path-or$scope.observation.snapshot.sha256-cne$owner.observation.snapshot.sha256-or
+         $scope.observation.snapshot.length-ne$owner.observation.snapshot.length-or
+         (Get-MorphospaceCanonicalJsonSha256 $scope.observation.policy)-cne(Get-MorphospaceCanonicalJsonSha256 $owner.observation.policy)){
+       throw 'Prepared-envelope intent proof scope is ambiguous.'
+      }
+     }
+     $batchToken=[string]$tokens[0]
+    }
+   }
+   $intent=Read-MorphospaceCheckedLedgerIntent $workspace $id $intentAbsolute $batchToken
+   Assert-MorphospaceLedgerArtifactNamespace $workspace $id $intent
    if(-not[IO.File]::Exists($completionAbsolute)){
     if(-not$incomplete){throw 'Prepared-envelope transition completion is missing.'}
     for($artifactIndex=0;$artifactIndex-lt@($intent.artifacts).Count;$artifactIndex++){$artifact=@($intent.artifacts)[$artifactIndex];$stageRelative=Get-MorphospaceLedgerArtifactStagePath $id $artifactIndex;$stageAbsolute=Resolve-MorphospaceWorkspacePath $workspace $stageRelative;$targetAbsolute=Resolve-MorphospaceWorkspacePath $workspace ([string]$artifact.path);$stagePresent=[IO.File]::Exists($stageAbsolute);$targetPresent=[IO.File]::Exists($targetAbsolute);if($stagePresent-eq$targetPresent){throw 'Prepared-envelope incomplete transition does not own exactly one staged or installed artifact projection.'};$ownedArtifact=if($stagePresent){$stageAbsolute}else{$targetAbsolute};if((Get-MorphospaceFileSha256 $ownedArtifact)-cne[string]$artifact.sha256){throw 'Prepared-envelope incomplete transition artifact differs from its intent.'}}
@@ -198,7 +222,19 @@ function Get-PreparationProvenanceAdmissionPrefix {
   $value=ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$_.bytes_base64))
   if([string]$value.schema-ceq'rusty.morphospace.workflow.development_unit_admission.v1'){$value}
  })
- if($boundAdmissions.Count-eq1-and(Test-PreparationProvenanceHasEffectiveContinuation $Workspace $boundAdmissions[0])){
+  # This reader is used for the replacement admission's later live suffix.
+  # Ordinary Ready/Claim/validation also retain every envelope pointer. Their
+  # status delta selects authentication, never authority: the existing full
+  # reader must still prove every committed edge and the exact live projection.
+  $lifecycleContinuation=$false
+  if($boundAdmissions.Count-eq1){
+   $livePath=Resolve-MorphospaceWorkspacePath $Workspace "iteration-units/$([string]$boundAdmissions[0].unit_id).json"
+   if([IO.File]::Exists($livePath)){
+    $liveUnit=Read-MorphospaceProtocolJson $livePath
+    $lifecycleContinuation=[string]$liveUnit.status-cne[string]$boundAdmissions[0].unit.status
+   }
+  }
+  if($boundAdmissions.Count-eq1-and($lifecycleContinuation-or(Test-PreparationProvenanceHasEffectiveContinuation $Workspace $boundAdmissions[0]))){
   $continuation=Get-PreparationProvenanceEffectiveContinuation $Workspace $boundAdmissions[0] -ReadOnlyReady:$ReadOnlyReady
   $allEvents=@(Get-Content -LiteralPath (Resolve-MorphospaceWorkspacePath $Workspace 'iteration-events.jsonl' -RequireLeaf)|Where-Object{$_}|ForEach-Object{ConvertFrom-MorphospaceProtocolJsonBytes ([Text.UTF8Encoding]::new($false).GetBytes([string]$_))})
   $prefix=@($allEvents|Where-Object{[int]$_.sequence-lt[int]$continuation.admission_proof.intent.event.sequence})
@@ -521,6 +557,118 @@ function Test-MorphospaceDevelopmentUnitPreparation {
  if(-not($Admission.PSObject.Properties.Name-contains'blocked_successor')){throw 'Blocked-successor admission lacks its closed terminal binding.'}
  return Test-MorphospaceBlockedSuccessorPreparation -WorkspaceRoot $WorkspaceRoot -Admission $Admission -Phase $Phase
 }
+function Assert-PreparationProvenanceBootstrapReady {
+ param([object]$Proof,[object]$Predecessor)
+ $intent=$Proof.intent;$event=$intent.event;$unit=$intent.target.unit.document;$state=$intent.target.state.document
+ if([string]$event.summary-cne'Reviewed the bounded proposal and made it claimable without expanding its repositories, paths, or prerequisites.'-or@($event.receipts).Count-ne0-or@($intent.artifacts).Count-ne0-or[string]$unit.status-cne'ready'-or$null-ne$state.current_unit-or[string]$state.next_ready_unit-cne[string]$unit.unit_id-or[string]$state.last_event_id-cne[string]$event.event_id){throw 'Native bootstrap Ready selector semantics are detached.'}
+ $preUnit=$unit|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String;$preUnit.status='proposed'
+ if((Get-MorphospaceCanonicalJsonSha256 $preUnit)-cne[string]$intent.pre.unit.sha256){throw 'Native bootstrap Ready proposed-unit preimage is detached.'}
+ $preState=$state|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String;$preState.next_ready_unit=$null;$preState.last_event_id=$intent.expected.event_tail_id
+ if($null-eq$Predecessor){
+  if([int]$event.sequence-ne1-or$null-ne$intent.expected.event_tail_id){throw 'Native bootstrap first Ready prefix is detached.'}
+  $preState.repository_heads=@()
+ }else{
+  if([string]$intent.expected.event_tail_id-cne[string]$Predecessor.intent.event.event_id-or[string]$intent.pre.state.sha256-cne[string]$Predecessor.intent.target.state.sha256){throw 'Native bootstrap Ready predecessor is detached.'}
+  $preState.repository_heads=@($Predecessor.intent.target.state.document.repository_heads)
+ }
+ if((Get-MorphospaceCanonicalJsonSha256 $preState)-cne[string]$intent.pre.state.sha256){throw 'Native bootstrap Ready state transform is detached.'}
+}
+function Get-PreparationProvenanceNativeBootstrap {
+ param([string]$Workspace,[string]$UnitId,[string]$SourcePath,[string]$MapPath,[object]$Project,[object]$FeatureLock,[string]$UnitSha256,[string]$StateSha256,[string]$TailId)
+ $owner=Split-Path $PSScriptRoot -Parent
+ # Every entry, including historical recovery and direct continuation, owns
+ # this discriminator. A competing or malformed receipt is never bootstrap.
+ foreach($file in @(Get-ChildItem -LiteralPath (Resolve-MorphospaceWorkspacePath $Workspace 'receipts') -File -Filter '*.json')){
+  $document=Read-MorphospaceProtocolJson $file.FullName
+  if([string]$document.schema-ceq'rusty.morphospace.workflow.development_unit_admission.v1'-and[string]$document.unit_id-ceq$UnitId){throw 'Native bootstrap requires zero current-unit admissions.'}
+ }
+ $sourceAbsolute=Resolve-MorphospaceWorkspacePath $Workspace $SourcePath -RequireLeaf;$source=Read-MorphospaceProtocolJson $sourceAbsolute
+ Assert-PreparationProvenanceJson $sourceAbsolute (Join-Path $owner 'schemas/source-composition-lock.schema.json') 'Native bootstrap requires its exact original source-lock schema.'
+ Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceSourceCompositionIdentity.psm1')
+ if([string]$source.project_id-cne[string]$Project.project_id-or[string]$source.unit_id-cne$UnitId-or[string]$source.fingerprint-cne(Get-MorphospaceSourceCompositionFingerprint -ProjectId ([string]$source.project_id) -UnitId $UnitId -Repositories @($source.repositories))){throw 'Native bootstrap original source identity is detached.'}
+ $events=@(Get-Content -LiteralPath (Resolve-MorphospaceWorkspacePath $Workspace 'iteration-events.jsonl' -RequireLeaf)|Where-Object{$_}|ForEach-Object{ConvertFrom-MorphospaceProtocolJsonBytes ([Text.UTF8Encoding]::new($false).GetBytes([string]$_))})
+ $ready=@($events|Where-Object{[string]$_.unit_id-ceq$UnitId-and[string]$_.event_id-cmatch('^'+[regex]::Escape($UnitId)+'-ready-[0-9]{4,}$')})
+ $claimed=@($events|Where-Object{[string]$_.unit_id-ceq$UnitId-and[string]$_.event_id-cmatch('^'+[regex]::Escape($UnitId)+'-claimed-[0-9]{4,}$')})
+ if($ready.Count-ne1-or$claimed.Count-ne1-or[int]$claimed[0].sequence-ne([int]$ready[0].sequence+1)){throw 'Native bootstrap requires one exact ordinary Ready and direct Claim.'}
+ $historyOwner=Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1') -PassThru
+ $proofs=@(foreach($event in @($ready[0],$claimed[0])){
+  # A recovering extension may already have installed its projections while
+  # Claim remains the event tail. Authenticate the owner's historical proof;
+  # exact Claim endpoint and extension v6 preimages are checked independently.
+  $proof=&$historyOwner {param($w,$id)Get-ActiveRetirementPlanningTransition $w $id -HistoricalProjection} $Workspace "$($event.event_id)-transition"
+  if([string]$proof.intent.state.path-cne'workspace.state.json'-or[string]$proof.intent.unit.path-cne"iteration-units/$UnitId.json"-or[string]$proof.intent.events.path-cne'iteration-events.jsonl'-or(Get-MorphospaceCanonicalJsonSha256 $event)-cne(Get-MorphospaceCanonicalJsonSha256 $proof.intent.event)-or[string]$event.project_id-cne[string]$Project.project_id-or[string]$event.event_type-cne'state-transition'-or@($event.receipts).Count-ne0-or@($proof.intent.artifacts).Count-ne0){throw 'Native bootstrap lifecycle event or artifact identity is detached.'};$proof
+ })
+ $r=$proofs[0];$c=$proofs[1];$unit=$c.intent.target.unit.document;$state=$c.intent.target.state.document
+ # This initial-owner branch supports an empty prefix or the actual native
+ # withdrawn-proposal pair. It does not reinterpret arbitrary owner history.
+ $prefix=@($events|Where-Object{[int]$_.sequence-lt[int]$ready[0].sequence})
+ if($prefix.Count-notin@(0,2)-or[int]$ready[0].sequence-ne($prefix.Count+1)){throw 'Native bootstrap retained prefix is outside the finite Ready/WithdrawReady origin.'}
+ $prefixBindings=@();$predecessor=$null
+ if($prefix.Count-eq2){
+  $priorReady=$prefix[0];$withdrawn=$prefix[1];$priorId=[string]$priorReady.unit_id
+  if($priorId-ceq$UnitId-or[int]$withdrawn.sequence-ne2-or[string]$priorReady.event_id-cnotmatch('^'+[regex]::Escape($priorId)+'-ready-0001$')-or[string]$withdrawn.event_id-cne"$priorId-ready-withdrawn-0002"-or[string]$withdrawn.unit_id-cne$priorId-or[string]$withdrawn.summary-cne'Withdrew the exact next-ready unit through its authenticated Ready transaction while preserving current authority and deterministic queue order.'){throw 'Native bootstrap retained withdrawn prefix identity is detached.'}
+  $prefixProofs=@(foreach($event in $prefix){
+   $proof=&$historyOwner {param($w,$id)Get-ActiveRetirementPlanningTransition $w $id -HistoricalProjection} $Workspace "$($event.event_id)-transition"
+   if([string]$proof.intent.state.path-cne'workspace.state.json'-or[string]$proof.intent.unit.path-cne"iteration-units/$priorId.json"-or[string]$proof.intent.events.path-cne'iteration-events.jsonl'-or[string]$event.project_id-cne[string]$Project.project_id-or[string]$event.event_type-cne'state-transition'-or(Get-MorphospaceCanonicalJsonSha256 $event)-cne(Get-MorphospaceCanonicalJsonSha256 $proof.intent.event)){throw 'Native bootstrap retained prefix transaction is detached.'}
+   $prefixBindings+=,[pscustomobject]@{event_id=$event.event_id;intent_sha256=Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $Workspace "receipts/transactions/$($event.event_id)-transition.intent.json" -RequireLeaf);completion_sha256=Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $Workspace "receipts/transactions/$($event.event_id)-transition.completion.json" -RequireLeaf);artifacts=@($proof.intent.artifacts|ForEach-Object{[pscustomobject]@{path=$_.path;sha256=$_.sha256}})}
+   $proof
+  })
+  $pr=$prefixProofs[0];$pw=$prefixProofs[1]
+  Assert-PreparationProvenanceBootstrapReady $pr $null
+  $expectedUnit=$pr.intent.target.unit.document|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String;$expectedUnit.status='proposed'
+  $expectedState=$pr.intent.target.state.document|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String;$expectedState.next_ready_unit=$null;$expectedState.last_event_id=[string]$withdrawn.event_id
+  if((Get-MorphospaceCanonicalJsonSha256 $expectedUnit)-cne[string]$pw.intent.target.unit.sha256-or(Get-MorphospaceCanonicalJsonSha256 $expectedState)-cne[string]$pw.intent.target.state.sha256-or[string]$pw.intent.pre.state.sha256-cne[string]$pr.intent.target.state.sha256-or[string]$pw.intent.pre.unit.sha256-cne[string]$pr.intent.target.unit.sha256-or[string]$pw.intent.expected.event_tail_id-cne[string]$priorReady.event_id-or@($pw.intent.artifacts).Count-ne1-or@($withdrawn.receipts).Count-ne1-or[string]$withdrawn.receipts[0]-cne[string]$pw.intent.artifacts[0].path){throw 'Native bootstrap retained withdrawal transform is detached.'}
+  $receiptPath=Resolve-MorphospaceWorkspacePath $Workspace ([string]$withdrawn.receipts[0]) -RequireLeaf
+  Assert-PreparationProvenanceJson $receiptPath (Join-Path $owner 'schemas/work-unit-automation-receipt.schema.json') 'Native bootstrap withdrawal receipt schema is invalid.'
+  $receipt=Read-MorphospaceProtocolJson $receiptPath;$binding=$receipt.ready_withdrawal
+  if([string]$receipt.action-cne'WithdrawReady'-or$receipt.executed-ne$true-or[string]$receipt.transition-cne'ready-to-proposed-withdrawn'-or[string]$receipt.status_before-cne'ready'-or[string]$receipt.status_after-cne'proposed'-or$null-ne$receipt.current_unit_before-or$null-ne$receipt.current_unit_after-or[string]$receipt.unit_id-cne$priorId-or[string]$receipt.project_id-cne[string]$Project.project_id-or[string]$receipt.event_id-cne[string]$withdrawn.event_id-or[string]$binding.original_ready_event.event_id-cne[string]$priorReady.event_id-or[string]$binding.original_ready_event.sha256-cne(Get-MorphospaceCanonicalJsonSha256 $priorReady)-or[string]$binding.original_ready_transaction.intent.sha256-cne[string]$prefixBindings[0].intent_sha256-or[string]$binding.original_ready_transaction.completion.sha256-cne[string]$prefixBindings[0].completion_sha256-or[string]$binding.authenticated_preimage.state_sha256-cne[string]$pw.intent.pre.state.sha256-or[string]$binding.authenticated_preimage.unit_sha256-cne[string]$pw.intent.pre.unit.sha256-or[string]$binding.authenticated_preimage.events_sha256-cne[string]$pw.intent.expected.events_sha256-or[long]$binding.authenticated_preimage.events_length-ne[long]$pw.intent.expected.events_length-or[string]$binding.authenticated_preimage.event_tail_id-cne[string]$priorReady.event_id-or[string]$binding.next_ready_unit_before-cne$priorId-or$null-ne$binding.next_ready_unit_after-or(@($binding.ready_queue_before)-join'|')-cne$priorId-or@($binding.ready_queue_after).Count-ne0-or$binding.original_ready_event_preserved-ne$true){throw 'Native bootstrap retained withdrawal receipt provenance is detached.'}
+  $predecessor=$pw
+ }
+ Assert-PreparationProvenanceBootstrapReady $r $predecessor
+ $claimState=$r.intent.target.state.document|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String;$claimState.current_unit=$UnitId;$claimState.next_ready_unit=$null;$claimState.last_event_id=[string]$claimed[0].event_id
+ if((Get-MorphospaceCanonicalJsonSha256 $claimState)-cne[string]$c.intent.target.state.sha256){throw 'Native bootstrap Claim state transform is detached.'}
+ if([string]$ready[0].summary-cne'Reviewed the bounded proposal and made it claimable without expanding its repositories, paths, or prerequisites.'-or[string]$claimed[0].summary-cne'Claimed one ready iteration unit without expanding repository or path scope.'-or[string]$r.intent.target.unit.document.status-cne'ready'-or[string]$unit.status-cne'active'-or[string]$unit.unit_id-cne$UnitId-or[string]$unit.project_id-cne[string]$Project.project_id-or[string]$state.project_id-cne[string]$Project.project_id-or[string]$c.intent.expected.event_tail_id-cne[string]$ready[0].event_id-or[string]$c.intent.pre.state.sha256-cne[string]$r.intent.target.state.sha256-or[string]$c.intent.pre.unit.sha256-cne[string]$r.intent.target.unit.sha256){throw 'Native bootstrap Ready/Claim semantics or preimage chain is detached.'}
+ $readyUnit=$r.intent.target.unit.document|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String;$readyUnit.status='active'
+ if((Get-MorphospaceCanonicalJsonSha256 $readyUnit)-cne(Get-MorphospaceCanonicalJsonSha256 $unit)-or[string]$c.intent.target.unit.sha256-cne$UnitSha256-or[string]$c.intent.target.state.sha256-cne$StateSha256-or[string]$claimed[0].event_id-cne$TailId){throw 'Native bootstrap must retain the exact original Claim endpoint.'}
+ if($unit.PSObject.Properties.Name-ccontains'tooling_context'-or$unit.PSObject.Properties.Name-ccontains'candidate_freeze'-or[string]$unit.source_composition.mode-cne'exact-lock'-or[string]$unit.source_composition.lock_path-cne$SourcePath-or$null-ne$state.last_accepted_receipt-or$null-ne$state.validation_checkpoint-or$null-ne$state.next_ready_unit-or$null-ne$state.pending_push_bundle-or@($state.blockers).Count-ne0-or[string]$state.current_unit-cne$UnitId-or($unit.PSObject.Properties.Name-ccontains'work_mode'-and[string]$unit.work_mode-cne'feature')){throw 'Native bootstrap requires the never-accepted, unfrozen, no-tooling exact initial feature owner.'}
+ if(@($Project.composition.selected_features).Count-ne0-or@($Project.composition.selected_modules).Count-ne0-or@($Project.modules).Count-ne0-or@($FeatureLock.features).Count-ne0-or@($FeatureLock.selected_features).Count-ne0){throw 'Native bootstrap extension is limited to the original featureless envelope.'}
+ foreach($projection in @($r.intent.target.state.document,$state)){
+  if(@($projection.dirty_repositories).Count-ne0-or@($projection.repository_heads).Count-ne@($unit.allowed_repositories).Count){throw 'Native bootstrap requires exact clean native repository observations.'}
+  foreach($repository in @($unit.allowed_repositories)){
+   $head=@($projection.repository_heads|Where-Object{[string]$_.repo_id-ceq[string]$repository.repo_id});$locked=@($source.repositories|Where-Object{[string]$_.repo_id-ceq[string]$repository.repo_id})
+   if($head.Count-ne1-or$locked.Count-ne1-or[string]$head[0].head-cne[string]$locked[0].commit-or[string]$head[0].branch-cne[string]$locked[0].branch-or[string]$head[0].dirty_fingerprint-cne(Get-MorphospaceSha256Bytes ([byte[]]::new(0)))){throw 'Native bootstrap Ready/Claim source observation is detached from its native lock.'}
+  }
+ }
+ $mapAbsolute=Resolve-MorphospaceWorkspacePath $Workspace $MapPath -RequireLeaf;$map=Read-MorphospaceProtocolJson $mapAbsolute
+ Assert-PreparationProvenanceJson $mapAbsolute (Join-Path $owner 'schemas/repository-map.schema.json') 'Native bootstrap map schema is invalid.'
+ $ids=@($source.repositories.repo_id|Sort-Object -CaseSensitive);foreach($set in @(@($map.repositories.repo_id),@($Project.repositories.repo_id),(@($unit.allowed_repositories.repo_id)+@($unit.read_only_dependencies.repo_id)))){if((@($set|Sort-Object -CaseSensitive)-join'|')-cne($ids-join'|')){throw 'Native bootstrap original source/project/map/unit closure is detached.'}}
+ $binding=[ordered]@{kind='native-featureless-ready-claim';path=$SourcePath;raw_sha256=Get-MorphospaceFileSha256 $sourceAbsolute;canonical_sha256=Get-MorphospaceCanonicalJsonSha256 $source;schema=[string]$source.schema;lock_id=[string]$source.lock_id;fingerprint=[string]$source.fingerprint;prefix_sha256=Get-MorphospaceCanonicalJsonSha256 @($prefixBindings);repository_map=[pscustomobject]@{path=$MapPath;raw_sha256=Get-MorphospaceFileSha256 $mapAbsolute}}
+ foreach($pair in @(@('ready',$r),@('claim',$c))){$id=[string]$pair[1].intent.transaction_id;$binding[$pair[0]]=[pscustomobject]@{event_id=[string]$pair[1].intent.event.event_id;intent_sha256=Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $Workspace "receipts/transactions/$id.intent.json" -RequireLeaf);completion_sha256=Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $Workspace "receipts/transactions/$id.completion.json" -RequireLeaf)}}
+ [pscustomobject]@{binding=[pscustomobject]$binding;source=$source;project=$Project;feature_lock=$FeatureLock;unit=$unit;state=$state;ready_proof=$r;claim_proof=$c;events=$events;claim_index=[array]::IndexOf($events,$claimed[0])}
+}
+function Get-PreparationProvenanceBootstrapOrigin {
+ param([string]$Workspace,[string]$UnitId,[string]$RepositoryMapPath)
+ $unit=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace "iteration-units/$UnitId.json" -RequireLeaf);$state=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace 'workspace.state.json' -RequireLeaf)
+ $path=[string]$unit.source_composition.lock_path;$source=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace $path -RequireLeaf)
+ $stored=$null
+ if([string]$source.schema-ceq'rusty.morphospace.workflow.active_development_envelope_source_composition.v1'){
+  if($source.PSObject.Properties.Name-cnotcontains'original_bootstrap'){throw 'Absent admission is not native bootstrap origin authority.'}
+  Assert-PreparationProvenanceJson (Resolve-MorphospaceWorkspacePath $Workspace $path -RequireLeaf) (Join-Path (Split-Path $PSScriptRoot -Parent) 'schemas/active-development-envelope-source-composition-v1.schema.json') 'Bootstrap derivative schema is invalid.'
+  $stored=$source.original_bootstrap;$firstId=[string]$stored.first_extension_id
+  $proof=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $Workspace -TransactionId "$firstId-recorded-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$UnitId.json" -ExpectedEventsPath 'iteration-events.jsonl'
+  $artifacts=@($proof.intent.artifacts|Where-Object{[string]$_.path-ceq"receipts/$firstId.json"})
+  if($artifacts.Count-ne1-or(Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $Workspace "receipts/$firstId.json" -RequireLeaf))-cne[string]$artifacts[0].sha256){throw 'Native bootstrap first extension receipt is detached.'}
+  $request=ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$artifacts[0].bytes_base64))
+  $project=$request.before.project;$feature=$request.before.feature_lock;$path=[string]$stored.path;$mapPath=[string]$stored.repository_map.path;$unitHash=[string]$request.expected.unit_sha256;$stateHash=[string]$request.expected.state_sha256;$tail=[string]$request.expected.event_tail_id
+ }else{
+  $project=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace 'project.spec.json' -RequireLeaf);$feature=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $Workspace 'feature.lock.json' -RequireLeaf)
+  $mapPath=[IO.Path]::GetRelativePath($Workspace,[IO.Path]::GetFullPath($RepositoryMapPath)).Replace('\','/');$unitHash=Get-MorphospaceCanonicalJsonSha256 $unit;$stateHash=Get-MorphospaceCanonicalJsonSha256 $state;$tail=[string]$state.last_event_id
+ }
+ $origin=Get-PreparationProvenanceNativeBootstrap $Workspace $UnitId $path $mapPath $project $feature $unitHash $stateHash $tail
+ if($null-ne$stored){$comparison=$stored|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100 -DateKind String;$comparison.PSObject.Properties.Remove('first_extension_id');if((Get-MorphospaceCanonicalJsonSha256 $comparison)-cne(Get-MorphospaceCanonicalJsonSha256 $origin.binding)){throw 'Native bootstrap retained origin bytes or map drifted.'}}
+ if([IO.Path]::GetFullPath((Join-Path $Workspace $mapPath))-cne[IO.Path]::GetFullPath($RepositoryMapPath)){throw 'Native bootstrap requires the exact original repository map.'}
+ $origin
+}
 function Test-MorphospaceEffectiveDevelopmentEnvelope {
  [CmdletBinding()]param(
   [Parameter(Mandatory)][string]$WorkspaceRoot,
@@ -530,9 +678,14 @@ function Test-MorphospaceEffectiveDevelopmentEnvelope {
  )
  $workspace=[IO.Path]::GetFullPath($WorkspaceRoot)
  $admissions=@(Get-ChildItem -LiteralPath (Resolve-MorphospaceWorkspacePath $workspace 'receipts') -File -Filter '*.json'|ForEach-Object{
-  $document=Read-MorphospaceProtocolJson $_.FullName
-  if([string]$document.schema-ceq'rusty.morphospace.workflow.development_unit_admission.v1'-and[string]$document.unit_id-ceq$UnitId){$document}
+  Read-MorphospaceProtocolJsonMatchingDiscriminator -Path $_.FullName -Schema 'rusty.morphospace.workflow.development_unit_admission.v1' -UnitId $UnitId
  })
+ if($admissions.Count-eq0){
+  $bootstrap=Get-PreparationProvenanceBootstrapOrigin $workspace $UnitId $RepositoryMapPath
+  $module=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceDevelopmentContinuation.psm1') -PassThru
+  $continuation=&$module {param($w,$id,$map)Get-MorphospaceDevelopmentEnvelopeContinuation -WorkspaceRoot $w -BootstrapUnitId $id -BootstrapRepositoryMapPath $map} $workspace $UnitId $RepositoryMapPath
+  return [pscustomobject]@{original=[pscustomobject]@{bootstrap=$bootstrap.binding;bootstrap_unit=$bootstrap.unit;source_composition=$bootstrap.source;source_composition_binding=[pscustomobject]@{path=$bootstrap.binding.path;raw_sha256=$bootstrap.binding.raw_sha256;canonical_sha256=$bootstrap.binding.canonical_sha256};repository_map=$bootstrap.binding.repository_map};effective=[pscustomobject]@{project=$continuation.project;feature_lock=$continuation.feature_lock;state=$continuation.state;unit=$continuation.unit;assessment=$continuation.unit.agent_scope_assessment;event_tail=$continuation.event_tail;source_composition=$continuation.source_composition;source_composition_binding=[pscustomobject]@{path=$continuation.source_composition_binding.path;raw_sha256=$continuation.source_composition_binding.raw_sha256;canonical_sha256=Get-MorphospaceCanonicalJsonSha256 $continuation.source_composition};repository_map=$continuation.repository_map};extensions=@($continuation.extensions);tooling_upgrades=@();continuation=$continuation}
+ }
  if($admissions.Count-ne1){throw 'Effective development envelope requires one exact admission.'}
  $admission=$admissions[0]
  if((Get-MorphospaceDevelopmentAdmissionKind $admission)-cne'ordinary'){throw 'Active envelope extension requires an ordinary admitted development unit.'}
@@ -569,8 +722,7 @@ function Get-MorphospaceUnitToolingContextProvenance {
  $unit=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace "iteration-units/$UnitId.json" -RequireLeaf)
  if(-not($unit.PSObject.Properties.Name-contains'tooling_context')){return $null}
  $admissions=@(Get-ChildItem -LiteralPath (Resolve-MorphospaceWorkspacePath $workspace 'receipts') -File -Filter '*.json'|ForEach-Object{
-  $value=Read-MorphospaceProtocolJson $_.FullName
-  if([string]$value.schema-ceq'rusty.morphospace.workflow.development_unit_admission.v1'-and[string]$value.unit_id-ceq$UnitId){$value}
+  Read-MorphospaceProtocolJsonMatchingDiscriminator -Path $_.FullName -Schema 'rusty.morphospace.workflow.development_unit_admission.v1' -UnitId $UnitId
  })
  if($admissions.Count-ne1){throw 'Tooling execution requires one exact owner admission.'}
  $proof=Test-MorphospaceDevelopmentUnitPreparation -WorkspaceRoot $workspace -Admission $admissions[0] -Phase Freeze -ReadOnlyReady

@@ -209,6 +209,21 @@ foreach ($action in @($producerContracts.Keys)) {
 }
 
 Assert-ReceiptCorpusMatchesSchema -Corpus $corpus
+# Independent initial-owner states: a new action relation must preserve each
+# status and a present current owner; registration alone is insufficient.
+Assert-AutomationReceiptCompatibility (Test-ReceiptPairAllowed $corpus 'CorrectInitialValidationProfileClosure' 'initial-validation-profile-closure-corrected') 'initial profile correction action/transition is absent'
+foreach($status in @('active','validating')) {
+    $receipt=New-CanonicalAutomationReceipt -Action CorrectInitialValidationProfileClosure -Transition initial-validation-profile-closure-corrected -StatusBefore $status -StatusAfter $status
+    Assert-AutomationReceiptCompatibility (Test-AutomationReceiptSchema $receipt) "initial profile correction rejected preserved $status status"
+    $receipt.status_after=$(if($status-ceq'active'){'validating'}else{'active'})
+    Assert-AutomationReceiptCompatibility (-not(Test-AutomationReceiptSchema $receipt)) 'initial profile correction schema allowed a status transition'
+}
+foreach($status in @('proposed','ready','accepted','blocked','superseded')) {
+    $receipt=New-CanonicalAutomationReceipt -Action CorrectInitialValidationProfileClosure -Transition initial-validation-profile-closure-corrected -StatusBefore $status -StatusAfter $status
+    Assert-AutomationReceiptCompatibility (-not(Test-AutomationReceiptSchema $receipt)) "initial profile correction schema accepted $status"
+}
+$receipt=New-CanonicalAutomationReceipt -Action CorrectInitialValidationProfileClosure -Transition initial-validation-profile-closure-corrected -CurrentUnitBefore $null -CurrentUnitAfter $null
+Assert-AutomationReceiptCompatibility (-not(Test-AutomationReceiptSchema $receipt)) 'initial profile correction schema accepted absent ownership'
 $validatedPairCount = 0
 foreach ($action in @($corpus.Keys)) {
     foreach ($transition in @($corpus[$action])) {

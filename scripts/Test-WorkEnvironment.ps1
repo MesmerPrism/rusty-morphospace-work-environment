@@ -161,6 +161,7 @@ function Invoke-JsonLinesParseCheck {
 & (Join-Path $PSScriptRoot "Test-PowerShellHost.ps1") -Quiet
 
 if ($SelfTest) {
+    Import-Module (Join-Path $PSScriptRoot 'test-support/IsolatedWorkflowSelfTest.psm1')
     $singleFailureProbe = @([pscustomobject]@{ Name = "probe"; Status = "missing"; Required = $true })
     $singleFailureCount = @($singleFailureProbe | Where-Object { $_.Required -and $_.Status -eq "missing" }).Count
     if ($singleFailureCount -eq 1) {
@@ -292,8 +293,14 @@ if ($SelfTest) {
         [pscustomobject]@{ name = "workflow:documentation-links"; script = "Test-DocumentationLinks.ps1"; detail = "Validated relative Markdown links." },
         [pscustomobject]@{ name = "workflow:skill-templates"; script = "Test-SkillTemplates.ps1"; detail = "Validated the five local skills, external Meta ownership boundary, and locator contract." },
         [pscustomobject]@{ name = "workflow:normal-validation-selector"; script = "Test-NormalValidationSelector.ps1"; arguments = @("-SelfTest"); detail = "Validated exact external Quick selection, immutable unit/freeze/candidate binding, hash-only lifecycle reconstruction, canonical evidence dispatch/consumption, ordinary fallback preservation, and damaged-case rejection without producer execution." },
+        [pscustomobject]@{ name = "workflow:nonpass-receipt-evidence"; isolate = $true; script = "Test-NonpassReceiptEvidence.ps1"; arguments = @("-SelfTest"); detail = "Validated immutable NONPASS custody, eligibility snapshots, no-overwrite evidence capture, race-safe rollback and strict ordinary continuation." },
+        [pscustomobject]@{ name = "workflow:nonpass-evidence-recovery"; isolate = $true; script = "Test-NonpassEvidenceRecovery.ps1"; arguments = @("-SelfTest"); detail = "Validated independently authorized native v4 recovery, fault resume, exact replay, repeated NONPASS correction, ordinary retry and retirement with immutable history." },
+        [pscustomobject]@{ name = "workflow:nonpass-authority-binding-origin"; isolate = $true; script = "Test-NonpassAuthorityBindingOrigin.ps1"; arguments = @("-SelfTest"); detail = "Validated independent authority-binding origin, unadopted and altered policy rejection before importing request-selected source." },
         [pscustomobject]@{ name = "workflow:external-validation-authority"; script = "Test-ExternalValidationAuthoritySelfTest.ps1"; detail = "Validated base-owned exact change-set admission without candidate checkout or execution." },
         [pscustomobject]@{ name = "workflow:external-owner-authorization"; script = "Test-ExternalOwnerAuthorization.ps1"; arguments = @("-SelfTest"); detail = "Validated canonical RSA-PSS external-owner authorization with ephemeral keys, canonical UTC seconds, LF/CRLF framing, edited-comment rejection, validated LF-only output persistence, exact-evidence idempotence, and negative identity, duplicate, time, changed-evidence, signature, key, and strict-policy cases." },
+        [pscustomobject]@{ name = "workflow:native-nonpass-recovery-authority"; script = "Test-NativeNonpassRecoveryAuthority.ps1"; arguments = @("-SelfTest"); detail = "Validated separate signed source qualification and exact nonaccepting recovery authorization with independent Git sources, immutable closure, current-state guards, expiry and denial controls." },
+        [pscustomobject]@{ name = "workflow:native-nonpass-recovery-projection"; script = "Test-NativeNonpassRecoveryProjection.ps1"; arguments = @("-SelfTest"); detail = "Validated native ledger target hashes for legal apostrophes, markup and Unicode while preserving the separate signing canonicalization." },
+        [pscustomobject]@{ name = "workflow:native-nonpass-recovery-source-scope"; script = "Test-NativeNonpassRecoverySourceScope.ps1"; arguments = @("-SelfTest"); detail = "Validated private source holds, fresh Git guards, moving request data and resource release without reusing live authority or control observations." },
         [pscustomobject]@{ name = "workflow:external-validation-github-adapter"; script = "Test-ExternalValidationAuthorityGitHubAdapterSelfTest.ps1"; detail = "Validated exact PR object identities, ordered merge parents, pinned base verifier bytes, and no candidate checkout or execution." },
         [pscustomobject]@{ name = "workflow:environment-validation"; script = "Test-EnvironmentValidation.ps1"; detail = "Validated strict placeholders, repo paths, and Python/JDK minimum versions." },
         [pscustomobject]@{ name = "workflow:local-skill-bootstrap"; script = "Test-LocalSkillBootstrap.ps1"; detail = "Validated plan, install, verify, drift, backup, update, and local-file preservation." },
@@ -328,6 +335,10 @@ if ($SelfTest) {
                     throw "Public-boundary Quick test declares unsupported additional arguments."
                 }
                 & $quickTestPath -Root $RepoRoot
+            } elseif ($null -ne $quickTest.PSObject.Properties["isolate"] -and $quickTest.isolate) {
+                # Copied owner modules must not replace this aggregate's module instances.
+                # Registry estimates remain advisory; retain actual child completion.
+                [void](Invoke-IsolatedWorkflowSelfTest -RepositoryRoot $RepoRoot -Path $quickTestPath -Arguments $quickTestArguments -CompletionPreserving)
             } elseif ($quickTestArguments.Count -eq 0) {
                 & $quickTestPath
             } elseif ($quickTestArguments.Count -eq 1 -and $quickTestArguments[0] -ceq "-SelfTest") {
@@ -342,11 +353,13 @@ if ($SelfTest) {
     }
 
     if ($Tier -in @("Standard", "Deep")) {
+        $automationTest = [pscustomobject]@{ name = "automation:work-unit"; script = "Test-WorkUnitAutomation.ps1"; arguments = @(); detail = "Validated transitions, preservation, routing, push preparation, and recovery." }
         try {
-            & (Join-Path $RepoRoot "scripts\Test-WorkUnitAutomation.ps1")
-            Add-CheckResult -Name "automation:work-unit" -Status "ok" -Detail "Validated transitions, preservation, routing, push preparation, and recovery."
+            $automationTestPath = Join-Path (Join-Path $RepoRoot "scripts") $automationTest.script
+            [void](Invoke-IsolatedWorkflowSelfTest -RepositoryRoot $RepoRoot -Path $automationTestPath -Arguments $automationTest.arguments -TimeoutSeconds 900)
+            Add-CheckResult -Name $automationTest.name -Status "ok" -Detail $automationTest.detail
         } catch {
-            Add-CheckResult -Name "automation:work-unit" -Status "missing" -Required $true -Detail $_.Exception.Message
+            Add-CheckResult -Name $automationTest.name -Status "missing" -Required $true -Detail $_.Exception.Message
         }
     }
 

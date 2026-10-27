@@ -175,6 +175,14 @@ invalidating otherwise reusable documentation, skill, or protocol-foundation
 leaves while retaining invalidation for real ownership, ledger, and authority
 consumers.
 
+Hosted intake shares immutable per-file static observations across its selected
+entrypoints within one intake call. The key binds the repository root, tracked
+inventory, analyzer, dynamic declarations, and actual file bytes. Resolved paths
+are replayed as exact repository identities; each check still constructs its own
+consume manifest, arguments, runner and prerequisite bindings. Final inventory,
+declaration, analyzer and source-byte checks reject drift before results escape.
+No caller-supplied, global or cross-intake closure cache grants reuse authority.
+
 Current-run leaf bytes are retained as canonical parent-owned in-memory
 snapshots only after the executor's supervisor has published one tagged result
 through a parent-created anonymous completion pipe, terminated its complete
@@ -477,6 +485,34 @@ absolute `gh` executable and a fresh ignored output directory:
     -PullRequestNumber $pullRequest -RunId $runId `
     -GhPath $selectedGhPath -OutputDirectory $freshIgnoredOutput
 ```
+
+
+Add `-CaptureTimings` to that same already-required hosted invocation when phase
+attribution is useful. The optional observer uses a fresh, invocation-local
+monotonic clock and counters; it creates no extra provider request or cache.
+After the normal fresh output directory has been admitted, it best-effort
+writes `diagnostics/hosted-intake-timing.json` during finalization. A refusal
+before that admission writes no timing directory. A later refusal can retain
+closed spans and honestly open partial spans without a report or producer
+success marker. Missing, malformed or unavailable diagnostics mean unknown
+measurement, not a validation outcome.
+
+The diagnostic is explicitly non-proof data outside `hosted-intake.json` and
+`raw-manifest.json`. It does not change their fields, the successful stdout
+envelope, or any evidence schema. Sink collisions, reparse paths, serialization
+and storage failures do not overwrite an existing diagnostic, add stdout, or
+replace the producer's original error, exit or result.
+
+Spans cover source preflight, provider metadata/GETs, archive collection and
+expansion, uploaded-plan verification/public selector recomputation, registry
+and tree inventory, the existing shared dependency-closure batch, root
+inventories, leaf verification and final postimage/report work. Calls count
+attempted observations; verified executed/reused row counters advance only
+after the existing full leaf checks. Open spans remain incomplete. Parent and
+child spans are inclusive, so do not sum them as disjoint wall time. These
+elapsed/counter observations are not CPU samples, cache-hit or speedup claims,
+nor new qualification prerequisites. Timing controls live in the existing
+`-SelfTestPhase run-job-coverage` phase.
 
 The producer and candidate checkouts must be clean and bind their exact Git
 identities and held physical source bytes. The selected run must be a successful
@@ -918,3 +954,25 @@ changing validation results. Callers must drain stderr: the volume bound is not
 an I/O deadline. Synchronous child capture emits only start/return boundaries,
 including its internal cleanup; it has no periodic heartbeat. Existing cleanup,
 failure classification and finalized-inventory requirements remain authoritative.
+### Static graph consumers and external imports
+
+The graph fixture resolves repository-parent `Join-Path` tool calls from the
+actual builtin path expression. The resulting `scripts/` or `tools/` target
+must remain inside the owner root, tracked, present and byte-stable. A tool's
+literal data inputs remain part of the production dependency closure; adding
+a graph edge does not remove those inputs from affected selection.
+
+An importer with an explicitly declared external module import consumes its
+existing registry `authenticated-external-command` binding group. The graph
+checks the module import and its external CommandInfo/native calls against the
+complete declared identities and counts. It does not reinterpret that module
+as a tracked local file, infer a path from a caller DTO, or grant authority to
+execute it. The owning runtime still authenticates the selected external
+module, fixed export, source roots and current input bytes.
+
+Missing, duplicate, ambiguous or miscounted bindings, undeclared extra calls,
+shadowed path/import builtins, wrong roots and absent tracked targets refuse.
+Existing tracked module/export and source-stability checks remain in force.
+The focused `graph-import-closure` phase exercises both import forms and their
+refusal controls; production dependency compilation remains the owner of the
+exact file and data-input closure.

@@ -101,6 +101,18 @@
           "additionalProperties": false,
           "required": ["source", "external_sources"],
           "properties": {
+            "provider_document": {
+              "description": "Optional raw-pinned Quest-owned source composition and fixed assertion module from a selected directory binding. Dirty overlays require warm lane and require_clean=false.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256", "provider_binding_id", "provider_module_sha256"],
+              "properties": {
+                "path": { "type": "string", "minLength": 1 },
+                "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+                "provider_binding_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$" },
+                "provider_module_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+              }
+            },
             "source": {
               "type": "object",
               "additionalProperties": false,

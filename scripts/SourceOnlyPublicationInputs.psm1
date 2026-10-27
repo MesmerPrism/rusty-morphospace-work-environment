@@ -1,6 +1,7 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
+$script:SourceOnlyPublishedParentOwner=Import-Module (Join-Path $PSScriptRoot 'SourceOnlyPublication.psm1') -PassThru
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceContentObservation.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceTransitionLedger.psm1') -Force
@@ -235,7 +236,8 @@ function Get-SourceOnlyPublicationAnalysis {
     $allowed = @($context.unit.allowed_repositories)
     $readOnlyIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     if ($context.unit.PSObject.Properties.Name -contains 'read_only_dependencies') { foreach ($item in @($context.unit.read_only_dependencies)) { [void]$readOnlyIds.Add([string]$item.repo_id) } }
-    foreach ($projectSource in @($context.project.repositories)) {
+    $projectSourceIds = @($context.project.repositories.repo_id)
+    foreach ($projectSource in @($mapSources | Where-Object { [string]$_.repo_id -cin $projectSourceIds })) {
         $projectRepoId = [string]$projectSource.repo_id
         if (@($allowed | Where-Object { [string]$_.repo_id -ceq $projectRepoId }).Count -eq 0 -and -not $readOnlyIds.Contains($projectRepoId)) { $reasons.Add("project-source-not-declared:$projectRepoId") }
     }
@@ -338,19 +340,16 @@ function Get-MorphospaceSourceOnlyPublicationReadiness {
     return $analysis.report
 }
 
-function New-MorphospaceSourceOnlyPublicationPlan {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)][string]$WorkspaceRoot, [Parameter(Mandatory = $true)][string]$UnitId,
-        [Parameter(Mandatory = $true)][string]$RepoMapPath, [Parameter(Mandatory = $true)][string]$PublicationId,
-        [ValidateSet('fast-forward', 'provider-merge')][string]$PublicationMode = 'provider-merge',
-        [string]$Remote = 'origin', [string]$TargetBranch = 'main', [Parameter(Mandatory = $true)][string]$OutPath
-    )
-    $analysis = Get-SourceOnlyPublicationAnalysis $WorkspaceRoot $UnitId $RepoMapPath $PublicationId $PublicationMode $Remote $TargetBranch
-    if ([string]$analysis.report.status -cne 'supported') { throw "Source-only publication readiness is '$($analysis.report.status)': $(@($analysis.report.reason_codes) -join ', ')." }
-    $c = $analysis.context
-    if ([string]$c.unit.status -cne 'accepted' -or $null -ne $c.state.current_unit -or $null -ne $c.state.pending_push_bundle) { throw 'Plan generation requires the exact accepted idle trigger with no pending publication bundle.' }
+function Get-SourceOnlyAcceptedTrigger {
+    param($Context,[string]$UnitId,[string]$AcceptanceEventId='', [bool]$RequireCurrent=$true)
+    $c=$Context
+    if ([string]$c.unit.status -cne 'accepted' -or ($RequireCurrent -and ($null -ne $c.state.current_unit -or $null -ne $c.state.pending_push_bundle))) { throw 'Plan generation requires the exact accepted idle trigger with no pending publication bundle.' }
     $relocation = $null
+    if ($AcceptanceEventId -and $AcceptanceEventId -cne [string]$c.tail.event_id) {
+        Assert-SourceDelivery (-not $RequireCurrent) 'Accepted source owner is not the current acceptance tail.'
+        $retained=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $c.workspace -TransactionId "$AcceptanceEventId-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$UnitId.json" -ExpectedEventsPath 'iteration-events.jsonl'
+        $c=[pscustomobject]@{workspace=$c.workspace;unit=$c.unit;project=$c.project;tail=$retained.intent.event;state=$retained.intent.target.state.document}
+    }
     if ([string]$c.tail.event_id -cmatch '-accepted-evidence-relocated-[0-9]{4,}$') {
         $relocation = Test-MorphospaceAcceptedEvidenceRelocation -WorkspaceRoot $c.workspace -RelocationId ([string]$c.tail.event_id) -RequireTail
         if ([string]$relocation.document.unit_id -cne $UnitId) { throw 'Accepted evidence relocation belongs to another trigger unit.' }
@@ -370,7 +369,23 @@ function New-MorphospaceSourceOnlyPublicationPlan {
         if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf) -or (Get-MorphospaceFileSha256 $artifactPath) -cne ([string]$artifact.sha256).ToLowerInvariant()) { throw "Accepted validation artifact '$([string]$artifact.artifact_id)' drifted." }
     }
     $transactionId = "$([string]$acceptanceEvent.event_id)-transition"
-    [void](Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $c.workspace -TransactionId $transactionId -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$UnitId.json" -ExpectedEventsPath 'iteration-events.jsonl' -RequireTail:($null -eq $relocation))
+    $acceptedLedger=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $c.workspace -TransactionId $transactionId -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$UnitId.json" -ExpectedEventsPath 'iteration-events.jsonl' -RequireTail:($RequireCurrent -and $null -eq $relocation)
+    [pscustomobject]@{receipt=$receipt;receipt_path=$receiptPath;receipt_relative=$receiptRelative;transaction_id=$transactionId;acceptance_event=$acceptanceEvent;ledger=$acceptedLedger;relocation=$relocation}
+}
+
+function New-MorphospaceSourceOnlyPublicationPlan {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$WorkspaceRoot, [Parameter(Mandatory = $true)][string]$UnitId,
+        [Parameter(Mandatory = $true)][string]$RepoMapPath, [Parameter(Mandatory = $true)][string]$PublicationId,
+        [ValidateSet('fast-forward', 'provider-merge')][string]$PublicationMode = 'provider-merge',
+        [string]$Remote = 'origin', [string]$TargetBranch = 'main', [Parameter(Mandatory = $true)][string]$OutPath
+    )
+    $analysis = Get-SourceOnlyPublicationAnalysis $WorkspaceRoot $UnitId $RepoMapPath $PublicationId $PublicationMode $Remote $TargetBranch
+    if ([string]$analysis.report.status -cne 'supported') { throw "Source-only publication readiness is '$($analysis.report.status)': $(@($analysis.report.reason_codes) -join ', ')." }
+    $c = $analysis.context
+    $accepted=Get-SourceOnlyAcceptedTrigger -Context $c -UnitId $UnitId
+    $receipt=$accepted.receipt;$receiptPath=$accepted.receipt_path;$receiptRelative=$accepted.receipt_relative;$transactionId=$accepted.transaction_id;$acceptanceEvent=$accepted.acceptance_event;$relocation=$accepted.relocation
     $planRows = [Collections.Generic.List[object]]::new()
     foreach ($row in @($analysis.rows)) {
         $validatedRevision = @($receipt.repository_revisions | Where-Object { [string]$_.repo_id -ceq [string]$row.repo_id })
@@ -550,7 +565,718 @@ function New-MorphospaceSourceOnlyPublicationExecution {
     return Write-SourceOnlyInputDocument $execution $OutPath
 }
 
+function Assert-SourceDelivery([bool]$Condition, [string]$Message) {
+    if (-not $Condition) { throw "Source delivery: $Message" }
+}
+
+function New-SourceDeliveryObservation {
+    $comparer=if($IsWindows){[StringComparer]::OrdinalIgnoreCase}else{[StringComparer]::Ordinal}
+    return [Collections.Generic.Dictionary[string,string]]::new($comparer)
+}
+
+function Get-SourceDeliveryReference([string]$Path) {
+    $full = Resolve-SourceOnlyInputPath $Path Leaf 'Source delivery evidence'
+    Assert-MorphospaceNoReparseAncestor -Root ([IO.Path]::GetPathRoot($full)) -Candidate $full
+    [pscustomobject][ordered]@{ path = $full; sha256 = Get-MorphospaceFileSha256 $full }
+}
+
+function Read-SourceDeliveryReference($Reference, [Collections.IDictionary]$Observed, [switch]$Bytes) {
+    Assert-MorphospaceExactPropertySet $Reference @('path','sha256') @('bytes') 'Source delivery reference'
+    $actual = Get-SourceDeliveryReference ([string]$Reference.path)
+    Assert-SourceDelivery ($actual.sha256 -ceq [string]$Reference.sha256) 'Evidence bytes changed.'
+    $raw = [IO.File]::ReadAllBytes($actual.path)
+    if ($Reference.PSObject.Properties.Name -ccontains 'bytes') { Assert-SourceDelivery ($Reference.bytes -eq $raw.Length) 'Evidence length differs.' }
+    Assert-SourceDelivery ((Get-MorphospaceSha256Bytes $raw) -ceq $actual.sha256) 'Evidence changed during read.'
+    if($Observed.ContainsKey($actual.path)) { Assert-SourceDelivery ([string]$Observed[$actual.path] -ceq $actual.sha256) 'One evidence locator was rebound during the observation.' }
+    $Observed[$actual.path] = $actual.sha256
+    if ($Bytes) { return ,$raw }
+    ConvertFrom-MorphospaceProtocolJsonBytes -Bytes $raw -Context 'Source delivery evidence'
+}
+
+function Assert-SourceDeliveryObservation([Collections.IDictionary]$Observed) {
+    foreach ($path in $Observed.Keys) {
+        Assert-SourceDelivery ((Get-MorphospaceFileSha256 $path) -ceq $Observed[$path]) 'Evidence drifted before publication.'
+    }
+}
+
+function Read-SourceDeliveryDocument([string]$Path, [string]$ExpectedSha256, [string]$Kind, [Collections.IDictionary]$Observed) {
+    $doc = Read-SourceDeliveryReference ([pscustomobject]@{path=$Path;sha256=$ExpectedSha256}) $Observed
+    $schema = Join-Path (Split-Path $PSScriptRoot -Parent) 'schemas/source-delivery-disposition-v1.schema.json'
+    Assert-SourceDelivery ((Test-Json -Json ($doc|ConvertTo-Json -Depth 100) -SchemaFile $schema) -and [string]$doc.kind -ceq $Kind) "Invalid closed $Kind document."
+    return $doc
+}
+
+function Get-SourceDeliveryRepository($Subject, $Map) {
+    Assert-SourceDelivery (Test-Json -Json ($Map|ConvertTo-Json -Depth 40) -SchemaFile (Join-Path (Split-Path $PSScriptRoot -Parent) 'schemas/repository-map.schema.json')) 'Publication map does not satisfy the existing map contract.'
+    $rows = @($Map.repositories | Where-Object { [string]$_.repo_id -ceq [string]$Subject.repo_id -and [string]$_.role -ceq 'source' })
+    Assert-SourceDelivery ($rows.Count -eq 1) 'Publication source must be uniquely mapped.'
+    $root = Resolve-SourceOnlyInputPath ([string]$rows[0].path) Container 'Publication source'
+    foreach ($pair in @(@($Subject.base_commit,$Subject.base_tree), @($Subject.candidate_commit,$Subject.candidate_tree))) {
+        Assert-SourceDelivery ((Get-SourceOnlyInputGitValue $root @('rev-parse',"$($pair[0])^{tree}") 'Source tree') -ceq $pair[1]) 'Publication source commit/tree differs.'
+    }
+    Assert-SourceDelivery ((Invoke-SourceOnlyInputGit $root @('merge-base','--is-ancestor',$Subject.base_commit,$Subject.candidate_commit) -AllowFailure).exit_code -eq 0) 'Publication base is not an ancestor.'
+    $changed = @(Get-SourceOnlyInputSortedPaths @((Invoke-SourceOnlyInputGit $root @('diff','--name-only','--no-renames',"$($Subject.base_commit)..$($Subject.candidate_commit)",'--')).lines | Where-Object {$_}) 'Publication changed paths')
+    Assert-SourceDelivery ($changed.Count -gt 0) 'Publication subject has no source delta.'
+    foreach ($path in $changed) { Assert-SourceDelivery (Test-SourceOnlyInputPathAllowed $path @($Subject.allowed_paths)) 'Publication source exceeds its declared paths.' }
+    $remote = Get-SourceOnlyInputGitValue $root @('remote','get-url','origin') 'Source remote'
+    Assert-SourceOnlyInputRemoteUrl $remote ([string]$Subject.repo_id)
+    Assert-SourceDelivery ($remote -cmatch ('^(?:https://github[.]com/|git@github[.]com:)' + [regex]::Escape([string]$Subject.repository) + '(?:[.]git)?$')) 'Source remote repository differs.'
+    return $root
+}
+
+function Assert-SourceDeliveryCheckout([string]$Root,$Subject) {
+    Assert-SourceDelivery ((Get-SourceOnlyInputGitValue $Root @('rev-parse','HEAD') 'Source HEAD') -ceq $Subject.candidate_commit -and @((Invoke-SourceOnlyInputGit $Root @('status','--porcelain=v1','--untracked-files=all')).lines).Count -eq 0) 'Publication checkout is not the clean subject.'
+}
+
+function Get-SourceDeliveryAcceptedOwner([string]$WorkspaceRoot,$Request,[switch]$Creating,[Collections.IDictionary]$Observed) {
+    $c=$Request.consumer;$ws=[IO.Path]::GetFullPath($WorkspaceRoot)
+    Assert-SourceDelivery ($ws -ceq [IO.Path]::GetFullPath($c.workspace_root) -and (Get-MorphospaceFileSha256 $c.repository_map.path) -ceq $c.repository_map.sha256) 'Accepted owner locator/map differs.'
+    $context=Get-SourceOnlyInputContext $ws $c.unit_id $c.repository_map.path
+    $accepted=Get-SourceOnlyAcceptedTrigger -Context $context -UnitId $c.unit_id -AcceptanceEventId $c.accept_event_id -RequireCurrent:$Creating
+    Assert-SourceDelivery ($context.project.project_id -ceq $c.project_id -and $accepted.acceptance_event.event_id -ceq $c.accept_event_id -and (Get-MorphospaceCanonicalJsonSha256 $context.unit) -ceq $accepted.ledger.intent.target.unit.sha256) 'Accepted source owner contract is detached.'
+    # Accepted units with a frozen candidate retain that original map. This
+    # does not manufacture a Freeze prerequisite for genuine initial owners.
+    $marker=$context.unit.PSObject.Properties['candidate_freeze']
+    if($null -ne $marker -and $null -ne $marker.Value) {
+        $frozen=$marker.Value
+        $freezePath=Resolve-MorphospaceWorkspacePath $ws ([string]$frozen.receipt_path) -RequireLeaf
+        $freeze=Read-SourceDeliveryReference ([pscustomobject]@{path=$freezePath;sha256=[string]$frozen.receipt_sha256}) $Observed
+        Assert-SourceDelivery ($freeze.project_id -ceq $c.project_id -and $freeze.unit_id -ceq $c.unit_id -and $freeze.freeze_id -ceq $frozen.freeze_id -and $c.repository_map.sha256 -ceq $freeze.expected.repository_map_sha256 -and [IO.Path]::GetFullPath($c.repository_map.path) -ceq [IO.Path]::GetFullPath((Resolve-MorphospaceWorkspacePath $ws $freeze.expected.repository_map_path -RequireLeaf))) 'Accepted frozen owner original repository map differs.'
+    }
+    $receiptPath=Resolve-MorphospaceWorkspacePath $ws ([string]$accepted.acceptance_event.receipts[0]) -RequireLeaf
+    Assert-SourceDelivery ([IO.Path]::GetFullPath($c.accept_receipt.path) -ceq $receiptPath -and (Get-MorphospaceFileSha256 $receiptPath) -ceq $c.accept_receipt.sha256) 'Accepted source receipt binding differs.'
+    $rows=@($accepted.receipt.repository_revisions|Where-Object repo_id -CEQ $Request.source_reference.repo_id)
+    Assert-SourceDelivery ($rows.Count -eq 1 -and $rows[0].head_revision -ceq $Request.source_reference.commit -and ($Request.consumer.boundary_kind -ceq 'accepted-source-owner-reviewed-integration' -or $rows[0].head_revision -ceq $Request.publication_subject.candidate_commit)) 'Accepted source revision differs from publication subject.'
+    $scope=@($context.unit.allowed_repositories|Where-Object repo_id -CEQ $Request.publication_subject.repo_id)
+    Assert-SourceDelivery ($scope.Count -eq 1) 'Publication source is absent from accepted write authority.'
+    # Qualification and publication can start at different revisions. Preserve
+    # the receipt's exact qualified interval; never transfer its results to
+    # carried source. The complete publication interval has its own later proof.
+    $triggerPaths=@($accepted.receipt.changed_paths|Where-Object repo_id -CEQ $Request.source_reference.repo_id)
+    foreach($path in $triggerPaths) { Assert-SourceDelivery (Test-SourceOnlyInputPathAllowed $path.path @($scope[0].allowed_paths)) 'Accepted trigger path exceeds unit source authority.' }
+    $projectScope=@($context.project.repositories|Where-Object repo_id -CEQ $Request.publication_subject.repo_id)
+    Assert-SourceDelivery ($projectScope.Count -eq 1) 'Publication source is absent from accepted project authority.'
+    foreach($path in @($Request.publication_subject.allowed_paths)) { Assert-SourceDelivery (Test-SourceOnlyInputPathAllowed $path @($projectScope[0].allowed_paths)) 'Publication paths exceed project source authority.' }
+    if($Request.consumer.boundary_kind -ceq 'accepted-source-owner-reviewed-integration') {
+        Assert-SourceDelivery ($Request.source_reference.repo_id -ceq $Request.publication_subject.repo_id) 'Integration source identity differs from original accepted owner.'
+        $publicationMap=Read-SourceDeliveryReference $Request.publication_map $Observed
+        $root=Get-SourceDeliveryRepository $Request.publication_subject $publicationMap
+        Assert-SourceDelivery ((Get-SourceOnlyInputGitValue $root @('rev-parse',"$($Request.source_reference.commit)^{tree}") 'Accepted original tree') -ceq $Request.source_reference.tree) 'Original accepted source tree differs.'
+        $changed=@((Invoke-SourceOnlyInputGit $root @('diff','--name-only','--no-renames',"$($rows[0].base_revision)..$($Request.source_reference.commit)",'--')).lines|Where-Object{$_})
+        Assert-SourceOnlyInputSetEqual @($triggerPaths|ForEach-Object{$_.path}) $changed 'Original accepted complete source delta'
+        foreach($path in $changed){Assert-SourceDelivery (Test-SourceOnlyInputPathAllowed $path @($scope[0].allowed_paths)) 'Original integration source exceeds its accepted unit.'}
+        $subjectDelta=@((Invoke-SourceOnlyInputGit $root @('diff','--name-only','--no-renames',"$($Request.publication_subject.base_commit)..$($Request.publication_subject.candidate_commit)",'--')).lines|Where-Object{$_})
+        foreach($path in $subjectDelta){Assert-SourceDelivery ($changed -ccontains $path) 'Integration publication adds a path outside original accepted delta.'}
+    }
+    if($Creating) {
+        Assert-SourceDelivery ((Get-MorphospaceFileSha256 $context.unit_path) -ceq $c.unit_raw_sha256 -and (Get-MorphospaceFileSha256 $context.state_path) -ceq $c.state_raw_sha256 -and (Get-MorphospaceFileSha256 $context.events_path) -ceq $c.events_raw_sha256) 'Accepted source owner live preimage drifted.'
+    }
+    [pscustomobject]@{unit=$context.unit;original_unit=$accepted.ledger.intent.target.unit.document;accepted_paths=@($triggerPaths|ForEach-Object{$_.path})}
+}
+
+function Get-SourceDeliveryFrozenConsumer([string]$WorkspaceRoot, $Request, [switch]$Creating,[Collections.IDictionary]$Observed) {
+    if($Request.consumer.boundary_kind -cin @('accepted-source-owner','accepted-source-owner-reviewed-integration')){return Get-SourceDeliveryAcceptedOwner $WorkspaceRoot $Request -Creating:$Creating -Observed $Observed}
+    $ws = [IO.Path]::GetFullPath($WorkspaceRoot)
+    Assert-SourceDelivery ($ws -ceq [IO.Path]::GetFullPath($Request.consumer.workspace_root)) 'Consumer workspace locator differs.'
+    $c = $Request.consumer; $unitPath = "iteration-units/$($c.unit_id).json"
+    $unit = Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $ws $unitPath -RequireLeaf)
+    Assert-SourceDelivery ($unit.project_id -ceq $c.project_id -and $unit.unit_id -ceq $c.unit_id -and $unit.candidate_freeze.freeze_id -ceq $c.freeze_id -and $unit.candidate_freeze.receipt_sha256 -ceq $c.freeze_receipt_sha256) 'Consumer frozen identity differs.'
+    $freezePath = Resolve-MorphospaceWorkspacePath $ws ([string]$unit.candidate_freeze.receipt_path) -RequireLeaf
+    Assert-SourceDelivery ((Get-MorphospaceFileSha256 $freezePath) -ceq $c.freeze_receipt_sha256) 'Consumer freeze receipt drifted.'
+    $freeze = Read-MorphospaceProtocolJson $freezePath
+    Assert-SourceDelivery ($freeze.project_id -ceq $c.project_id -and $freeze.unit_id -ceq $c.unit_id -and $freeze.freeze_id -ceq $c.freeze_id) 'Frozen receipt subject differs.'
+    foreach($fixed in @(@('project.spec.json',$freeze.expected.project_sha256),@('feature.lock.json',$freeze.expected.feature_lock_sha256))) {
+        Assert-SourceDelivery ((Get-MorphospaceCanonicalJsonSha256 (Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $ws $fixed[0] -RequireLeaf))) -ceq $fixed[1]) 'Frozen consumer authority drifted.'
+    }
+    Assert-SourceDelivery ((Get-MorphospaceFileSha256 (Resolve-MorphospaceWorkspacePath $ws $freeze.expected.source_composition_path -RequireLeaf)) -ceq $freeze.expected.source_composition_sha256) 'Frozen consumer source lock drifted.'
+    Assert-SourceDelivery ($c.repository_map.sha256 -ceq $freeze.expected.repository_map_sha256 -and [IO.Path]::GetFullPath($c.repository_map.path) -ceq [IO.Path]::GetFullPath((Resolve-MorphospaceWorkspacePath $ws $freeze.expected.repository_map_path -RequireLeaf)) -and (Get-MorphospaceFileSha256 $c.repository_map.path) -ceq $c.repository_map.sha256) 'Original consumer repository map differs.'
+    $ft = Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $ws -TransactionId "$($c.freeze_id)-recorded-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath $unitPath -ExpectedEventsPath 'iteration-events.jsonl'
+    $bt = Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $ws -TransactionId "$($c.begin_event_id)-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath $unitPath -ExpectedEventsPath 'iteration-events.jsonl' -RequireTail:$Creating
+    Assert-SourceDelivery ($ft.intent.target.unit.document.status -ceq 'active' -and $bt.intent.target.unit.document.status -ceq 'validating' -and $bt.intent.event.sequence -eq ($ft.intent.event.sequence + 1) -and $bt.intent.pre.unit.sha256 -ceq $ft.intent.target.unit.sha256 -and $bt.intent.pre.state.sha256 -ceq $ft.intent.target.state.sha256 -and $bt.intent.target.unit.document.candidate_freeze.receipt_sha256 -ceq $c.freeze_receipt_sha256) 'Consumer requires its authenticated immediate Freeze and Begin.'
+    $rows = @($freeze.final_repositories | Where-Object repo_id -CEQ $Request.source_reference.repo_id)
+    Assert-SourceDelivery ($rows.Count -eq 1 -and $rows[0].commit -ceq $Request.source_reference.commit -and $rows[0].tree -ceq $Request.source_reference.tree) 'Frozen source reference differs from publication subject provenance.'
+    if ($Creating) {
+        $statePath = Join-Path $ws 'workspace.state.json'; $livePath = Join-Path $ws $unitPath
+        Assert-SourceDelivery ((Get-MorphospaceFileSha256 $statePath) -ceq $c.state_raw_sha256 -and (Get-MorphospaceFileSha256 $livePath) -ceq $c.unit_raw_sha256 -and (Get-MorphospaceFileSha256 (Join-Path $ws 'iteration-events.jsonl')) -ceq $c.events_raw_sha256) 'Consumer live preimage drifted.'
+        Assert-SourceDelivery ($unit.status -ceq 'validating' -and (Get-MorphospaceCanonicalJsonSha256 $unit) -ceq $bt.intent.target.unit.sha256 -and (Get-MorphospaceCanonicalJsonSha256 (Read-MorphospaceProtocolJson $statePath)) -ceq $bt.intent.target.state.sha256) 'Consumer is not the exact committed Begin projection.'
+    } else {
+        $state=Read-MorphospaceProtocolJson (Join-Path $ws 'workspace.state.json')
+        $latest=if($state.last_event_id -ceq $c.begin_event_id){$bt}else{Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $ws -TransactionId "$($state.last_event_id)-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath $unitPath -ExpectedEventsPath 'iteration-events.jsonl' -RequireTail}
+        Assert-SourceDelivery ($latest.event_tail_id -ceq $state.last_event_id -and (Get-MorphospaceCanonicalJsonSha256 $unit) -ceq $latest.intent.target.unit.sha256 -and (Get-MorphospaceCanonicalJsonSha256 $state) -ceq $latest.intent.target.state.sha256) 'Consumer live projection is detached from its committed continuation.'
+    }
+    return [pscustomobject]@{unit=$unit; original_unit=$bt.intent.target.unit.document}
+}
+
+function Assert-SourceDeliveryImmutableRequest($Request,$OriginalUnit,[Collections.IDictionary]$Observed) {
+    [void](Read-SourceDeliveryReference $request.ordering_supersession.human_decision $Observed -Bytes)
+    foreach ($dependency in @($request.ordering_supersession.prior_dependency_refs)) {
+        $value = $OriginalUnit
+        foreach ($part in $dependency.unit_json_pointer.TrimStart('/').Split('/')) {
+            Assert-SourceDelivery ($part -cnotmatch '~|^$') 'Unsupported dependency pointer.'
+            if ($value -is [array]) { Assert-SourceDelivery ($part -cmatch '^(0|[1-9][0-9]*)$' -and [int]$part -lt $value.Count) 'Dependency index differs.'; $value=$value[[int]$part] }
+            else { Assert-SourceDelivery ($value.PSObject.Properties.Name -ccontains $part) 'Dependency pointer is missing.'; $value=$value.$part }
+        }
+        Assert-SourceDelivery ((Get-MorphospaceCanonicalJsonSha256 $value) -ceq $dependency.value_sha256) 'Declared old publication dependency differs.'
+    }
+    [void](Read-SourceDeliveryReference $request.relationship.review $observed -Bytes)
+    if ($request.relationship.kind -ceq 'same-source') {
+        Assert-SourceDelivery ($request.source_reference.commit -ceq $request.publication_subject.candidate_commit -and $request.source_reference.tree -ceq $request.publication_subject.candidate_tree) 'Same-source relationship is false.'
+    }
+    if($Request.consumer.boundary_kind -ceq 'accepted-source-owner-reviewed-integration') {
+        Assert-SourceDelivery ($null -eq $Request.source_package -and $Request.relationship.kind -ceq 'reviewed-integration') 'Reviewed integration cannot be a semantic port or FAST grant.'
+        Assert-SourceDeliveryReviewedIntegration $Request $Observed
+        return
+    }
+    if($Request.consumer.boundary_kind -ceq 'accepted-source-owner') {
+        Assert-SourceDelivery ($null -eq $Request.source_package -and $Request.relationship.kind -ceq 'same-source') 'Accepted source-owner authority cannot transfer to another source subject or FAST package.'
+        return
+    }
+    $package = Read-SourceDeliveryReference $request.source_package $observed
+    $assessment = & (Join-Path (Split-Path $PSScriptRoot -Parent) 'tools/Test-DirectWorkPackage.ps1') -Path $request.source_package.path | ConvertFrom-Json
+    Assert-SourceDelivery ($assessment.direct_execution_allowed -eq $true -and $assessment.minimum_guard_profile -ceq 'fast') 'Source package requires its own locked/labs owner; disposition cannot downgrade it.'
+    $rows = @($package.repositories | Where-Object repository -CEQ $request.publication_subject.repository)
+    Assert-SourceDelivery ($rows.Count -eq 1 -and $rows[0].base_commit -ceq $request.publication_subject.base_commit) 'Source package base differs.'
+    foreach ($path in @($request.publication_subject.allowed_paths)) { Assert-SourceDelivery (Test-SourceOnlyInputPathAllowed $path @($rows[0].allowed_paths)) 'Source package does not authorize publication scope.' }
+}
+
+function New-MorphospaceSourceDeliveryDisposition {
+    [CmdletBinding()]
+    param([string]$RequestPath,[string]$ExpectedRequestSha256,[string]$WorkspaceRoot,[string]$RepoMapPath,[string]$HumanDecisionPath,[string]$ExpectedHumanDecisionSha256,[string]$OutPath)
+    $observed = New-SourceDeliveryObservation; $request = Read-SourceDeliveryDocument $RequestPath $ExpectedRequestSha256 'request' $observed
+    # A recorded decision is an explicit human attestation, never a new grant.
+    Assert-SourceDelivery ($request.ordering_supersession.human_decision.path -ceq [IO.Path]::GetFullPath($HumanDecisionPath) -and $request.ordering_supersession.human_decision.sha256 -ceq $ExpectedHumanDecisionSha256) 'Human decision must be separately pinned by the invoking authority.'
+    [void](Read-SourceDeliveryReference $request.ordering_supersession.human_decision $observed -Bytes)
+    $proof = Get-SourceDeliveryFrozenConsumer $WorkspaceRoot $request -Creating -Observed $observed
+    Assert-SourceDeliveryImmutableRequest $request $proof.original_unit $observed
+    Assert-SourceDelivery ([IO.Path]::GetFullPath($RepoMapPath) -ceq [IO.Path]::GetFullPath($request.publication_map.path)) 'Publication map locator differs.'
+    $map = Read-SourceDeliveryReference $request.publication_map $observed; $root = Get-SourceDeliveryRepository $request.publication_subject $map
+    if($request.consumer.boundary_kind -ceq 'accepted-source-owner-reviewed-integration'){Assert-SourceDelivery ((Get-SourceDeliveryIntegrationSourceFence $root).head -ceq $request.publication_subject.candidate_commit) 'Integration checkout is not the clean subject.'}
+    else{Assert-SourceDelivery ((Get-SourceOnlyInputGitValue $root @('rev-parse','HEAD') 'Source HEAD') -ceq $request.publication_subject.candidate_commit -and @((Invoke-SourceOnlyInputGit $root @('status','--porcelain=v1','--untracked-files=all')).lines).Count -eq 0) 'Publication checkout is not the clean subject.'}
+    $document = [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.source_delivery_disposition.v1';kind='disposition';request=$request;request_reference=Get-SourceDeliveryReference $RequestPath;adoption_pending=$true;source_landed=$false;acceptance_credit=$false}
+    Assert-SourceDeliveryObservation $observed
+    [void](Get-SourceDeliveryFrozenConsumer $WorkspaceRoot $request -Creating -Observed $observed)
+    if($request.consumer.boundary_kind -ceq 'accepted-source-owner-reviewed-integration'){Assert-SourceDelivery ((Get-SourceDeliveryIntegrationSourceFence $root).head -ceq $request.publication_subject.candidate_commit) 'Integration checkout drifted.'}else{Assert-SourceDeliveryCheckout $root $request.publication_subject}
+    Write-SourceOnlyInputDocument $document $OutPath
+}
+
+function Read-SourceDeliveryOriginal($Reference,[Collections.IDictionary]$Observed) {
+    $c = Read-SourceDeliveryReference $Reference $Observed
+    Assert-MorphospaceExactPropertySet $c @('schema','exit_code','genuine_full_eof','raw_capture_complete','process_reaped','finished_utc','intent','stdout','stderr','streams','observer_errors','termination_requested','automatic_retry') @() 'Original completion'
+    Assert-SourceDelivery ($c.exit_code -is [int] -or $c.exit_code -is [long]) 'Original exit code must be an integer.'
+    Assert-SourceDelivery ($c.schema -ceq 'task.root.command_capture_completion.v2' -and $c.exit_code -eq 0 -and $c.genuine_full_eof -eq $true -and $c.raw_capture_complete -eq $true -and $c.process_reaped -eq $true -and $c.termination_requested -eq $false -and $c.automatic_retry -eq $false -and @($c.observer_errors).Count -eq 0) 'Original did not close successfully with complete terminal streams.'
+    $intent = Read-SourceDeliveryReference $c.intent $Observed
+    Assert-MorphospaceExactPropertySet $intent @('schema','argv','cwd','started_utc','no_timeout_or_retry','capture_source') @() 'Original capture intent'
+    [void](Read-SourceDeliveryReference $intent.capture_source $Observed -Bytes)
+    Assert-MorphospaceExactPropertySet $c.streams @('stdout','stderr') @() 'Original stream set'
+    Assert-SourceDelivery ($intent.schema -ceq 'task.root.command_capture_intent.v2' -and $intent.no_timeout_or_retry -is [bool] -and $intent.no_timeout_or_retry -eq $true -and $intent.argv -is [array] -and @($intent.argv).Count -gt 0 -and @($intent.argv|Where-Object{$_ -isnot [string] -or -not $_}).Count -eq 0) 'Original intent policy differs.'
+    foreach ($name in @('stdout','stderr')) {
+        Assert-MorphospaceExactPropertySet $c.$name @('path','sha256','bytes') @() 'Original raw stream'
+        Assert-SourceDelivery (($c.$name.bytes -is [int] -or $c.$name.bytes -is [long]) -and $c.$name.bytes -ge 0) 'Original stream byte length must be a nonnegative integer.'
+        [void](Read-SourceDeliveryReference $c.$name $Observed -Bytes)
+        $s=$c.streams.$name
+        Assert-MorphospaceExactPropertySet $s @('raw','eof','drained_bytes','stored_bytes','raw_capture_complete','storage_error','read_error') @() 'Original terminal stream'
+        Assert-SourceDelivery ($s.eof -is [bool] -and $s.eof -eq $true -and $s.raw_capture_complete -is [bool] -and $s.raw_capture_complete -eq $true -and ($s.drained_bytes -is [int] -or $s.drained_bytes -is [long]) -and ($s.stored_bytes -is [int] -or $s.stored_bytes -is [long]) -and $null -eq $s.storage_error -and $null -eq $s.read_error -and $s.drained_bytes -eq $c.$name.bytes -and $s.stored_bytes -eq $c.$name.bytes -and (ConvertTo-MorphospaceCanonicalJson $s.raw) -ceq (ConvertTo-MorphospaceCanonicalJson $c.$name)) 'Original terminal stream join differs.'
+    }
+    foreach($name in @('genuine_full_eof','raw_capture_complete','process_reaped','termination_requested','automatic_retry')) { Assert-SourceDelivery ($c.$name -is [bool]) 'Original terminal flags must be Boolean.' }
+    $started=[DateTimeOffset]::MinValue;$finished=[DateTimeOffset]::MinValue
+    Assert-SourceDelivery ($intent.started_utc -is [string] -and $c.finished_utc -is [string] -and [DateTimeOffset]::TryParse($intent.started_utc,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::None,[ref]$started) -and [DateTimeOffset]::TryParse($c.finished_utc,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::None,[ref]$finished) -and $finished -ge $started) 'Original capture interval is invalid or reversed.'
+    [pscustomobject]@{completion=$c;intent=$intent}
+}
+
+function Read-SourceDeliveryProvider($Reference,[string[]]$Arguments,[Collections.IDictionary]$Observed) {
+    $original = Read-SourceDeliveryOriginal $Reference $Observed
+    Assert-SourceDelivery ((ConvertTo-MorphospaceCanonicalJson @($original.intent.argv|Select-Object -Skip 1)) -ceq (ConvertTo-MorphospaceCanonicalJson $Arguments)) 'Provider argv differs from exact read-only request.'
+    $raw = [IO.File]::ReadAllBytes([string]$original.completion.stdout.path)
+    # Hash-checked provider transport legitimately contains top-level arrays.
+    [Text.UTF8Encoding]::new($false,$true).GetString($raw) | ConvertFrom-Json -Depth 100 -DateKind String -NoEnumerate
+}
+
+function Assert-SourceDeliveryFixedQueryArguments([string[]]$Argv,[string]$Root) {
+    $expected=@('--no-optional-locks','--no-pager','--no-replace-objects','-C',$Root,'status','--porcelain=v2','--branch','--untracked-files=all')
+    $actual=@($Argv|Select-Object -Skip 1)
+    Assert-SourceDelivery ($actual.Count -eq $expected.Count -and [IO.Path]::IsPathFullyQualified([string]$actual[4])) 'Source observation is not the fixed clean-head Git query.'
+    $comparer=if($IsWindows){[StringComparer]::OrdinalIgnoreCase}else{[StringComparer]::Ordinal}
+    $observedRoot=[IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath([string]$actual[4]))
+    $expectedRoot=[IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($Root))
+    Assert-SourceDelivery ($comparer.Equals($observedRoot,$expectedRoot)) 'Source observation is not the fixed clean-head Git query.'
+    # Normalize only the fixed -C directory; every other argument remains exact.
+    $actual[4]=$expected[4]
+    Assert-SourceDelivery ((ConvertTo-MorphospaceCanonicalJson $actual) -ceq (ConvertTo-MorphospaceCanonicalJson $expected)) 'Source observation is not the fixed clean-head Git query.'
+}
+
+function Get-SourceDeliveryIntegrationEnvironment([string]$PrivateRoot) {
+    $envMap=[ordered]@{}
+    foreach($name in @('SystemRoot','WINDIR','COMSPEC','SYSTEMDRIVE','PATHEXT','LANG','LC_ALL')) {
+        $value=[Environment]::GetEnvironmentVariable($name)
+        if($null -ne $value){$envMap[$name]=$value}
+    }
+    foreach($name in @('HOME','USERPROFILE','XDG_CONFIG_HOME','TEMP','TMP')){$envMap[$name]=$PrivateRoot}
+    $envMap.GIT_CONFIG_NOSYSTEM='1';$envMap.GIT_CONFIG_SYSTEM=Join-Path $PrivateRoot 'empty-config'
+    $envMap.GIT_CONFIG_GLOBAL=$envMap.GIT_CONFIG_SYSTEM;$envMap.GIT_ATTR_NOSYSTEM='1'
+    $envMap.GIT_NO_REPLACE_OBJECTS='1';$envMap.GIT_OPTIONAL_LOCKS='0';$envMap.GIT_NO_LAZY_FETCH='1'
+    $envMap.GIT_TERMINAL_PROMPT='0';$envMap.GIT_CONFIG_COUNT='0';$envMap.LC_ALL='C'
+    return $envMap
+}
+
+function Get-SourceDeliveryIntegrationArguments($Context,[string]$Operation,[string]$Revision='', [string]$Other='') {
+    $prefix=@('--no-optional-locks','--no-replace-objects','--literal-pathspecs','-c','core.hooksPath=NUL','-c','core.attributesFile=NUL','-c','merge.renormalize=false','-C',$Context.bare)
+    $tail=switch($Operation) {
+        'Version' {@('--version')}
+        'MergeBase' {@('merge-base','--all',$Context.accepted,$Context.published)}
+        'Tree' {@('rev-parse',"$Revision`^{tree}")}
+        'Entries' {@('ls-tree','-r','--full-tree',$Revision)}
+        'Attributes' {@('check-attr',"--source=$Revision",'-z','--stdin','merge')}
+        'Merge' {@('merge-tree','--write-tree','--no-messages',$Context.accepted,$Context.published)}
+        default {throw 'Unknown private integration Git operation.'}
+    }
+    return @($prefix)+@($tail)
+}
+
+function Start-SourceDeliveryIntegrationCopy([IO.Stream]$Source,[IO.Stream]$Destination) {
+    return $Source.CopyToAsync($Destination)
+}
+
+function Invoke-SourceDeliveryIntegrationGit {
+    param($Context,[ValidateSet('Version','MergeBase','Tree','Entries','Attributes','Merge')][string]$Operation,[string]$Revision='', [byte[]]$InputBytes=@())
+    Assert-SourceDelivery ((Get-MorphospaceFileSha256 $Context.git.path) -ceq $Context.git.sha256) 'Integration Git executable changed.'
+    $args=@(Get-SourceDeliveryIntegrationArguments $Context $Operation $Revision)
+    $id=('{0:d3}-{1}' -f ($Context.commands.Count+1),$Operation)
+    $dir=Join-Path $Context.output $id;[IO.Directory]::CreateDirectory($dir)|Out-Null
+    Assert-MorphospaceNoReparseAncestor -Root ([IO.Path]::GetPathRoot($dir)) -Candidate $dir
+    $stdinPath=Join-Path $dir 'stdin.bin';[IO.File]::WriteAllBytes($stdinPath,$InputBytes)
+    $psi=[Diagnostics.ProcessStartInfo]::new();$psi.FileName=$Context.git.path;$psi.WorkingDirectory=$Context.bare
+    $psi.UseShellExecute=$false;$psi.CreateNoWindow=$true;$psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
+    $psi.Environment.Clear();foreach($key in $Context.environment.Keys){$psi.Environment[$key]=[string]$Context.environment[$key]}
+    foreach($arg in $args){$psi.ArgumentList.Add([string]$arg)}
+    $process=[Diagnostics.Process]::new();$process.StartInfo=$psi
+    $out=[IO.MemoryStream]::new();$err=[IO.MemoryStream]::new();$started=[DateTimeOffset]::UtcNow.ToString('o')
+    $issued=$false;$pending=[Collections.Generic.List[object]]::new()
+    try {
+        $issued=$process.Start();Assert-SourceDelivery $issued 'Native integration process could not start.'
+        $stdoutTask=$null;$stderrTask=$null;$observerErrors=[Collections.Generic.List[string]]::new()
+        try {$stdoutTask=Start-SourceDeliveryIntegrationCopy $process.StandardOutput.BaseStream $out} catch {$observerErrors.Add('stdout: '+$_.Exception.Message)}
+        try {$stderrTask=Start-SourceDeliveryIntegrationCopy $process.StandardError.BaseStream $err} catch {$observerErrors.Add('stderr: '+$_.Exception.Message)}
+        $stdinTask=$null
+        try {$stdinTask=$process.StandardInput.BaseStream.WriteAsync($InputBytes,0,$InputBytes.Length)} catch {$observerErrors.Add('stdin: '+$_.Exception.Message)}
+        if($null -eq $stdinTask){try {$process.StandardInput.Close()} catch {$observerErrors.Add('stdin close: '+$_.Exception.Message)}}
+        # An issued child remains ours even if input or observation fails.
+        # Drain/reap that same process; never substitute a successful capture.
+        foreach($pair in @(@('stdout',$stdoutTask),@('stderr',$stderrTask),@('stdin',$stdinTask))){if($null -ne $pair[1]){$pending.Add([pscustomobject]@{kind=$pair[0];task=$pair[1];fallback=$false})}}
+        foreach($name in @('stdout','stderr')) {
+            if(($name -ceq 'stdout' -and $null -eq $stdoutTask) -or ($name -ceq 'stderr' -and $null -eq $stderrTask)) {
+                $stream=if($name -ceq 'stdout'){$process.StandardOutput.BaseStream}else{$process.StandardError.BaseStream}
+                try {$pending.Add([pscustomobject]@{kind=$name;task=(Start-SourceDeliveryIntegrationCopy $stream ([IO.Stream]::Null));fallback=$true})}
+                catch {$observerErrors.Add($name+' fallback start: '+$_.Exception.Message);try {$stream.Close()} catch {$observerErrors.Add($name+' failed pipe close: '+$_.Exception.Message)}}
+            }
+        }
+        while($pending.Count -gt 0) {
+            [Threading.Tasks.Task[]]$tasks=@($pending|ForEach-Object{$_.task})
+            [void][Threading.Tasks.Task]::WhenAny($tasks).GetAwaiter().GetResult()
+            foreach($item in @($pending.ToArray())) {
+                if(-not $item.task.IsCompleted){continue}
+                [void]$pending.Remove($item)
+                try {[void]$item.task.GetAwaiter().GetResult()} catch {
+                    $observerErrors.Add($item.kind+' completion: '+$_.Exception.Message)
+                    if($item.kind -cne 'stdin') {
+                        $stream=if($item.kind -ceq 'stdout'){$process.StandardOutput.BaseStream}else{$process.StandardError.BaseStream}
+                        if(-not $item.fallback) {
+                            try {$pending.Add([pscustomobject]@{kind=$item.kind;task=(Start-SourceDeliveryIntegrationCopy $stream ([IO.Stream]::Null));fallback=$true})}
+                            catch {$observerErrors.Add($item.kind+' fallback start: '+$_.Exception.Message);try {$stream.Close()} catch {$observerErrors.Add($item.kind+' failed pipe close: '+$_.Exception.Message)}}
+                        } else {try {$stream.Close()} catch {$observerErrors.Add($item.kind+' failed pipe close: '+$_.Exception.Message)}}
+                    }
+                }
+                if($item.kind -ceq 'stdin'){try {$process.StandardInput.Close()} catch {$observerErrors.Add('stdin close: '+$_.Exception.Message)}}
+            }
+        }
+        $process.WaitForExit()
+        $exit=[int]$process.ExitCode;$finished=[DateTimeOffset]::UtcNow.ToString('o')
+        Assert-SourceDelivery ($out.Length -le 16777216 -and $err.Length -le 16777216) 'Native integration output exceeds its finite proof limit.'
+        $outPath=Join-Path $dir 'stdout.bin';$errPath=Join-Path $dir 'stderr.bin'
+        [IO.File]::WriteAllBytes($outPath,$out.ToArray());[IO.File]::WriteAllBytes($errPath,$err.ToArray())
+        $complete=$observerErrors.Count -eq 0
+        $record=[pscustomobject][ordered]@{operation=$Operation;revision=$Revision;arguments=$args;environment=$Context.environment_reference;git=$Context.git;stdin=Get-SourceDeliveryReference $stdinPath;stdout=Get-SourceDeliveryReference $outPath;stderr=Get-SourceDeliveryReference $errPath;started_utc=$started;finished_utc=$finished;exit_code=$exit;stdout_eof=$complete;stderr_eof=$complete;process_reaped=$true;observer_errors=@($observerErrors)}
+        $saved=Write-SourceOnlyInputDocument $record (Join-Path $dir 'native.json');$Context.commands.Add((Get-SourceDeliveryReference $saved.path))
+        Assert-SourceDelivery $complete 'Native process was reaped but input/stream capture failed; retained diagnostics are incomplete.'
+        Assert-SourceDelivery ((Get-MorphospaceFileSha256 $Context.git.path) -ceq $Context.git.sha256) 'Integration Git executable changed during native execution.'
+        return [pscustomobject]@{record=$record;text=[Text.UTF8Encoding]::new($false,$true).GetString($out.ToArray())}
+    } finally {
+        if($issued) {
+            # No exceptional observer path may abandon an already issued child.
+            try {$process.StandardInput.Close()} catch {}
+            foreach($item in @($pending.ToArray())) {try {[void]$item.task.GetAwaiter().GetResult()} catch {}}
+            try {$process.WaitForExit()} catch {}
+        }
+        $process.Dispose();$out.Dispose();$err.Dispose()
+    }
+}
+
+function ConvertFrom-SourceDeliveryTreeEntries([string]$Text) {
+    $rows=@();foreach($line in @($Text.TrimEnd("`n").Split("`n")|Where-Object{$_})) {
+        Assert-SourceDelivery ($line -cmatch '^(100644|100755) blob ([0-9a-f]{40})\t([A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*)$') 'Integration tree contains an unsupported path, type or mode.'
+        $rows+=,[pscustomobject]@{mode=$Matches[1];blob=$Matches[2];path=$Matches[3]}
+    }
+    [void](Get-SourceOnlyInputSortedPaths @($rows|ForEach-Object{$_.path}) 'Integration tree inventory')
+    return @($rows)
+}
+
+function Assert-SourceDeliveryIntegrationAttributeInventory($Inventories) {
+    $expected=$null
+    foreach($inventory in $Inventories) {
+        $attrs=@($inventory.entries|Where-Object{[IO.Path]::GetFileName($_.path) -ceq '.gitattributes'})
+        $text=ConvertTo-MorphospaceCanonicalJson $attrs
+        if($null -eq $expected){$expected=$text}else{Assert-SourceDelivery ($expected -ceq $text) 'Tracked attribute inventory/mode/blob changed across merge inputs.'}
+    }
+}
+
+function Assert-SourceDeliveryIntegrationMergeAttributes([string[]]$Paths,$Inventories,[string[]]$AttributeTexts) {
+    Assert-SourceDelivery ($Inventories.Count -eq 3 -and $AttributeTexts.Count -eq 3 -and $Paths.Count -gt 0) 'Native merge attribute input shape differs.'
+    $maps=@();$streams=@()
+    foreach($inventory in $Inventories) {
+        $map=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+        foreach($entry in @($inventory.entries)){Assert-SourceDelivery (-not $map.ContainsKey($entry.path)) 'Native merge attribute inventory repeats a path.';$map.Add($entry.path,$entry)}
+        $maps+=,$map
+    }
+    foreach($text in $AttributeTexts) {
+        $parts=$text.Split([char]0)
+        Assert-SourceDelivery ($parts.Count -eq 3*$Paths.Count+1 -and $parts[-1] -ceq '') 'Native merge attribute triples are not closed.'
+        for($i=0;$i -lt $Paths.Count;$i++){Assert-SourceDelivery ($parts[3*$i] -ceq $Paths[$i] -and $parts[3*$i+1] -ceq 'merge') 'Native merge attribute triples differ from the ordered path inventory.'}
+        $streams+=,$parts
+    }
+    for($i=0;$i -lt $Paths.Count;$i++) {
+        $state=$streams[0][3*$i+2]
+        Assert-SourceDelivery ($streams[1][3*$i+2] -ceq $state -and $streams[2][3*$i+2] -ceq $state) 'Native merge attribute states differ across inputs.'
+        if($state -ceq 'unspecified'){continue}
+        Assert-SourceDelivery ($state -ceq 'unset') 'Native merge attribute driver is outside this contract.'
+        $path=$Paths[$i];$expected=$null
+        foreach($map in $maps) {
+            Assert-SourceDelivery ($map.ContainsKey($path)) 'Native unset merge attribute requires a path present in every input.'
+            $entry=$map[$path]
+            Assert-SourceDelivery ($entry.mode -cin @('100644','100755') -and $entry.blob -cmatch '^[0-9a-f]{40}$') 'Native unset merge attribute requires a regular blob.'
+            if($null -eq $expected){$expected=$entry}else{Assert-SourceDelivery ($entry.mode -ceq $expected.mode -and $entry.blob -ceq $expected.blob) 'Native unset merge attribute requires unchanged mode and blob across inputs.'}
+        }
+    }
+}
+
+function Assert-SourceDeliveryIntegrationEntryCompatibility($Inventories) {
+    $base=@{};foreach($entry in @($Inventories[0].entries)){$base[$entry.path]=$entry}
+    foreach($path in $base.Keys){foreach($side in @(1,2)){$found=@($Inventories[$side].entries|Where-Object path -CEQ $path);Assert-SourceDelivery ($found.Count -eq 1 -and $found[0].mode -ceq $base[$path].mode) 'Integration deletion, rename or mode change is outside this contract.'}}
+    foreach($entry in @($Inventories[1].entries)){if(-not $base.ContainsKey($entry.path)){Assert-SourceDelivery (@($Inventories[2].entries|Where-Object path -CEQ $entry.path).Count -eq 0) 'Integration add/add requires a separate source correction.'}}
+}
+
+function Assert-SourceDeliveryIntegrationOriginalDelta($Inventories,[string[]]$AcceptedPaths) {
+    $base=@{};foreach($entry in @($Inventories[0].entries)){$base[$entry.path]=$entry}
+    foreach($entry in @($Inventories[1].entries)) {
+        if(-not $base.ContainsKey($entry.path) -or $base[$entry.path].blob -cne $entry.blob -or $base[$entry.path].mode -cne $entry.mode){Assert-SourceDelivery ($AcceptedPaths -ccontains $entry.path) 'Native accepted-side delta is outside the authenticated receipt paths.'}
+    }
+}
+
+function Get-SourceDeliveryIntegrationSourceFence([string]$Root) {
+    Assert-SourceDelivery (-not [Environment]::GetEnvironmentVariables().Contains('GIT_ATTR_SOURCE')) 'Ambient GIT_ATTR_SOURCE is not supported for source observation.'
+    $git=Get-SourceOnlyInputGit
+    $head=Get-SourceOnlyInputGitValue $Root @('rev-parse','HEAD') 'Integration source HEAD'
+    $safe=Get-MorphospaceGitRepositoryObservation -RepoId 'integration-source' -RepositoryPath $Root -BaseRevision $head -AllowedPaths @('integration-source') -GitExecutable $git.path
+    Assert-SourceDelivery (@($safe.status_records).Count -eq 0 -and $safe.head_revision -ceq $head) 'Integration source is dirty or changed during safe observation.'
+    $common=Get-SourceOnlyInputCommonDirectory $Root 'Integration source common directory'
+    Assert-MorphospaceNoReparseAncestor -Root ([IO.Path]::GetPathRoot($common)) -Candidate $common
+    foreach($relative in @('shallow','info/grafts','objects/info/alternates','objects/info/http-alternates','refs/replace')) {
+        Assert-SourceDelivery (-not (Test-Path -LiteralPath (Join-Path $common $relative))) 'Integration source has shallow, alternate, graft or replacement ambiguity.'
+    }
+    Assert-SourceDelivery (@(Get-ChildItem -LiteralPath (Join-Path $common 'objects/pack') -Filter '*.promisor' -ErrorAction SilentlyContinue).Count -eq 0) 'Integration source is a promisor repository.'
+    $files=@();foreach($relative in @('config','config.worktree','info/attributes','HEAD')) {
+        $path=Join-Path $common $relative
+        $files+=,[pscustomobject]@{path=$path;sha256=if(Test-Path -LiteralPath $path -PathType Leaf){(Get-SourceDeliveryReference $path).sha256}else{$null}}
+    }
+    [pscustomobject]@{common=$common;head=$head;status=@();files=$files}
+}
+
+function Invoke-SourceDeliveryIntegrationComputation {
+    param([string]$Root,[string]$Accepted,[string]$Published,[string]$OutputDirectory)
+    Assert-SourceDelivery ($Accepted -cmatch '^[0-9a-f]{40}$' -and $Published -cmatch '^[0-9a-f]{40}$') 'Integration inputs must be complete commit identities.'
+    $root=Resolve-SourceOnlyInputPath $Root Container 'Integration source';$output=[IO.Path]::GetFullPath($OutputDirectory)
+    Assert-SourceDelivery (-not (Test-Path -LiteralPath $output)) 'Integration output directory must be create-new.'
+    Assert-MorphospaceNoReparseAncestor -Root ([IO.Path]::GetPathRoot($output)) -Candidate (Split-Path -Parent $output)
+    $fence=Get-SourceDeliveryIntegrationSourceFence $root
+    $comparison=if($IsWindows){[StringComparison]::OrdinalIgnoreCase}else{[StringComparison]::Ordinal}
+    foreach($protected in @($root,$fence.common)) {
+        $prefix=$protected.TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
+        Assert-SourceDelivery (-not $output.Equals($protected,$comparison) -and -not $output.StartsWith($prefix,$comparison) -and -not $protected.StartsWith($output.TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar,$comparison)) 'Native output storage overlaps a protected source/Git root.'
+    }
+    [IO.Directory]::CreateDirectory($output)|Out-Null
+    $private=Join-Path $output 'isolated';$bare=Join-Path $private 'compute.git'
+    foreach($path in @($private,$bare,(Join-Path $bare 'objects/info'),(Join-Path $bare 'objects/pack'),(Join-Path $bare 'refs/heads'))){[IO.Directory]::CreateDirectory($path)|Out-Null}
+    Assert-MorphospaceNoReparseAncestor -Root $output -Candidate (Join-Path $bare 'objects/info')
+    Assert-MorphospaceNoReparseAncestor -Root $output -Candidate (Join-Path $bare 'refs/heads')
+    $utf8=[Text.UTF8Encoding]::new($false)
+    [IO.File]::WriteAllBytes((Join-Path $private 'empty-config'),[byte[]]@())
+    [IO.File]::WriteAllBytes((Join-Path $bare 'config'),$utf8.GetBytes("[core]`nrepositoryformatversion = 0`nbare = true`n"))
+    [IO.File]::WriteAllBytes((Join-Path $bare 'HEAD'),$utf8.GetBytes("ref: refs/heads/unborn`n"))
+    # Git treats a CR in alternates as part of the path on Windows.
+    [IO.File]::WriteAllBytes((Join-Path $bare 'objects/info/alternates'),$utf8.GetBytes((Join-Path $fence.common 'objects').Replace('\','/')+"`n"))
+    $environment=Get-SourceDeliveryIntegrationEnvironment $private
+    $environmentFile=Write-SourceOnlyInputDocument $environment (Join-Path $output 'environment.json')
+    $context=[pscustomobject]@{bare=$bare;output=$output;accepted=$Accepted;published=$Published;git=Get-SourceDeliveryReference (Get-SourceOnlyInputGit).path;environment=$environment;environment_reference=Get-SourceDeliveryReference $environmentFile.path;commands=[Collections.Generic.List[object]]::new()}
+    $config=Get-SourceDeliveryReference (Join-Path $bare 'config');$alternates=Get-SourceDeliveryReference (Join-Path $bare 'objects/info/alternates')
+    $retainedConfig=Join-Path $output 'native-config.bin';$retainedAlternates=Join-Path $output 'native-alternates.bin'
+    [IO.File]::WriteAllBytes($retainedConfig,[IO.File]::ReadAllBytes($config.path));[IO.File]::WriteAllBytes($retainedAlternates,[IO.File]::ReadAllBytes($alternates.path))
+    $version=Invoke-SourceDeliveryIntegrationGit $context Version;Assert-SourceDelivery ($version.record.exit_code -eq 0) 'Integration Git version observation failed.'
+    $base=Invoke-SourceDeliveryIntegrationGit $context MergeBase
+    Assert-SourceDelivery ($base.record.exit_code -eq 0 -and $base.text -cmatch '^[0-9a-f]{40}\n$') 'Integration requires one real unique merge base.'
+    $mergeBase=$base.text.TrimEnd("`n");$inventories=@();$trees=@()
+    foreach($commit in @($mergeBase,$Accepted,$Published)) {
+        $tree=Invoke-SourceDeliveryIntegrationGit $context Tree $commit;Assert-SourceDelivery ($tree.record.exit_code -eq 0 -and $tree.text -cmatch '^[0-9a-f]{40}\n$') 'Integration commit/tree identity failed.'
+        $trees+=,[pscustomobject]@{commit=$commit;tree=$tree.text.TrimEnd("`n")}
+        $entries=Invoke-SourceDeliveryIntegrationGit $context Entries $commit;Assert-SourceDelivery ($entries.record.exit_code -eq 0) 'Integration inventory failed.'
+        $inventories+=,[pscustomobject]@{commit=$commit;entries=@(ConvertFrom-SourceDeliveryTreeEntries $entries.text)}
+    }
+    Assert-SourceDeliveryIntegrationAttributeInventory $inventories
+    Assert-SourceDeliveryIntegrationEntryCompatibility $inventories
+    $paths=@(Get-SourceOnlyInputSortedPaths @($inventories|ForEach-Object{$_.entries}|ForEach-Object{$_.path}|Select-Object -Unique) 'Integration attribute paths')
+    $stdin=$utf8.GetBytes(($paths -join [char]0)+[char]0)
+    $attributeTexts=@()
+    foreach($commit in @($mergeBase,$Accepted,$Published)) {
+        $attrs=Invoke-SourceDeliveryIntegrationGit $context Attributes $commit $stdin
+        Assert-SourceDelivery ($attrs.record.exit_code -eq 0) 'Integration merge attribute observation failed.'
+        $attributeTexts+=,$attrs.text
+    }
+    Assert-SourceDeliveryIntegrationMergeAttributes $paths $inventories $attributeTexts
+    $merged=Invoke-SourceDeliveryIntegrationGit $context Merge
+    Assert-SourceDelivery ($merged.record.exit_code -eq 0 -and $merged.text -cmatch '^[0-9a-f]{40}\n$') 'Native integration is conflicting or did not return exactly one tree.'
+    $treeId=$merged.text.TrimEnd("`n")
+    $resultEntries=Invoke-SourceDeliveryIntegrationGit $context Entries $treeId;Assert-SourceDelivery ($resultEntries.record.exit_code -eq 0) 'Computed tree inventory failed.'
+    $result=@(ConvertFrom-SourceDeliveryTreeEntries $resultEntries.text)
+    foreach($entry in $result){Assert-SourceDelivery ($paths -ccontains $entry.path) 'Computed tree added an unknown path.'}
+    Assert-SourceDelivery ((ConvertTo-MorphospaceCanonicalJson (Get-SourceDeliveryIntegrationSourceFence $root)) -ceq (ConvertTo-MorphospaceCanonicalJson $fence)) 'Integration source/configuration changed during computation.'
+    Assert-SourceDelivery ((Get-MorphospaceFileSha256 $config.path) -ceq $config.sha256 -and (Get-MorphospaceFileSha256 $alternates.path) -ceq $alternates.sha256 -and -not (Test-Path -LiteralPath (Join-Path $bare 'info/attributes'))) 'Isolated computation policy drifted.'
+    [pscustomobject][ordered]@{accepted=$Accepted;published=$Published;merge_base=$mergeBase;trees=$trees;result_tree=$treeId;result_entries=$result;source_fence=$fence;bare=$bare;git=$context.git;environment=$context.environment_reference;config=Get-SourceDeliveryReference $retainedConfig;alternates=Get-SourceDeliveryReference $retainedAlternates;commands=@($context.commands)}
+}
+
+function Get-SourceDeliveryPublishedIntegrationParent($Reference,[Collections.IDictionary]$Observed) {
+    $document=Read-SourceDeliveryReference $Reference $Observed
+    if([string]$document.kind-ceq'source-only-published-parent'){
+        [void](Read-SourceDeliveryDocument $Reference.path $Reference.sha256 'source-only-published-parent' $Observed)
+        $parent=&$script:SourceOnlyPublishedParentOwner {param($p,$h)Test-MorphospaceRecordedSourceOnlyPublicationParent -DescriptorPath $p -ExpectedDescriptorSha256 $h} ([string]$Reference.path) ([string]$Reference.sha256)
+        foreach($raw in @($parent.observed)){[void](Read-SourceDeliveryReference $raw $Observed -Bytes)}
+        return $parent
+    }
+    $landing=Read-SourceDeliveryDocument $Reference.path $Reference.sha256 'landing' $Observed
+    $original=Read-SourceDeliveryDocument $landing.request_reference.path $landing.request_reference.sha256 'landing-request' $Observed
+    Assert-SourceDelivery ((ConvertTo-MorphospaceCanonicalJson $original) -ceq (ConvertTo-MorphospaceCanonicalJson $landing.request)) 'Published parent request is detached.'
+    $proof=Get-SourceDeliveryLandingProof $original $Observed $null
+    Assert-SourceDelivery ($proof.merge_commit -ceq $landing.merge_commit -and $proof.merge_tree -ceq $landing.merge_tree) 'Published parent proof differs.'
+    return $proof
+}
+
+function New-MorphospaceSourceDeliveryIntegrationComputation {
+    [CmdletBinding()]
+    param([string]$RequestPath,[string]$ExpectedRequestSha256,[string]$WorkspaceRoot,[string]$RepoMapPath,[string]$OutPath)
+    $observed=New-SourceDeliveryObservation
+    $request=Read-SourceDeliveryDocument $RequestPath $ExpectedRequestSha256 'integration-computation-request' $observed
+    $owner=Get-SourceDeliveryAcceptedOwner $WorkspaceRoot $request -Creating -Observed $observed
+    Assert-SourceDelivery ([IO.Path]::GetFullPath($RepoMapPath) -ceq [IO.Path]::GetFullPath($request.publication_map.path)) 'Computation publication map differs.'
+    $map=Read-SourceDeliveryReference $request.publication_map $observed
+    $root=Get-SourceDeliveryRepository $request.publication_subject $map
+    Assert-SourceDelivery ((Get-SourceDeliveryIntegrationSourceFence $root).head -ceq $request.publication_subject.candidate_commit) 'Computation checkout is not the clean subject.'
+    $published=Get-SourceDeliveryPublishedIntegrationParent $request.published_landing $observed
+    if($published.PSObject.Properties.Name-ccontains'provenance_kind'){Assert-SourceDelivery ($published.source_reference.repo_id-ceq$request.source_reference.repo_id) 'Recorded source-only parent source identity differs.'}
+    Assert-SourceDelivery ($published.merge_commit -ceq $request.publication_subject.base_commit -and $published.merge_tree -ceq $request.publication_subject.base_tree -and $published.publication_subject.repository -ceq $request.publication_subject.repository -and $published.source_reference.repo_id -ceq $request.source_reference.repo_id) 'Published integration parent/source differs.'
+    $producer=[pscustomobject][ordered]@{entrypoint=Get-SourceDeliveryReference (Join-Path $PSScriptRoot 'New-SourceOnlyPublicationInput.ps1');module=Get-SourceDeliveryReference $PSCommandPath;schema=Get-SourceDeliveryReference (Join-Path (Split-Path $PSScriptRoot -Parent) 'schemas/source-delivery-disposition-v1.schema.json');host=Get-SourceDeliveryReference ([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)}
+    foreach($ref in @($producer.entrypoint,$producer.module,$producer.schema,$producer.host)){[void](Read-SourceDeliveryReference $ref $observed -Bytes)}
+    $output=[IO.Path]::GetFullPath($OutPath)
+    Assert-SourceDelivery (-not (Test-Path -LiteralPath $output)) 'Computation output must be create-new.'
+    $native=Invoke-SourceDeliveryIntegrationComputation -Root $root -Accepted $request.source_reference.commit -Published $published.merge_commit -OutputDirectory ($output+'.native')
+    $inventories=@();foreach($index in @(3,5)){$record=Read-SourceDeliveryReference $native.commands[$index] $observed;$inventories+=,[pscustomobject]@{entries=@(ConvertFrom-SourceDeliveryTreeEntries ([Text.UTF8Encoding]::new($false,$true).GetString((Read-SourceDeliveryReference $record.stdout $observed -Bytes))))}}
+    Assert-SourceDeliveryIntegrationOriginalDelta $inventories @($owner.accepted_paths)
+    Assert-SourceDelivery ($native.result_tree -ceq $request.publication_subject.candidate_tree -and (Get-SourceOnlyInputGitValue $root @('rev-list','--parents','-n','1',$request.publication_subject.candidate_commit) 'Integration parents') -ceq "$($request.publication_subject.candidate_commit) $($request.source_reference.commit) $($published.merge_commit)") 'Integration subject is not the exact computed tree with ordered accepted/published parents.'
+    Assert-SourceDeliveryObservation $observed
+    [void](Get-SourceDeliveryAcceptedOwner $WorkspaceRoot $request -Creating -Observed $observed)
+    Assert-SourceDelivery ((Get-SourceDeliveryIntegrationSourceFence $root).head -ceq $request.publication_subject.candidate_commit) 'Computation checkout drifted.'
+    $document=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.source_delivery_disposition.v1';kind='integration-computation';request=$request;request_reference=Get-SourceDeliveryReference $RequestPath;producer=$producer;native=$native}
+    $result=Write-SourceOnlyInputDocument $document $output
+    $private=[IO.Path]::GetFullPath((Split-Path -Parent $native.bare));$nativeRoot=[IO.Path]::GetFullPath($output+'.native')
+    Assert-SourceDelivery ([IO.Path]::GetDirectoryName($private) -ceq $nativeRoot -and [IO.Path]::GetFileName($private) -ceq 'isolated') 'Unsafe private integration cleanup target.'
+    Assert-MorphospaceNoReparseAncestor -Root $nativeRoot -Candidate $private
+    Remove-Item -LiteralPath $private -Recurse -Force
+    # The CLI emits this exact raw reference into its genuine outer capture.
+    [pscustomobject][ordered]@{computation=Get-SourceDeliveryReference $result.path}
+}
+
+function Read-SourceDeliveryIntegrationNative($Computation,[Collections.IDictionary]$Observed,$Outer,[string[]]$AcceptedPaths) {
+    $n=$Computation.native;$request=$Computation.request
+    Assert-SourceDelivery ($n.accepted -ceq $request.source_reference.commit -and $n.published -ceq $request.publication_subject.base_commit -and $n.result_tree -ceq $request.publication_subject.candidate_tree) 'Native computation inputs/result differ.'
+    $environment=Read-SourceDeliveryReference $n.environment $Observed
+    $private=Split-Path -Parent $n.bare
+    $expectedEnvironment=Get-SourceDeliveryIntegrationEnvironment $private
+    # Ambient OS values are retained observations, not later environment requirements.
+    foreach($key in @('SystemRoot','WINDIR','COMSPEC','SYSTEMDRIVE','PATHEXT','LANG')) {
+        $prop=$environment.PSObject.Properties[$key]
+        if($null -ne $prop){$expectedEnvironment[$key]=$prop.Value}else{$expectedEnvironment.Remove($key)}
+    }
+    Assert-SourceDelivery ((ConvertTo-MorphospaceCanonicalJson $environment) -ceq (ConvertTo-MorphospaceCanonicalJson $expectedEnvironment)) 'Native computation environment policy differs.'
+    [void](Read-SourceDeliveryReference $n.git $Observed -Bytes)
+    $config=[Text.UTF8Encoding]::new($false,$true).GetString((Read-SourceDeliveryReference $n.config $Observed -Bytes))
+    $alternates=[Text.UTF8Encoding]::new($false,$true).GetString((Read-SourceDeliveryReference $n.alternates $Observed -Bytes))
+    Assert-SourceDelivery ($config -ceq "[core]`nrepositoryformatversion = 0`nbare = true`n" -and $alternates -ceq ((Join-Path $n.source_fence.common 'objects').Replace('\','/')+"`n")) 'Native isolated config/readonly object input differs.'
+    $ctx=[pscustomobject]@{bare=$n.bare;accepted=$n.accepted;published=$n.published}
+    $operations=@(@('Version',''),@('MergeBase',''),@('Tree',$n.merge_base),@('Entries',$n.merge_base),@('Tree',$n.accepted),@('Entries',$n.accepted),@('Tree',$n.published),@('Entries',$n.published),@('Attributes',$n.merge_base),@('Attributes',$n.accepted),@('Attributes',$n.published),@('Merge',''),@('Entries',$n.result_tree))
+    Assert-SourceDelivery (@($n.commands).Count -eq $operations.Count) 'Native computation command inventory differs.'
+    $records=@();$texts=@();$inventories=@();$previous=[DateTimeOffset]::Parse($Outer.intent.started_utc,[Globalization.CultureInfo]::InvariantCulture)
+    for($i=0;$i -lt $operations.Count;$i++) {
+        $record=Read-SourceDeliveryReference $n.commands[$i] $Observed
+        $schema=Join-Path (Split-Path $PSScriptRoot -Parent) 'schemas/source-delivery-disposition-v1.schema.json'
+        $schemaDoc=Read-MorphospaceProtocolJson $schema
+        $nativeSchema=[pscustomobject]@{'$schema'=$schemaDoc.'$schema';'$defs'=$schemaDoc.'$defs';'$ref'='#/$defs/native_record'}
+        Assert-SourceDelivery (Test-Json -Json ($record|ConvertTo-Json -Depth 100) -Schema ($nativeSchema|ConvertTo-Json -Depth 100) -ErrorAction SilentlyContinue) 'Native record is not closed.'
+        $op=$operations[$i]
+        Assert-SourceDelivery ($record.operation -ceq $op[0] -and $record.revision -ceq $op[1] -and (ConvertTo-MorphospaceCanonicalJson $record.arguments) -ceq (ConvertTo-MorphospaceCanonicalJson @(Get-SourceDeliveryIntegrationArguments $ctx $op[0] $op[1])) -and (ConvertTo-MorphospaceCanonicalJson $record.environment) -ceq (ConvertTo-MorphospaceCanonicalJson $n.environment) -and (ConvertTo-MorphospaceCanonicalJson $record.git) -ceq (ConvertTo-MorphospaceCanonicalJson $n.git)) 'Native fixed command or operation binding differs.'
+        $start=[DateTimeOffset]::Parse($record.started_utc,[Globalization.CultureInfo]::InvariantCulture);$finish=[DateTimeOffset]::Parse($record.finished_utc,[Globalization.CultureInfo]::InvariantCulture)
+        Assert-SourceDelivery ($start -ge $previous -and $finish -ge $start -and $finish -le [DateTimeOffset]::Parse($Outer.completion.finished_utc,[Globalization.CultureInfo]::InvariantCulture) -and $record.exit_code -eq 0 -and $record.stdout_eof -is [bool] -and $record.stderr_eof -is [bool] -and $record.process_reaped -is [bool]) 'Native execution/terminal/outer interval differs.'
+        $previous=$finish
+        $stdin=Read-SourceDeliveryReference $record.stdin $Observed -Bytes
+        $text=[Text.UTF8Encoding]::new($false,$true).GetString((Read-SourceDeliveryReference $record.stdout $Observed -Bytes))
+        [void](Read-SourceDeliveryReference $record.stderr $Observed -Bytes)
+        if($op[0] -cne 'Attributes'){Assert-SourceDelivery ($stdin.Length -eq 0) 'Unexpected native stdin.'}
+        if($op[0] -ceq 'Entries' -and $i -lt 8){$inventories+=,[pscustomobject]@{commit=$op[1];entries=@(ConvertFrom-SourceDeliveryTreeEntries $text)}}
+        $records+=,$record;$texts+=,$text
+    }
+    Assert-SourceDelivery ($texts[0] -cmatch '^git version [^\r\n]+\n$' -and $texts[1] -ceq ($n.merge_base+"`n") -and $texts[11] -ceq ($n.result_tree+"`n")) 'Native version/base/single-tree output differs.'
+    for($i=0;$i -lt 3;$i++){Assert-SourceDelivery ($n.trees[$i].commit -ceq @($n.merge_base,$n.accepted,$n.published)[$i] -and $texts[2+$i*2] -ceq ($n.trees[$i].tree+"`n")) 'Native immutable commit/tree join differs.'}
+    Assert-SourceDelivery ($n.trees[1].tree -ceq $request.source_reference.tree -and $n.trees[2].tree -ceq $request.publication_subject.base_tree) 'Native accepted/published source trees differ.'
+    Assert-SourceDeliveryIntegrationAttributeInventory $inventories
+    Assert-SourceDeliveryIntegrationEntryCompatibility $inventories
+    Assert-SourceDeliveryIntegrationOriginalDelta $inventories $AcceptedPaths
+    $paths=@(Get-SourceOnlyInputSortedPaths @($inventories|ForEach-Object{$_.entries}|ForEach-Object{$_.path}|Select-Object -Unique) 'Native merged paths')
+    $expectedIn=[Text.UTF8Encoding]::new($false).GetBytes(($paths -join [char]0)+[char]0)
+    foreach($i in @(8,9,10)){Assert-SourceDelivery ([Convert]::ToBase64String((Read-SourceDeliveryReference $records[$i].stdin $Observed -Bytes)) -ceq [Convert]::ToBase64String($expectedIn)) 'Native merge attribute stdin differs.'}
+    Assert-SourceDeliveryIntegrationMergeAttributes $paths $inventories @($texts[8],$texts[9],$texts[10])
+    $result=@(ConvertFrom-SourceDeliveryTreeEntries $texts[12])
+    Assert-SourceDelivery ((ConvertTo-MorphospaceCanonicalJson $result) -ceq (ConvertTo-MorphospaceCanonicalJson $n.result_entries)) 'Native computed tree inventory differs.'
+    foreach($entry in $result){Assert-SourceDelivery ($paths -ccontains $entry.path) 'Computed tree contains an unexplained path.'}
+}
+
+function Assert-SourceDeliveryReviewedIntegration($Request,[Collections.IDictionary]$Observed) {
+    $integration=$Request.integration
+    $computation=Read-SourceDeliveryDocument $integration.computation.path $integration.computation.sha256 'integration-computation' $Observed
+    $input=Read-SourceDeliveryDocument $computation.request_reference.path $computation.request_reference.sha256 'integration-computation-request' $Observed
+    Assert-SourceDelivery ((ConvertTo-MorphospaceCanonicalJson $input) -ceq (ConvertTo-MorphospaceCanonicalJson $computation.request)) 'Computation embedded request is detached.'
+    foreach($name in @('consumer','source_reference','publication_subject','publication_map')){Assert-SourceDelivery ((ConvertTo-MorphospaceCanonicalJson $input.$name) -ceq (ConvertTo-MorphospaceCanonicalJson $Request.$name)) 'Computation source/owner/subject differs.'}
+    Assert-SourceDelivery ((ConvertTo-MorphospaceCanonicalJson $input.published_landing) -ceq (ConvertTo-MorphospaceCanonicalJson $integration.published_landing)) 'Computation published proof differs.'
+    $outer=Read-SourceDeliveryOriginal $integration.computation_original $Observed
+    $producer=$computation.producer
+    foreach($ref in @($producer.entrypoint,$producer.module,$producer.schema,$producer.host)){[void](Read-SourceDeliveryReference $ref $Observed -Bytes)}
+    $expected=@($producer.host.path,'-NoProfile','-File',$producer.entrypoint.path,'-Action','ComputeReviewedIntegration','-WorkspaceRoot',$input.consumer.workspace_root,'-RepoMapPath',$input.publication_map.path,'-RequestPath',$computation.request_reference.path,'-ExpectedRequestSha256',$computation.request_reference.sha256,'-OutPath',$integration.computation.path)
+    Assert-SourceDelivery ((ConvertTo-MorphospaceCanonicalJson @($outer.intent.argv)) -ceq (ConvertTo-MorphospaceCanonicalJson $expected)) 'Computation outer fixed invocation differs.'
+    $stdout=ConvertFrom-MorphospaceProtocolJsonBytes -Bytes (Read-SourceDeliveryReference $outer.completion.stdout $Observed -Bytes) -Context 'ComputeReviewedIntegration output'
+    Assert-MorphospaceExactPropertySet $stdout @('computation') @() 'Computation outer output'
+    Assert-SourceDelivery ((ConvertTo-MorphospaceCanonicalJson $stdout.computation) -ceq (ConvertTo-MorphospaceCanonicalJson $integration.computation)) 'Outer original does not bind this exact computation output.'
+    $published=Get-SourceDeliveryPublishedIntegrationParent $integration.published_landing $Observed
+    if($published.PSObject.Properties.Name-ccontains'provenance_kind'){Assert-SourceDelivery ($published.source_reference.repo_id-ceq$Request.source_reference.repo_id) 'Recorded source-only parent source identity differs.'}
+    Assert-SourceDelivery ($published.merge_commit -ceq $input.publication_subject.base_commit -and $published.merge_tree -ceq $input.publication_subject.base_tree -and $published.publication_subject.repository -ceq $input.publication_subject.repository) 'Reviewed integration published parent differs.'
+    $owner=Get-SourceDeliveryAcceptedOwner $Request.consumer.workspace_root $Request -Observed $Observed
+    Read-SourceDeliveryIntegrationNative $computation $Observed $outer @($owner.accepted_paths)
+    $map=Read-SourceDeliveryReference $Request.publication_map $Observed;$root=Get-SourceDeliveryRepository $Request.publication_subject $map
+    Assert-SourceDelivery ((Get-SourceOnlyInputGitValue $root @('rev-list','--parents','-n','1',$Request.publication_subject.candidate_commit) 'Reviewed integration parents') -ceq "$($Request.publication_subject.candidate_commit) $($Request.source_reference.commit) $($published.merge_commit)") 'Reviewed integration ordered parents differ.'
+}
+
+function Get-SourceDeliveryLandingProof($Request,[Collections.IDictionary]$Observed,$Map,[switch]$Observe) {
+    $disposition = Read-SourceDeliveryDocument $Request.disposition.path $Request.disposition.sha256 'disposition' $Observed
+    $d = $disposition.request; $s=$d.publication_subject
+    $originalRequest=Read-SourceDeliveryDocument $disposition.request_reference.path $disposition.request_reference.sha256 'request' $Observed
+    Assert-SourceDelivery ((ConvertTo-MorphospaceCanonicalJson $d) -ceq (ConvertTo-MorphospaceCanonicalJson $originalRequest)) 'Disposition request bytes and embedded request differ.'
+    $consumerProof=Get-SourceDeliveryFrozenConsumer $d.consumer.workspace_root $d -Observed $Observed
+    Assert-SourceDeliveryImmutableRequest $d $consumerProof.original_unit $Observed
+    [void](Read-SourceDeliveryReference $d.ordering_supersession.human_decision $Observed -Bytes)
+    [void](Read-SourceDeliveryReference $d.relationship.review $Observed -Bytes)
+    [void](Read-SourceDeliveryReference $Request.source_review $Observed -Bytes)
+    $publicationMap = Read-SourceDeliveryReference $d.publication_map $Observed
+    $root = Get-SourceDeliveryRepository $s $publicationMap
+    $provider = Get-SourceDeliveryReference $Request.provider.path
+    Assert-SourceDelivery ($provider.sha256 -ceq $Request.provider.sha256) 'Qualified provider executable drifted.'
+    [void](Read-SourceDeliveryReference $Request.provider $Observed -Bytes)
+    [void](Read-SourceDeliveryReference $Request.source_git $Observed -Bytes)
+    $before=Read-SourceDeliveryOriginal $Request.source_before_original $Observed
+    $after=Read-SourceDeliveryOriginal $Request.source_after_original $Observed
+    foreach($snapshot in @($before,$after)) {
+        Assert-SourceDeliveryFixedQueryArguments @($snapshot.intent.argv) $root
+        Assert-SourceDelivery ([IO.Path]::GetFullPath([string]$snapshot.intent.argv[0]) -ceq [IO.Path]::GetFullPath($Request.source_git_invocation_path)) 'Original source Git executable identity differs.'
+        $lines=@([IO.File]::ReadAllLines($snapshot.completion.stdout.path))
+        Assert-SourceDelivery (@($lines|Where-Object {$_ -ceq "# branch.oid $($s.candidate_commit)"}).Count -eq 1 -and @($lines|Where-Object {$_ -and -not $_.StartsWith('# ')}).Count -eq 0) 'Source observation is dirty or names another head.'
+    }
+    $begin=[DateTimeOffset]::Parse($before.completion.finished_utc,[Globalization.CultureInfo]::InvariantCulture)
+    $end=[DateTimeOffset]::Parse($after.intent.started_utc,[Globalization.CultureInfo]::InvariantCulture)
+    Assert-SourceDelivery ($end -ge $begin) 'Source observation interval is reversed.'
+    Assert-SourceDelivery (@($Request.source_checks).Count -eq @($d.source_check_commands).Count) 'Source checks are incomplete.'
+    for ($i=0;$i -lt @($Request.source_checks).Count;$i++) {
+        $check = Read-SourceDeliveryOriginal $Request.source_checks[$i] $Observed
+        Assert-SourceDelivery ((ConvertTo-MorphospaceCanonicalJson @($check.intent.argv)) -ceq (ConvertTo-MorphospaceCanonicalJson @($d.source_check_commands[$i])) -and [IO.Path]::GetFullPath([string]$check.intent.cwd) -ceq $root) 'Source check command or executing checkout differs.'
+        Assert-SourceDelivery ([DateTimeOffset]::Parse($check.intent.started_utc,[Globalization.CultureInfo]::InvariantCulture) -ge $begin -and [DateTimeOffset]::Parse($check.completion.finished_utc,[Globalization.CultureInfo]::InvariantCulture) -le $end) 'Source check is outside the clean subject observation interval.'
+    }
+    $endpoint="repos/$($s.repository)/pulls/$($Request.pull_request_number)"
+    $pr=Read-SourceDeliveryProvider $Request.pull_request_original @('api','--method','GET',$endpoint) $Observed
+    Assert-SourceDelivery ($pr.number -eq $Request.pull_request_number -and $pr.state -ceq 'closed' -and $pr.merged -eq $true -and $pr.head.sha -ceq $s.candidate_commit -and $pr.base.ref -ceq 'main' -and $pr.base.repo.full_name -ceq $s.repository -and $pr.head.repo.full_name -ceq $s.repository) 'Merged PR subject/repository/target differs.'
+    $checks=Read-SourceDeliveryProvider $Request.required_checks_original @('pr','checks',[string]$Request.pull_request_number,'--repo',$s.repository,'--required','--json','name,state,link') $Observed
+    Assert-SourceDelivery (@($checks).Count -gt 0 -and @($checks|Where-Object { $_.state -cne 'SUCCESS' -or -not $_.name -or -not $_.link }).Count -eq 0) 'Actual required checks are not all successful.'
+    $operation=Read-SourceDeliveryOriginal $Request.merge_original $Observed
+    $requiredOriginal=Read-SourceDeliveryOriginal $Request.required_checks_original $Observed
+    $prOriginal=Read-SourceDeliveryOriginal $Request.pull_request_original $Observed
+    foreach($original in @($operation,$requiredOriginal,$prOriginal)) { Assert-SourceDelivery ([IO.Path]::GetFullPath([string]$original.intent.argv[0]) -ceq [IO.Path]::GetFullPath($Request.provider_invocation_path)) 'Provider executable identity differs.' }
+    Assert-SourceDelivery ([DateTimeOffset]::Parse($requiredOriginal.intent.started_utc,[Globalization.CultureInfo]::InvariantCulture) -ge [DateTimeOffset]::Parse($pr.merged_at,[Globalization.CultureInfo]::InvariantCulture) -and [DateTimeOffset]::Parse($prOriginal.intent.started_utc,[Globalization.CultureInfo]::InvariantCulture) -ge [DateTimeOffset]::Parse($requiredOriginal.completion.finished_utc,[Globalization.CultureInfo]::InvariantCulture)) 'Required-check readback must follow the actual merge and precede the final exact PR readback.'
+    Assert-SourceDelivery ((ConvertTo-MorphospaceCanonicalJson @($operation.intent.argv|Select-Object -Skip 1)) -ceq (ConvertTo-MorphospaceCanonicalJson @('pr','merge',[string]$Request.pull_request_number,'--repo',$s.repository,'--merge','--match-head-commit',$s.candidate_commit))) 'Normal merge command is not bound to the qualified subject.'
+    $mergeTime=[DateTimeOffset]::Parse($pr.merged_at,[Globalization.CultureInfo]::InvariantCulture)
+    $operationStart=[DateTimeOffset]::Parse($operation.intent.started_utc,[Globalization.CultureInfo]::InvariantCulture);$operationFinish=[DateTimeOffset]::Parse($operation.completion.finished_utc,[Globalization.CultureInfo]::InvariantCulture)
+    Assert-SourceDelivery ($operationStart -ge [DateTimeOffset]::Parse($after.completion.finished_utc,[Globalization.CultureInfo]::InvariantCulture) -and $mergeTime.ToUnixTimeSeconds() -ge $operationStart.ToUnixTimeSeconds() -and $mergeTime.ToUnixTimeSeconds() -le $operationFinish.ToUnixTimeSeconds() -and [DateTimeOffset]::Parse($requiredOriginal.intent.started_utc,[Globalization.CultureInfo]::InvariantCulture) -ge $operationFinish) 'Source checks, actual merge and required-check readback chronology differ.'
+    $merge=[string]$pr.merge_commit_sha
+    Assert-SourceDelivery ($merge -cmatch '^[0-9a-f]{40}$' -and (Get-SourceOnlyInputGitValue $root @('rev-list','--parents','-n','1',$merge) 'Merge parents') -ceq "$merge $($s.base_commit) $($s.candidate_commit)" -and (Get-SourceOnlyInputGitValue $root @('rev-parse',"$merge^{tree}") 'Merge tree') -ceq $s.candidate_tree) 'Ordinary two-parent merge/tree differs.'
+    if ($Observe) {
+        $git=Get-SourceOnlyInputGit
+        Assert-SourceDelivery ([IO.Path]::GetFullPath($git.path) -ceq [IO.Path]::GetFullPath($Request.source_git_invocation_path) -and $git.sha256 -ceq $Request.source_git.sha256 -and (Get-MorphospaceFileSha256 $Request.provider_invocation_path) -ceq $Request.provider.sha256) 'Observed original executable pins differ from retained evidence bytes.'
+        if($d.consumer.boundary_kind -ceq 'accepted-source-owner-reviewed-integration'){Assert-SourceDelivery ((Get-SourceDeliveryIntegrationSourceFence $root).head -ceq $s.candidate_commit) 'Integration checkout drifted.'}
+        else{Assert-SourceDelivery ((Get-SourceOnlyInputGitValue $root @('rev-parse','HEAD') 'Source HEAD') -ceq $s.candidate_commit -and @((Invoke-SourceOnlyInputGit $root @('status','--porcelain=v1','--untracked-files=all')).lines).Count -eq 0) 'Publication checkout drifted.'}
+        $remote=Get-SourceOnlyInputGitValue $root @('remote','get-url','origin') 'Source remote'
+        $readback=Get-SourceOnlyInputRemoteReadback $root $remote 'main'
+        Assert-SourceDelivery ($readback.status -ceq 'observed' -and (Invoke-SourceOnlyInputGit $root @('merge-base','--is-ancestor',$merge,$readback.revision) -AllowFailure).exit_code -eq 0) 'Fresh remote does not retain the actual merge.'
+    }
+    return [pscustomobject]@{disposition=$disposition;merge_commit=$merge;merge_tree=$s.candidate_tree;source_reference=$d.source_reference;publication_subject=$s;relationship=$d.relationship}
+}
+
+function New-MorphospaceSourceDeliveryLanding {
+    [CmdletBinding()]
+    param([string]$RequestPath,[string]$ExpectedRequestSha256,[string]$RepoMapPath,[string]$OutPath)
+    $observed=New-SourceDeliveryObservation; $request=Read-SourceDeliveryDocument $RequestPath $ExpectedRequestSha256 'landing-request' $observed
+    $map=Read-MorphospaceProtocolJson $RepoMapPath
+    Assert-SourceDelivery ([IO.Path]::GetFullPath($RepoMapPath) -ceq [IO.Path]::GetFullPath((Read-SourceDeliveryDocument $request.disposition.path $request.disposition.sha256 'disposition' $observed).request.publication_map.path)) 'Landing observation map locator differs.'
+    $proof=Get-SourceDeliveryLandingProof $request $observed $map -Observe
+    $doc=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.source_delivery_disposition.v1';kind='landing';request=$request;request_reference=Get-SourceDeliveryReference $RequestPath;merge_commit=$proof.merge_commit;merge_tree=$proof.merge_tree;adoption_pending=$true;source_landed=$true;acceptance_credit=$false}
+    Assert-SourceDeliveryObservation $observed
+    $d=(Read-SourceDeliveryDocument $request.disposition.path $request.disposition.sha256 'disposition' $observed).request
+    $root=Get-SourceDeliveryRepository $d.publication_subject $map
+    if($d.consumer.boundary_kind -ceq 'accepted-source-owner-reviewed-integration'){Assert-SourceDelivery ((Get-SourceDeliveryIntegrationSourceFence $root).head -ceq $d.publication_subject.candidate_commit) 'Integration checkout drifted.'}else{Assert-SourceDeliveryCheckout $root $d.publication_subject}
+    Write-SourceOnlyInputDocument $doc $OutPath
+}
+
+function Test-MorphospaceSourceDeliveryLanding {
+    [CmdletBinding()]
+    param([string]$LandingPath,[string]$ExpectedLandingSha256,[string]$WorkspaceRoot,[string]$UnitId,[object]$RepositoryMap)
+    $observed=New-SourceDeliveryObservation; $landing=Read-SourceDeliveryDocument $LandingPath $ExpectedLandingSha256 'landing' $observed
+    $originalRequest=Read-SourceDeliveryDocument $landing.request_reference.path $landing.request_reference.sha256 'landing-request' $observed
+    Assert-SourceDelivery ((ConvertTo-MorphospaceCanonicalJson $landing.request) -ceq (ConvertTo-MorphospaceCanonicalJson $originalRequest)) 'Landing request bytes and embedded request differ.'
+    $map=if($RepositoryMap -is [string]){Read-MorphospaceProtocolJson $RepositoryMap}elseif($RepositoryMap -is [hashtable]){[pscustomobject]@{repositories=@($RepositoryMap.Values)}}else{$RepositoryMap}
+    $proof=Get-SourceDeliveryLandingProof $landing.request $observed $map
+    Assert-SourceDelivery ($landing.merge_commit -ceq $proof.merge_commit -and $landing.merge_tree -ceq $proof.merge_tree -and $proof.disposition.request.consumer.unit_id -ceq $UnitId) 'Landed evidence subject differs.'
+    Assert-SourceDelivery ([IO.Path]::GetFullPath($WorkspaceRoot) -ceq [IO.Path]::GetFullPath($proof.disposition.request.consumer.workspace_root)) 'Consumer workspace locator differs.'
+    $originalMap=Read-SourceDeliveryReference $proof.disposition.request.consumer.repository_map $observed
+    Assert-SourceDelivery (@($originalMap.repositories).Count -eq @($map.repositories).Count) 'Consumer map membership differs.'
+    foreach($row in @($originalMap.repositories)) {
+        $matches=@($map.repositories|Where-Object {[string]$_.repo_id -ceq [string]$row.repo_id -and [string]$_.role -ceq [string]$row.role -and [IO.Path]::GetFullPath([string]$_.path) -ceq [IO.Path]::GetFullPath([string]$row.path)})
+        Assert-SourceDelivery ($matches.Count -eq 1) 'Consumer map root differs.'
+    }
+    Assert-SourceDeliveryObservation $observed
+    # This authenticates source delivery only. The caller retains every criterion,
+    # gate, source, tooling, instruction, validation and acceptance predicate.
+    return $true
+}
+
 Export-ModuleMember -Function `
     Get-MorphospaceSourceOnlyPublicationReadiness, New-MorphospaceSourceOnlyPublicationPlan, `
     Start-MorphospaceSourceOnlyPublicationOperation, Complete-MorphospaceSourceOnlyPublicationOperationObservation, `
-    New-MorphospaceSourceOnlyPublicationExecution
+    New-MorphospaceSourceOnlyPublicationExecution, New-MorphospaceSourceDeliveryDisposition, `
+    New-MorphospaceSourceDeliveryLanding, Test-MorphospaceSourceDeliveryLanding, New-MorphospaceSourceDeliveryIntegrationComputation

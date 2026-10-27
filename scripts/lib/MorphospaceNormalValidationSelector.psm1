@@ -111,13 +111,20 @@ function Resolve-MorphospaceNormalValidationSelector {
         [Parameter(Mandatory = $true)][object[]]$DeclaredValidationMatrix,
         [Parameter(Mandatory = $true)][string]$Action,
         [Parameter(Mandatory = $true)][string]$ValidationTier,
-        [object]$BoundSelection = $null
+        [object]$BoundSelection = $null,
+        [string]$ConsumedValidationReceipt = '',
+        [string]$ExpectedConsumedValidationReceiptSha256 = ''
     )
 
     $consumptionActions = @('ReturnToActive', 'RecordValidation', 'Accept')
     $evidencePhase = if ($Action -ceq 'BeginValidation') { 'dispatch' } elseif ($Action -cin $consumptionActions) { 'consumption' } else { '' }
     if (-not $evidencePhase) { throw 'A normal-validation selector is valid only for BeginValidation or a receipt-consuming validation lifecycle action.' }
-    if ($ValidationTier -cne 'quick') { throw 'A normal-validation selector is valid only for the Quick tier.' }
+    if ($ConsumedValidationReceipt -or $ExpectedConsumedValidationReceiptSha256) {
+        if ($evidencePhase -cne 'consumption' -or $null -eq $BoundSelection -or -not $ConsumedValidationReceipt -or
+            $ExpectedConsumedValidationReceiptSha256 -cnotmatch '^[0-9a-f]{64}$') {
+            throw 'Final normal-validation consumption requires the exact native-consumed receipt path/raw binding and selected tuple.'
+        }
+    }
     if ($ExpectedSelectorSha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'Expected normal-validation selector SHA-256 is required in lowercase hexadecimal.' }
     if ($SelectorReference -cnotmatch '^validation-authority/selectors/[a-z0-9][a-z0-9-]{1,127}\.json$') {
         throw 'Normal-validation selectors must be exact files under validation-authority/selectors/.'
@@ -127,7 +134,11 @@ function Resolve-MorphospaceNormalValidationSelector {
     $selectorPath = Resolve-MorphospaceSelectorWorkspacePath -WorkspaceRoot $workspace -RelativePath $SelectorReference -RequireLeaf
     $selectorSha256 = Get-MorphospaceFileSha256 $selectorPath
     if ($selectorSha256 -cne $ExpectedSelectorSha256) { throw 'Normal-validation selector SHA-256 does not match the expected owner binding.' }
-    $schemaPath = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'schemas\normal-validation-selector-v1.schema.json'
+    $selector = Read-MorphospaceProtocolJson $selectorPath
+    $declaredTier = [string]$selector.schema -ceq 'rusty.morphospace.workflow.normal_validation_selector.v2'
+    if (-not $declaredTier -and $ValidationTier -cne 'quick') { throw 'A normal-validation selector is valid only for the Quick tier.' }
+    $schemaName = if ($declaredTier) { 'normal-validation-selector-v2.schema.json' } else { 'normal-validation-selector-v1.schema.json' }
+    $schemaPath = Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) "schemas/$schemaName"
     try {
         $selectorValid = Test-Json -Json (Get-Content -Raw -LiteralPath $selectorPath) -SchemaFile $schemaPath
     } catch {
@@ -137,6 +148,11 @@ function Resolve-MorphospaceNormalValidationSelector {
         throw 'Normal-validation selector does not satisfy normal-validation-selector-v1.schema.json.'
     }
     $selector = Read-MorphospaceProtocolJson $selectorPath
+    if ([string]$selector.selection.tier -cne $ValidationTier) { throw 'Normal-validation selector declared tier differs from the requested lifecycle tier.' }
+    if ($declaredTier) {
+        $tierRank=@{quick=0;standard=1;deep=2}
+        if (-not $tierRank.ContainsKey([string]$Unit.risk_tier) -or $tierRank[$ValidationTier] -lt $tierRank[[string]$Unit.risk_tier]) { throw 'Declared-tier selection may not downgrade the admitted unit risk tier.' }
+    }
     $selectorLeafId = [IO.Path]::GetFileNameWithoutExtension($selectorPath)
     if ([string]$selector.selector_id -cne $selectorLeafId) {
         throw 'Normal-validation selector file leaf must exactly equal selector_id.'
@@ -192,7 +208,7 @@ function Resolve-MorphospaceNormalValidationSelector {
         throw 'Normal-validation selector candidate-freeze receipt bytes drifted.'
     }
     $freezeReceipt = Read-MorphospaceProtocolJson $freezePath
-    if (@('rusty.morphospace.workflow.candidate_freeze.v1','rusty.morphospace.workflow.candidate_freeze.v2','rusty.morphospace.workflow.candidate_freeze.v3') -cnotcontains [string]$freezeReceipt.schema -or
+    if (@('rusty.morphospace.workflow.candidate_freeze.v1','rusty.morphospace.workflow.candidate_freeze.v2','rusty.morphospace.workflow.candidate_freeze.v3','rusty.morphospace.workflow.candidate_freeze.v4') -cnotcontains [string]$freezeReceipt.schema -or
         [string]$freezeReceipt.project_id -cne [string]$Spec.project_id -or
         [string]$freezeReceipt.unit_id -cne [string]$Unit.unit_id -or
         [string]$freezeReceipt.freeze_id -cne [string]$unitFreeze.freeze_id) {
@@ -203,7 +219,13 @@ function Resolve-MorphospaceNormalValidationSelector {
     }
 
     $producerRelative = [string]$selector.selection.producer.path
-    $producerPath = Resolve-MorphospaceSelectorWorkspacePath -WorkspaceRoot $workspace -RelativePath $producerRelative -RequireLeaf
+    $producerObservation = $null
+    if ($declaredTier) {
+        $producerObservation = Get-MorphospaceDeclaredTierProducer -WorkspaceRoot $workspace -Unit $Unit -Selector $selector
+        $producerPath = $producerObservation.producer_path
+    } else {
+        $producerPath = Resolve-MorphospaceSelectorWorkspacePath -WorkspaceRoot $workspace -RelativePath $producerRelative -RequireLeaf
+    }
     if ((Get-MorphospaceFileSha256 $producerPath) -cne [string]$selector.selection.producer.sha256) {
         throw 'Normal-validation selector evidence producer bytes drifted.'
     }
@@ -234,6 +256,7 @@ function Resolve-MorphospaceNormalValidationSelector {
         $evidenceAncestor = $nextAncestor
     }
     $evidenceSha256 = $null
+    $producerResult = $null
     if ($evidencePhase -ceq 'dispatch') {
         if (Test-Path -LiteralPath $evidence) { throw 'Normal-validation evidence collision; refusing to dispatch over an existing path.' }
     } else {
@@ -248,6 +271,10 @@ function Resolve-MorphospaceNormalValidationSelector {
             throw 'Normal-validation evidence schema does not match the exact selector binding.'
         }
         $evidenceSha256 = Get-MorphospaceFileSha256 $evidence
+        if ($declaredTier) {
+            Assert-MorphospaceCurrentValidationEvidence -EvidencePath $evidence -Selector $selector -Selection $BoundSelection -ProducerObservation $producerObservation -WorkspaceRoot $workspace
+            $producerResult = [string]$evidenceDocument.result
+        }
     }
 
     $dispatchCommand = @(
@@ -281,21 +308,35 @@ function Resolve-MorphospaceNormalValidationSelector {
                     requires_create_new = $true
                     phase = $evidencePhase
                     sha256 = $evidenceSha256
+                    producer_result = $producerResult
                 }
             }
         }
     })
 
+    # Dispatch and the fixed producer authenticate live frozen source here.
+    # Consumption first resolves selector/evidence obligations; its native owner
+    # runs the complete receipt predicate before this final exact-file handoff.
+    if ($declaredTier -and ($evidencePhase -ceq 'dispatch' -or $ConsumedValidationReceipt)) {
+        $frozenOwner=Import-Module (Join-Path $PSScriptRoot '../CandidateFreeze.psm1') -PassThru
+        &$frozenOwner {param($w,$u,$selectorReference,$selectorRaw,$receiptReference,$receiptRaw)
+            $candidate=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $w ([string]$u.candidate_freeze.receipt_path) -RequireLeaf)
+            $transition=Get-CandidateRevisionTransition $w "$([string]$candidate.freeze_id)-recorded" ([string]$u.unit_id)
+            $inputs=[pscustomobject]@{selector_path=$selectorReference;selector_sha256=$selectorRaw;consumed_receipt_path=$receiptReference;consumed_receipt_sha256=$receiptRaw}
+            Assert-MorphospaceCandidateRepositoryClosure $w $candidate $u $transition -PlanningInputs $inputs
+        } $workspace $Unit $SelectorReference $selectorSha256 $ConsumedValidationReceipt $ExpectedConsumedValidationReceiptSha256
+    }
     return [pscustomobject][ordered]@{
         selector_id = [string]$selector.selector_id
         selector_path = $SelectorReference
         selector_sha256 = $selectorSha256
         evidence_phase = $evidencePhase
+        producer_observation = $producerObservation
         state_binding = [pscustomobject][ordered]@{
             unit_id = [string]$Unit.unit_id
             unit_raw_sha256 = [string]$selector.unit.raw_sha256
             unit_contract_sha256 = [string]$selector.unit.contract_sha256
-            tier = 'quick'
+            tier = $ValidationTier
             selector_id = [string]$selector.selector_id
             selector_path = $SelectorReference
             selector_sha256 = $selectorSha256
@@ -303,6 +344,89 @@ function Resolve-MorphospaceNormalValidationSelector {
         }
         validation_matrix = $selectedRows
     }
+}
+
+function Get-MorphospaceDeclaredTierProducer {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][object]$Unit,[Parameter(Mandatory)][object]$Selector)
+    if (-not ($Unit.PSObject.Properties.Name -ccontains 'tooling_context') -or
+        (Get-MorphospaceCanonicalJsonSha256 $Selector.tooling_context) -cne (Get-MorphospaceCanonicalJsonSha256 $Unit.tooling_context)) {
+        throw 'Declared-tier producer requires the exact live adopted tooling-context pointer.'
+    }
+    $ownerModule = $MyInvocation.MyCommand.Module
+    $provenance = Import-Module (Join-Path $PSScriptRoot '../DevelopmentEnvelopeProvenance.psm1') -PassThru
+    $observation = &$provenance { param($w,$id,$owner)
+        Get-MorphospaceUnitToolingContextObservation -WorkspaceRoot $w -UnitId $id -Action Inspect -OwnerModule $owner
+    } $WorkspaceRoot ([string]$Unit.unit_id) $ownerModule
+    if ($null -eq $observation) { throw 'Declared-tier producer requires actual adopted tooling provenance.' }
+    $relative = 'scripts/Invoke-WorkflowCurrentValidation.ps1'
+    $entries = @($observation.document.executor.closure | Where-Object { [string]$_.path -ceq $relative })
+    if ($entries.Count -ne 1 -or [string]$Selector.selection.producer.path -cne $relative -or
+        [string]$Selector.selection.producer.kind -cne 'bound-workflow-current-evidence-v2' -or
+        [string]$entries[0].sha256 -cne [string]$Selector.selection.producer.sha256) {
+        throw 'Declared-tier producer is not the one exact fixed bound-executor closure member.'
+    }
+    $root = [IO.Path]::GetFullPath([string]$observation.resolver.executor_root)
+    $path = Resolve-MorphospaceSelectorWorkspacePath -WorkspaceRoot $root -RelativePath $relative -RequireLeaf
+    if ((Get-MorphospaceFileSha256 $path) -cne [string]$entries[0].sha256) { throw 'Declared-tier producer raw bytes drifted.' }
+    return [pscustomobject]@{producer_path=$path;context=$observation.document;binding=$observation.binding;executor_root=$root}
+}
+
+function Get-MorphospaceCurrentValidationCommand {
+    param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][object]$ProducerObservation)
+    $context=$ProducerObservation.context
+    $map=Resolve-MorphospaceSelectorWorkspacePath -WorkspaceRoot $WorkspaceRoot -RelativePath ([string]$context.product_projection.repository_map.path) -RequireLeaf
+    if ((Get-MorphospaceFileSha256 $map) -cne [string]$context.product_projection.repository_map.sha256) { throw 'Current validation product map raw bytes drifted.' }
+    $script=Join-Path $ProducerObservation.executor_root 'scripts/Test-WorkflowContracts.ps1'
+    $entry=@($context.executor.closure|Where-Object {[string]$_.path -ceq 'scripts/Test-WorkflowContracts.ps1'})
+    if ($entry.Count -ne 1 -or (Get-MorphospaceFileSha256 $script) -cne [string]$entry[0].sha256) { throw 'Current validation entrypoint is outside the exact executor closure.' }
+    return [pscustomobject]@{path=$script;sha256=[string]$entry[0].sha256;arguments=@('-NoProfile','-NonInteractive','-File',$script,'-RepoRoot',$ProducerObservation.executor_root,'-WorkspaceRoot',[IO.Path]::GetFullPath($WorkspaceRoot),'-RepositoryMapPath',$map,'-CurrentWorkspaceOnly','-CurrentWorkOnly','-SkipOwnerSelfTests')}
+}
+
+function Assert-MorphospaceCurrentValidationEvidence {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$WorkspaceRoot,[Parameter(Mandatory)][string]$EvidencePath,[Parameter(Mandatory)][object]$Selector,[Parameter(Mandatory)][object]$Selection,[Parameter(Mandatory)][object]$ProducerObservation)
+    $schema=Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'schemas/workflow-current-validation-evidence-v1.schema.json'
+    $document=Read-MorphospaceProtocolJson $EvidencePath
+    if (-not (Test-Json -Json ($document|ConvertTo-Json -Depth 100 -Compress) -SchemaFile $schema)) { throw 'Current validation evidence violates its typed owner contract.' }
+    if ([string]$document.workspace_root -cne [IO.Path]::GetFullPath($WorkspaceRoot) -or
+        (Get-MorphospaceCanonicalJsonSha256 $document.selection) -cne (Get-MorphospaceCanonicalJsonSha256 $Selection) -or
+        [string]$document.project_id -cne [string]$Selector.project.project_id -or
+        [string]$document.unit_id -cne [string]$Selector.unit.unit_id -or
+        [string]$document.tier -cne [string]$Selector.selection.tier -or
+        [string]$document.project_raw_sha256 -cne [string]$Selector.project.spec_raw_sha256 -or
+        [string]$document.declared_command_sha256 -cne [string]$Selector.declared_gate.command_sha256 -or
+        [string]$document.freeze_receipt_sha256 -cne [string]$Selector.candidate_freeze.receipt_sha256 -or
+        (Get-MorphospaceCanonicalJsonSha256 $document.frozen_repositories) -cne (Get-MorphospaceCanonicalJsonSha256 @($Selector.candidate_freeze.final_repositories)) -or
+        (Get-MorphospaceCanonicalJsonSha256 $document.tooling_context) -cne (Get-MorphospaceCanonicalJsonSha256 $ProducerObservation.binding) -or
+        [string]$document.executor_commit -cne [string]$ProducerObservation.context.executor.commit -or
+        [string]$document.executor_tree -cne [string]$ProducerObservation.context.executor.tree) { throw 'Current validation evidence original/current bindings drifted.' }
+    $command=Get-MorphospaceCurrentValidationCommand -WorkspaceRoot $WorkspaceRoot -ProducerObservation $ProducerObservation
+    if ((Get-MorphospaceCanonicalJsonSha256 $document.executed_command) -cne (Get-MorphospaceCanonicalJsonSha256 $command)) { throw 'Current validation executed command differs from the fixed owner invocation.' }
+    $terminalPath=$EvidencePath+'.terminal.json'
+    if ([string]$document.terminal.path -cne $terminalPath -or (Get-MorphospaceFileSha256 $terminalPath) -cne [string]$document.terminal.sha256) { throw 'Current validation terminal bytes drifted.' }
+    if ((Get-Item -LiteralPath $terminalPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Current validation terminal may not be a reparse point.' }
+    $terminal=Read-MorphospaceProtocolJson $terminalPath
+    if ((Get-MorphospaceCanonicalJsonSha256 $document.terminal.capture) -cne (Get-MorphospaceCanonicalJsonSha256 $terminal)) { throw 'Current validation terminal capture differs from the typed evidence.' }
+    $child=$terminal.ChildProcess
+    $actualPass=[string]$terminal.Status -ceq 'passed' -and $terminal.ExitCode -eq 0
+    $actualFail=[string]$terminal.Status -ceq 'failed' -and $terminal.ExitCode -ne 0
+    $expectedResult=if($actualPass){'pass'}else{'fail'}
+    if ((-not$actualPass-and-not$actualFail) -or [string]$document.result -cne $expectedResult -or
+        [string]$child.outcome -cne [string]$terminal.Status -or $child.exit_code -ne $terminal.ExitCode -or -not $terminal.Streams.captured -or
+        -not $child.started -or -not $child.process_reaped -or -not $child.raw_capture_complete -or
+        -not $child.stdout_eof -or -not $child.stderr_eof -or $child.termination_requested -or $child.automatic_retry -or
+        [string]$child.cancellation -cne 'not-requested' -or @($child.observer_errors).Count -ne 0 -or $child.elapsed_milliseconds -lt 0) { throw 'Current validation actual child did not close successfully.' }
+    foreach($name in @('stdout','stderr')) {
+        $stream=$terminal.Streams.$name;$path=$EvidencePath+".$name.bin"
+        if ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Current validation raw stream may not be a reparse point.' }
+        if ([string]$stream.path -cne $path -or -not $stream.eof -or $null -ne $stream.storage_error -or $null -ne $stream.read_error -or
+            $stream.drained_bytes -ne $stream.stored_bytes -or $stream.stored_bytes -ne $stream.size_bytes -or
+            (Get-Item -LiteralPath $path).Length -ne $stream.size_bytes -or (Get-MorphospaceFileSha256 $path) -cne [string]$stream.sha256) { throw 'Current validation raw stream closure drifted.' }
+    }
+    $marker='Workflow contract validation passed for current project workspace; owner conformance not repeated.'
+    $stdout=[IO.File]::ReadAllText($EvidencePath+'.stdout.bin',[Text.UTF8Encoding]::new($false,$true))
+    if ($actualPass -and (@($stdout.TrimEnd() -split '\r?\n')[-1] -cne $marker -or (Get-Item -LiteralPath ($EvidencePath+'.stderr.bin')).Length -ne 0)) { throw 'Current validation terminal output does not prove the fixed current-work result.' }
 }
 
 Export-ModuleMember -Function Resolve-MorphospaceNormalValidationSelector

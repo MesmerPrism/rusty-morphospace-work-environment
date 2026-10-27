@@ -612,11 +612,86 @@ try{
 
     if($Scenario-cin@('All','NestedPositive','NestedCommitted','PostNonpass')){
         $postSeed=@(New-ReadonlyPlanningRetirementSeed (Join-Path $temp 'post-nonpass-seed'))[-1];$workspace=Join-Path $postSeed.source_repository 'morphospace';$planning=[string]$postSeed.source_repository;$mapPath=Join-Path $workspace 'repository-map.json'
+        # Declare the exact private custody namespace before the native Freeze.
+        [IO.File]::AppendAllText((Join-Path $planning '.git/info/exclude'),"`n/morphospace/receipts/u002-synthetic-nonpass-evidence/`n",[Text.UTF8Encoding]::new($false))
         Invoke-EnvelopeGit $planning @('add','morphospace')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-qm','Checkpoint synthetic admitted claim')|Out-Null
         $freezePath=Join-Path $temp 'post-nonpass-freeze.json';$null=New-RetirementNonpassFreezeRequest $workspace $mapPath $freezePath
         $automation=Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1';$common=@{WorkspaceRoot=$workspace;UnitId='u002';RepoMapPath=$mapPath;ValidationTier='quick'}
         $null=&$automation @common -Action FreezeCandidate -CandidateFreeze $freezePath -ExpectedCandidateFreezeSha256 (Get-EnvelopeFileSha256 $freezePath) -OutPath (Join-Path $workspace 'receipts/u002-extension-freeze.json') -Timestamp '2026-08-25T00:00:44.0000000Z' -Execute
         $null=&$automation @common -Action BeginValidation -OutPath (Join-Path $workspace 'receipts/post-begin.json') -Timestamp '2026-08-25T00:00:45.0000000Z' -Execute
+        # These controls use a genuine public Freeze/Begin prefix. Independently
+        # corrupt the claimed result: the reader must derive the frozen writable
+        # observations and preserve every other state field, never echo target.
+        $beginEvent=@(Get-Content (Join-Path $workspace 'iteration-events.jsonl')|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json -DateKind String})[-1]
+        $beginProof=&$retirementModule {param($w,$id)Get-ActiveRetirementPlanningTransition $w "$id-transition" -HistoricalProjection} $workspace $beginEvent.event_id
+        $freezeProof=&$retirementModule {param($w,$id)Get-ActiveRetirementPlanningTransition $w "$id-transition" -HistoricalProjection} $workspace $beginProof.intent.expected.event_tail_id
+        $beginInventory=Get-RetirementInventory $workspace
+        &$retirementModule {param($w,$e,$p)Assert-ActiveRetirementRetainedLifecycle $w $e $p} $workspace $beginEvent $beginProof
+        $observationDamages=@('wrong-frozen-head','missing-observation','duplicate-observation','foreign-observation','branch','read-only-head','dirty-fingerprint','selector','checkpoint','blockers','module-registry','unit-authority')
+        $writableId=[string]$freezeProof.intent.target.unit.document.allowed_repositories[0].repo_id
+        Assert-RetirementTest (@($beginProof.intent.target.state.document.repository_heads|Where-Object repo_id -CEQ 'project-shell').Count-eq0) 'self-hosted read-only planning fixture must exclude its workflow-transport observation'
+        foreach($damage in $observationDamages){
+            $bad=Copy-Envelope $beginProof;$target=$bad.intent.target.state.document
+            $head=@($target.repository_heads|Where-Object repo_id -CEQ $writableId)[0]
+            switch($damage){
+                'wrong-frozen-head' {$head.head='0'*40}
+                'missing-observation' {$target.repository_heads=@($target.repository_heads|Where-Object repo_id -CNE $writableId)}
+                'duplicate-observation' {$target.repository_heads+=,(Copy-Envelope $head)}
+                'foreign-observation' {$head.repo_id='foreign-repository'}
+                'branch' {$head.branch='forged-branch'}
+                'read-only-head' {$target.repository_heads+=,[pscustomobject]@{repo_id='project-shell';head=('0'*40);branch=$null;dirty_fingerprint=('0'*64)}}
+                'dirty-fingerprint' {$head.dirty_fingerprint='0'*64}
+                'selector' {$target|Add-Member -NotePropertyName normal_validation_selection -NotePropertyValue ([pscustomobject]@{forged=$true}) -Force}
+                'checkpoint' {$target.validation_checkpoint=[pscustomobject]@{tier='quick';receipt='receipts/forged.json';result='pass'}}
+                'blockers' {$target.blockers=@([pscustomobject]@{blocker_id='foreign';condition='forged';resume_when='forged'})}
+                'module-registry' {$target.module_registry.lock_fingerprint='0'*64}
+                'unit-authority' {$bad.intent.target.unit.document.objective='Caller-substituted authority'}
+            }
+            $message='';try{&$retirementModule {param($w,$e,$p)Assert-ActiveRetirementRetainedLifecycle $w $e $p} $workspace $beginEvent $bad}catch{$message=$_.Exception.Message}
+            Assert-RetirementTest ($message-like'*retained lifecycle exact target*binding drifted*') "frozen Begin replay did not reject $damage at exact full-state/unit binding"
+            Assert-RetirementTest ((Get-RetirementInventory $workspace)-ceq$beginInventory) "frozen Begin $damage wrote owner files"
+        }
+        foreach($damage in @('missing-fence','duplicate-fence','rebound-project','rebound-feature')){
+            $bad=Copy-Envelope $freezeProof
+            switch($damage){
+                'missing-fence' {$bad.intent.additional_projections=@($bad.intent.additional_projections|Where-Object path -CNE 'project.spec.json')}
+                'duplicate-fence' {$bad.intent.additional_projections+=,(Copy-Envelope $bad.intent.additional_projections[0])}
+                default {
+                    $path=if($damage-ceq'rebound-project'){'project.spec.json'}else{'feature.lock.json'}
+                    $fence=@($bad.intent.additional_projections|Where-Object path -CEQ $path)[0]
+                    if($damage-ceq'rebound-project'){$fence.document.owner='forged-owner'}else{$fence.document.lock_fingerprint='0'*64}
+                    $fence.pre_sha256=Get-EnvelopeCanonicalJsonSha256 $fence.document;$fence.target_sha256=$fence.pre_sha256
+                }
+            }
+            $expected=Copy-Envelope $freezeProof.intent.target.state.document;$frozenUnit=Copy-Envelope $freezeProof.intent.target.unit.document
+            $message='';try{&$retirementModule {param($w,$s,$u,$f)Set-ActiveRetirementFrozenBeginRepositoryProjection -Workspace $w -State $s -Unit $u -Freeze $f} $workspace $expected $frozenUnit $bad}catch{$message=$_.Exception.Message}
+            Assert-RetirementTest ($message-like'*frozen Begin*authority*') "frozen Begin accepted $damage original authority"
+            Assert-RetirementTest ((Get-RetirementInventory $workspace)-ceq$beginInventory) "frozen Begin $damage changed owner bytes"
+        }
+        $savedMap=[IO.File]::ReadAllBytes($mapPath)
+        try{
+            [IO.File]::AppendAllText($mapPath,' ');$damagedInventory=Get-RetirementInventory $workspace;$message=''
+            $expected=Copy-Envelope $freezeProof.intent.target.state.document;$frozenUnit=Copy-Envelope $freezeProof.intent.target.unit.document
+            try{&$retirementModule {param($w,$s,$u,$f)Set-ActiveRetirementFrozenBeginRepositoryProjection -Workspace $w -State $s -Unit $u -Freeze $f} $workspace $expected $frozenUnit $freezeProof}catch{$message=$_.Exception.Message}
+            Assert-RetirementTest ($message-ceq'Active retirement frozen Begin repository map bytes drifted.') 'frozen Begin accepted raw map drift'
+            Assert-RetirementTest ((Get-RetirementInventory $workspace)-ceq$damagedInventory) 'raw map refusal wrote owner bytes'
+        }finally{[IO.File]::WriteAllBytes($mapPath,$savedMap)}
+        Assert-RetirementTest ((Get-RetirementInventory $workspace)-ceq$beginInventory) 'frozen Begin controls did not restore their input bytes'
+        # A schema-valid v1 feature fence has no project_revision or module
+        # fingerprint. This modeled private projection checks that compatibility
+        # branch, not a new committed lifecycle or public authority claim.
+        $legacy=Copy-Envelope $freezeProof;$legacyUnit=Copy-Envelope $freezeProof.intent.target.unit.document;$legacyState=Copy-Envelope $freezeProof.intent.target.state.document
+        $featureFence=@($legacy.intent.additional_projections|Where-Object path -CEQ 'feature.lock.json')[0]
+        $featureFence.document=[pscustomobject]@{schema='rusty.morphospace.workflow.feature_lock.v1';project_id=$legacyUnit.project_id;revision=$featureFence.document.revision;default_activation='disabled';features=@()}
+        $featureFence.pre_sha256=Get-EnvelopeCanonicalJsonSha256 $featureFence.document;$featureFence.target_sha256=$featureFence.pre_sha256
+        $binding=@($legacy.intent.artifacts|Where-Object path -CEQ $legacyUnit.candidate_freeze.receipt_path)[0]
+        $legacyReceipt=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($binding.bytes_base64))|ConvertFrom-Json -Depth 100 -DateKind String
+        $legacyReceipt.expected.feature_lock_sha256=$featureFence.pre_sha256;$legacyReceipt.feature_lock.sha256=$featureFence.pre_sha256
+        $legacyBytes=[Text.UTF8Encoding]::new($false).GetBytes(($legacyReceipt|ConvertTo-Json -Depth 100));$binding.bytes_base64=[Convert]::ToBase64String($legacyBytes);$binding.sha256=Get-RetirementBytesSha256 $legacyBytes;$legacyUnit.candidate_freeze.receipt_sha256=$binding.sha256
+        $registryBefore=Get-EnvelopeCanonicalJsonSha256 $legacyState.module_registry
+        &$retirementModule {param($w,$s,$u,$f)Set-ActiveRetirementFrozenBeginRepositoryProjection -Workspace $w -State $s -Unit $u -Freeze $f} $workspace $legacyState $legacyUnit $legacy
+        Assert-RetirementTest ((Get-EnvelopeCanonicalJsonSha256 $legacyState.module_registry)-ceq$registryBefore-and(Get-RetirementInventory $workspace)-ceq$beginInventory) 'modeled v1 projection must preserve registry and owner bytes without requiring v2 fields'
+        Write-Host 'Frozen Begin full-state observations, four original-authority damages and raw-map no-write controls passed.'
         $unit=Read-EnvelopeProtocolJson (Join-Path $workspace 'iteration-units/u002.json');$module=Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm1') -PassThru
         $matrix=@(&$module {param($unit)New-MorphospaceValidationMatrix -Unit $unit -DeviceSerials @()} $unit)
         $evidencePath=Join-Path $temp 'synthetic-nonpass.txt';[IO.Directory]::CreateDirectory((Split-Path $evidencePath -Parent))|Out-Null;[IO.File]::WriteAllText($evidencePath,'Synthetic host-only failure; no device or product acceptance.')
@@ -672,7 +747,7 @@ try{
         $rejected=$false;try{&$retirementModule {param($w)Assert-ActiveRetirementImmutableNonpassReceipt $w 'receipts/post-fail.json'} $workspace}catch{$rejected=$true};Assert-RetirementTest $rejected 'schema-valid committed nonpass receipt rewrite accepted'
         [IO.File]::WriteAllBytes($failure,$saved);Invoke-EnvelopeGit $planning @('add','morphospace/receipts/post-fail.json')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-qm','Restore synthetic receipt negative')|Out-Null
         $rejected=$false;try{&$retirementModule {param($w)Assert-ActiveRetirementImmutableNonpassReceipt $w 'receipts/post-fail.json'} $workspace}catch{$rejected=$true};Assert-RetirementTest $rejected 'rewritten then restored nonpass receipt history accepted'
-        if($Scenario-ceq'PostNonpass'){[pscustomobject]@{status='pass';check='active-unit-retirement';scenario=$Scenario;producer_lifecycle_pass=$true;semantic_negatives=7;diagnostic_negatives=4;receipt_history_negatives=2;proof_scope_cases=$scopeCases;mutated_real_project=$false}|ConvertTo-Json -Compress;return}
+        if($Scenario-ceq'PostNonpass'){[pscustomobject]@{status='pass';check='active-unit-retirement';scenario=$Scenario;producer_lifecycle_pass=$true;frozen_begin_observation_negatives=12;frozen_begin_authority_negatives=4;frozen_begin_map_negative=1;modeled_private_v1_compatibility=$true;semantic_negatives=7;diagnostic_negatives=4;receipt_history_negatives=2;proof_scope_cases=$scopeCases;mutated_real_project=$false}|ConvertTo-Json -Compress;return}
     }
 
     if($runCore){

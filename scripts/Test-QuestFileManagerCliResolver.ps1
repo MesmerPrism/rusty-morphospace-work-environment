@@ -93,7 +93,7 @@ try {
         adb_forward_inventory_result_contract = "questionable.file_manager.adb_forward_inventory_result.v1"
         apk_launch_result_contract = "questionable.file_manager.apk_launch_result.v1"
         launcher_export_proof_contract = "questionable.file_manager.launcher_export_proof.v2"
-        runtime_observation_contract = "questionable.file_manager.app_runtime_observation.v5"
+        runtime_observation_contract = "questionable.file_manager.app_runtime_observation.v6"
         global_focus_observation_contract = "questionable.file_manager.android_global_focus_observation.v1"
     }
     Write-JsonUtf8NoBom -Path $configPath -Value $config
@@ -104,9 +104,21 @@ try {
         $result.identity_probe -cne "skipped" -or
         $result.command_probe -cne "skipped" -or
         $result.executable_sha256 -cne $fixtureSha256 -or
+        $result.runtime_observation_contract -cne "questionable.file_manager.app_runtime_observation.v6" -or
         $result.apk_permission_observation_contract -cne "questionable.file_manager.apk_permission_observation.v1") {
         throw "Resolver did not return the expected hash-pinned ready result."
     }
+
+    $config.runtime_observation_contract = 'questionable.file_manager.app_runtime_observation.v5'
+    Write-JsonUtf8NoBom -Path $configPath -Value $config
+    $legacyResult = Invoke-ResolverChild -ExpectedExit 0 | ConvertFrom-Json
+    if ($legacyResult.runtime_observation_contract -cne 'questionable.file_manager.app_runtime_observation.v5') { throw 'Resolver did not preserve the pinned v5 contract.' }
+    foreach ($unsupported in @('questionable.file_manager.app_runtime_observation.v99', '')) {
+        $config.runtime_observation_contract = $unsupported
+        Write-JsonUtf8NoBom -Path $configPath -Value $config
+        Invoke-ResolverChild -ExpectedExit 1 | Out-Null
+    }
+    $config.runtime_observation_contract = 'questionable.file_manager.app_runtime_observation.v6'
 
     $config.distribution_files[0].sha256 = ("0" * 64)
     Write-JsonUtf8NoBom -Path $configPath -Value $config
@@ -202,8 +214,16 @@ if (args.Length == 1 && args[0] == "--help") {
             adbForwardInventoryResult = $config.adb_forward_inventory_result_contract; apkLaunchResult = $config.apk_launch_result_contract
             launcherExportProof = $config.launcher_export_proof_contract; runtimeObservation = $config.runtime_observation_contract
         }
-        foreach ($probeCase in @('current', 'mismatched-deploy', 'missing-deploy')) {
+        foreach ($probeCase in @('current', 'legacy-v5', 'mismatched-runtime', 'unknown-runtime', 'missing-runtime', 'mismatched-deploy', 'missing-deploy')) {
             $caseContracts = $contracts | ConvertTo-Json | ConvertFrom-Json
+            $probeConfig.runtime_observation_contract = $config.runtime_observation_contract
+            if ($probeCase -eq 'legacy-v5') {
+                $probeConfig.runtime_observation_contract = 'questionable.file_manager.app_runtime_observation.v5'
+                $caseContracts.runtimeObservation = 'questionable.file_manager.app_runtime_observation.v5'
+            }
+            if ($probeCase -eq 'mismatched-runtime') { $caseContracts.runtimeObservation = 'questionable.file_manager.app_runtime_observation.v5' }
+            if ($probeCase -eq 'unknown-runtime') { $caseContracts.runtimeObservation = 'questionable.file_manager.app_runtime_observation.v99' }
+            if ($probeCase -eq 'missing-runtime') { $caseContracts.PSObject.Properties.Remove('runtimeObservation') }
             if ($probeCase -eq 'mismatched-deploy') { $caseContracts.apkDeployResult = 'questionable.file_manager.apk_deploy_result.v0' }
             if ($probeCase -eq 'missing-deploy') { $caseContracts.PSObject.Properties.Remove('apkDeployResult') }
             Write-JsonUtf8NoBom -Path (Join-Path $probeRuntime 'contracts.json') -Value @{ schema = 'questionable.file_manager.operator_actions.v1'; contracts = $caseContracts }
@@ -215,8 +235,9 @@ if (args.Length == 1 && args[0] == "--help") {
             $probeLog = Join-Path $testRoot 'probe-calls.txt'
             if (Test-Path -LiteralPath $probeLog) { Remove-Item -LiteralPath $probeLog }
             $probeOutput = @(& $hostExecutable -NoProfile -File $resolver -RepoRoot $RepoRoot -ConfigPath $configPath -Json 2>&1)
-            $expectedExit = if ($probeCase -eq 'current') { 0 } else { 1 }
+            $expectedExit = if ($probeCase -in @('current', 'legacy-v5')) { 0 } else { 1 }
             if ($LASTEXITCODE -ne $expectedExit) { throw "Actual provider probe case failed: $probeCase ($($probeOutput -join ' | '))" }
+            if ($expectedExit -eq 0 -and [string](($probeOutput -join [Environment]::NewLine) | ConvertFrom-Json).runtime_observation_contract -cne $probeConfig.runtime_observation_contract) { throw "Actual provider probe lost its configured runtime contract: $probeCase" }
             $probeCalls = @(Get-Content -LiteralPath $probeLog)
             if ($probeCalls.Count -ne 2 -or $probeCalls[0] -cne '--help' -or $probeCalls[1] -cne 'operator-actions|--json') { throw 'Resolver probe entered a device route.' }
         }

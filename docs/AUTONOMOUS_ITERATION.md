@@ -74,6 +74,12 @@ repository map remain bound. Commit the corrected source inside that scope and
 provide fresh candidate CAS, final source identities, and validation declarations.
 The original freeze, failed receipt and every transaction remain immutable.
 
+If an old NONPASS receipt instead pinned a mutable source file or Git index
+whose bytes are unavailable, use the independently authorized, nonaccepting
+`candidate_freeze.v4` route in [NONPASS Evidence Custody](NONPASS_EVIDENCE_CUSTODY.md).
+It preserves the failed history and records only the exact unavailable custody
+defect; ordinary v3 and all unaffected or accepted evidence remain strict.
+
 An executed frozen Return retains an exact byte copy of its consumed receipt
 under `receipts/<return-event-id>-retained-validation.json`. Earlier Return
 transactions without this owned copy do not gain revision authority retroactively.
@@ -189,10 +195,24 @@ behavior, or grant repository, publication, device, or user authority.
 The v2 compatibility and coverage checks remain a shadow result. Keep their
 `advisory_status` separate from `ready_to_claim`; do not make advisory pass a
 Claim requirement until a separately reviewed promotion gate has enough real
-shadow evidence and a rollback decision. Explicit guard sufficiency is the one
-separate lifecycle declaration gate: an insufficient explicit guard adds a
-claim issue immediately because the unit is requesting authority it does not
-declare.
+shadow evidence and a rollback decision. Structural declaration checks remain
+separate lifecycle gates. An insufficient explicit guard adds a claim issue
+immediately because the unit is requesting authority it does not declare.
+The shared `unit-declaration-consistency` check also rejects unknown change
+categories and repositories declared both writable and read-only. Ready and
+Claim reject those contradictions before writing any transition; Inspect
+reports their exact reason codes. Only validation-only rows with an explicit
+empty allowed-path array declare membership without write authority. Available
+files or tools cannot make an inconsistent declaration claimable.
+
+A refused proposed declaration may be corrected in its authored input and
+retried through the same owner route. These checks do not repair an already
+claimed malformed unit or add a generic abandonment action. Preserve its raw
+unit, state and ledger and use only an applicable owner recovery contract.
+An initial owner with no accepted predecessor must not fabricate retirement
+or admission evidence. Any explicitly authorized replacement owner selection
+retains the abandoned unaccepted owner as non-current evidence and selects one
+current authority; it does not rewrite or accept that owner's history.
 
 Use `execution_preflight` when the expensive path depends on runtime inputs that
 ordinary file/tool presence cannot prove: package or application identity,
@@ -610,6 +630,10 @@ The CLI is deliberately narrower than an autonomous coding agent:
   project/state/unit/event CAS, complete before/after paths, at least one
   project-approved addition, and dry-run input-hash replay; it retains captain,
   status, project authority, and every unit field except `allowed_repositories`;
+- its complete path sets have the same count domain as admitted unit paths;
+  a unit with more than 128 paths can still be amended. Canonical safe paths,
+  duplicate refusal, exact before-set equality, additive project ceilings and
+  admitted source-lock/ownership proofs remain mandatory;
 - it reads Git state but never runs checkout, reset, stash, commit, push, or
   force-push;
 - it never runs validation commands or device commands;

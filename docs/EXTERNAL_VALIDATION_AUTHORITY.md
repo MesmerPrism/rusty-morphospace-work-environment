@@ -67,6 +67,14 @@ ordinary source or documentation changes.
 
 ## Permanent Policy-Evolution Route
 
+The bounded [Native NONPASS Recovery Authority](NATIVE_NONPASS_RECOVERY_AUTHORITY.md)
+source-policy bootstrap uses this existing external-owner gate. A disclosed,
+exact repository-owner source-policy decision supplies its prospective locked
+source-delivery scope; the static assessment alone supplies neither that decision
+nor publication or native execution authority. Independent policy adoption and
+separate signed source qualification and candidate/current-state authorization
+are required before the repair can affect its original native workspace.
+
 Do not wait until every exact approval is consumed. Before that point,
 configure a separate owner-controlled policy-evolution gate whose trust root is
 outside the policy being changed. The gate must:

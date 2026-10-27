@@ -7,7 +7,43 @@ current product source/map/feature projection, the complete tracked executor tre
 the exact clean Git commit/tree/remote, installed router provenance, and passing
 owner affected-validation evidence for the same executor revision.
 
-For a new local context, use `New-MorphospaceObservedToolingContext` with the
+For a new local context, first author its ignored resolver with
+`New-MorphospaceToolingContextResolver` from
+`scripts/ToolingContextProvenance.psm1`. This host-only step verifies the
+declared exact managed router set and copies its managed files, provenance and
+known generated locators into `SnapshotRoot/<digest>`. Supply an explicit,
+persistent absolute `SnapshotRoot` outside every selected product/planning
+repository root, the workspace and executor. Retain this storage for the life
+of its contexts; no temporary or workspace-local default is selected. Unmanaged
+contributor files are not copied.
+It plans without writes by default; `-Execute` publishes verified copies and
+a no-overwrite resolver. Exact existing copies are reusable; altered, partial
+or conflicting output is refused rather than repaired.
+
+The ordinary new-context route selects those copies, rather than the mutable
+global skill installation. A subsequent normal host guidance Update then cannot
+replace this context's selected managed files. Retain its selected executor and
+source checkouts: copies do not materialize or upgrade them. Generated locators
+are copied byte-exact, not rebound to a newer source. This adds no permission to
+edit an existing resolver or context. A context already pointing at a global
+installation still correctly refuses its drift and needs its existing supported
+consumer selection/upgrade route.
+
+`New-MorphospaceToolingContextResolver` accepts `WorkspaceRoot`,
+`ContextId`, `ExecutorRoot`, `SnapshotRoot`, `RepositoryRoots`, exact portable `Routers`,
+`RouterLocations` (`skill_id`/absolute `root` rows), and
+`ResolverPath` under ignored workspace `local/`. `RepositoryRoots` must list
+all selected repository-map root locations. This location-only input grants no
+authority: the actual instruction consumer still authenticates the complete map
+and refuses overlapping skill roots. Equal, ancestor and descendant storage
+overlap is refused before writes, as are unsafe aliases. Use its returned
+`resolver` path/hash in the preparation descriptor before hashing that
+request. Its `router_root` is the shared parent for context-bound installer
+Verify. This authoring command neither executes a lifecycle transition nor
+installs host skills; it changes no context schema, fingerprint, live observation,
+compatibility or loaded-owner predicate.
+
+Then use `New-MorphospaceObservedToolingContext` with the
 selected workspace and resolver. `New-MorphospaceToolingContext` constructs and
 validates a portable value only; it does not observe a checkout. The observed
 producer requires exact clean Git identity and raw closure hashes, then checks
@@ -51,6 +87,33 @@ independent remote publication authority.
 Existing projects without the opt-in fields remain on their existing schema dispatch.
 Current021 continues its retirement-first sequence. A later installer Update is a
 separate backup-first host action and must Verify against the upgraded context.
+
+A current validating unit may also upgrade immediately after its authenticated
+`FreezeCandidate` and `BeginValidation` transitions, before any subsequent
+current-unit action or recorded validation. The committed Freeze and Begin
+must be contiguous and bind the exact request preimage. The same owner remains
+validating; there may be no competing ready unit, blocker or pending publication.
+The Begin transition must not already bind a normal-validation selector. Its
+unit-contract hash includes the tooling pointer and cannot be reset by this
+pointer-only action. Existing exact retained Begin-state reconstruction refuses
+a selector-bound preimage before writes. When a selector is needed, bind a fresh
+one through the ordinary public Begin route after instruction completion; retain
+all selector hashes and receipt-consumption checks.
+The old context is authenticated historically, the new executor locally, and
+compatibility, product/source projection, loaded-module and raw CAS guards remain
+mandatory. The action emits a validating-to-validating receipt using the existing
+upgrade request and typed ledger transition.
+
+This upgrade preserves the original frozen marker and receipt bytes. Frozen
+reads authenticate the complete typed continuation to the physical live state,
+verify that the upgrade changed only the tooling pointer of the original
+validating unit, then reconstruct the original Freeze projection for its exact
+unit/state hash checks. They do not remove tooling from the hash or rewrite the
+marker. Historical upgrade verification uses that committed prefix even after
+later instruction completion, fresh validation and acceptance. No earlier pass
+is inherited: validation and acceptance still run under the new selected context.
+Run this public host fixture with
+`pwsh -NoProfile -File scripts/Test-ToolingContext.ps1 -SelfTest -Scenario validating-upgrade`.
 
 An authenticated failed frozen unit may deliberately upgrade tooling for its
 nonaccepting retirement. This route requires the exact active/current unit,

@@ -1,0 +1,295 @@
+{
+  "$defs": {
+    "binding": {
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path",
+        "sha256"
+      ]
+    },
+    "transition": {
+      "properties": {
+        "intent": {
+          "$ref": "#/$defs/binding"
+        },
+        "event_id": {
+          "$ref": "#/$defs/id"
+        },
+        "completion": {
+          "$ref": "#/$defs/binding"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "event_id",
+        "intent",
+        "completion"
+      ]
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "path": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*/?$"
+    },
+    "receipt_binding": {
+      "type": "object",
+      "required": [
+        "path",
+        "sha256",
+        "canonical_sha256"
+      ],
+      "properties": {
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "canonical_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "path": {
+          "$ref": "#/$defs/path"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "defect_id",
+    "freeze",
+    "begin",
+    "return",
+    "original_receipt",
+    "retained_receipt",
+    "artifacts",
+    "audit_inert",
+    "accepted",
+    "historical_payload_preserved",
+    "disposition",
+    "project_id",
+    "unit_id",
+    "result",
+    "tier",
+    "receipt_schema",
+    "frozen_repositories",
+    "validation_credit",
+    "acceptance_credit",
+    "proof_reuse"
+  ],
+  "properties": {
+    "accepted": {
+      "const": false
+    },
+    "freeze": {
+      "$ref": "#/$defs/transition"
+    },
+    "disposition": {
+      "const": "audit-inert-unavailable"
+    },
+    "schema": {
+      "const": "rusty.morphospace.workflow.nonpass_custody_defect.v1"
+    },
+    "retained_receipt": {
+      "$ref": "#/$defs/receipt_binding"
+    },
+    "artifacts": {
+      "uniqueItems": true,
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "properties": {
+          "observation": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "missing",
+                  "different"
+                ]
+              },
+              "sha256": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/hash"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "state": {
+                      "const": "missing"
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "sha256": {
+                      "$ref": "#/$defs/hash"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "sha256": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            ],
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "state",
+              "sha256"
+            ]
+          },
+          "artifact_id": {
+            "$ref": "#/$defs/id"
+          },
+          "repo_id": {
+            "$ref": "#/$defs/id"
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "artifact_class": {
+            "enum": [
+              "mutable-source",
+              "git-index"
+            ]
+          },
+          "expected_sha256": {
+            "$ref": "#/$defs/hash"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "artifact_id",
+          "path",
+          "expected_sha256",
+          "artifact_class",
+          "repo_id",
+          "observation",
+          "observed_at",
+          "reason"
+        ]
+      },
+      "maxItems": 16
+    },
+    "original_receipt": {
+      "$ref": "#/$defs/receipt_binding"
+    },
+    "return": {
+      "$ref": "#/$defs/transition"
+    },
+    "historical_payload_preserved": {
+      "const": false
+    },
+    "begin": {
+      "$ref": "#/$defs/transition"
+    },
+    "audit_inert": {
+      "const": true
+    },
+    "defect_id": {
+      "$ref": "#/$defs/id"
+    },
+    "project_id": {
+      "$ref": "#/$defs/id"
+    },
+    "unit_id": {
+      "$ref": "#/$defs/id"
+    },
+    "result": {
+      "enum": [
+        "fail",
+        "blocked",
+        "partial"
+      ]
+    },
+    "tier": {
+      "enum": [
+        "quick",
+        "standard",
+        "deep"
+      ]
+    },
+    "receipt_schema": {
+      "const": "rusty.morphospace.workflow.validation_receipt.v1"
+    },
+    "frozen_repositories": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "repo_id",
+          "commit",
+          "tree"
+        ],
+        "properties": {
+          "repo_id": {
+            "$ref": "#/$defs/id"
+          },
+          "commit": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "tree": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          }
+        }
+      }
+    },
+    "validation_credit": {
+      "const": false
+    },
+    "acceptance_credit": {
+      "const": false
+    },
+    "proof_reuse": {
+      "const": false
+    }
+  },
+  "type": "object",
+  "title": "Immutable audit-only nonpassing mutable-evidence custody defect",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/nonpass-custody-defect-v1.schema.json"
+}

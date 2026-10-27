@@ -139,6 +139,131 @@ function Test-IntegratedToolingContextVerify {
     $arguments = @('-RepoRoot',$installerSourceRoot,'-TargetRoot',$targetRoot,'-Action','Verify','-WorkspaceRoot',$workspace,'-ToolingContextPath','tooling-contexts/context.json','-Json')
     $verified = (Invoke-InstallerChild -Arguments $arguments) | ConvertFrom-Json
     Assert-True ($verified.action -eq 'verified') 'Integrated context-bound Verify rejected authenticated forward-slash roots.'
+    # A new context selects an isolated managed copy before its resolver is sealed.
+    $snapshotStore=Join-Path $testRoot 'retained-router-snapshots'
+    $declaredProductRoot=Join-Path $testRoot 'declared-product'
+    [void][IO.Directory]::CreateDirectory($declaredProductRoot)
+    $snapshotArguments = @{
+        WorkspaceRoot=$workspace; ContextId='snapshot-context'; ExecutorRoot=$installerSourceRoot
+        SnapshotRoot=$snapshotStore; RepositoryRoots=@($workspace,$installerSourceRoot,$declaredProductRoot)
+        Routers=@($router); RouterLocations=@([pscustomobject]@{skill_id='rusty-morphospace';root=(Join-Path $targetRoot 'rusty-morphospace')})
+        ResolverPath='local/snapshot-resolver.json'
+    }
+    $filesBefore = @(Get-ChildItem -LiteralPath $workspace -Recurse -File | ForEach-Object FullName)
+    $planned = & $provenance { param($p) New-MorphospaceToolingContextResolver @p } $snapshotArguments
+    Assert-True ($planned.action -eq 'planned') 'Router materialization without Execute was not a plan.'
+    Assert-True (-not(Test-Path -LiteralPath (Join-Path $workspace 'local/snapshot-resolver.json'))) 'Read-only materialization wrote its resolver.'
+    Assert-True (-not(Test-Path -LiteralPath $snapshotStore)) 'Read-only materialization wrote external storage.'
+    Assert-True ((@(Get-ChildItem -LiteralPath $workspace -Recurse -File | ForEach-Object FullName) -join [char]0) -ceq ($filesBefore -join [char]0)) 'Materialization plan wrote files.'
+    $snapshotArguments.Execute=$true
+    $materialized = & $provenance { param($p) New-MorphospaceToolingContextResolver @p } $snapshotArguments
+    Assert-True ($materialized.action -eq 'materialized') 'Execute did not materialize a new router resolver.'
+    $reused = & $provenance { param($p) New-MorphospaceToolingContextResolver @p } $snapshotArguments
+    Assert-True ($reused.action -eq 'current') 'Exact router materialization was not idempotent.'
+    $snapshotContext = & $provenance { param($p) New-MorphospaceObservedToolingContext @p } @{
+        WorkspaceRoot=$workspace;ContextId='snapshot-context';ProjectId='fixture-project';PreparationId='fixture-preparation';ProductProjection=$projection
+        ResolverPath=$materialized.resolver.path;Executor=$executor;Routers=@($router);Compatibility=$compatibility
+    }
+    $snapshotResolver = & $provenance { param($w,$c) Read-MorphospaceToolingContextResolver $w $c } $workspace $snapshotContext
+    $snapshotRoot = [string]$snapshotResolver.routers[0].root
+    Assert-True (-not $snapshotRoot.StartsWith($targetRoot,[StringComparison]::OrdinalIgnoreCase)) 'Snapshot retained the mutable installed root.'
+    Assert-True ((Split-Path $snapshotRoot -Leaf) -ceq 'rusty-morphospace') 'Snapshot lost the instruction mapper skill directory identity.'
+    $snapshotSkill=Join-Path $snapshotRoot 'SKILL.md';$snapshotBytes=[IO.File]::ReadAllBytes($snapshotSkill)
+    try {
+        [IO.File]::AppendAllText($snapshotSkill,'tampered')
+        $refusal=''
+        try { & $provenance { param($c,$w) Assert-MorphospaceToolingContextLocalObservation $c $w } $snapshotContext $workspace | Out-Null } catch { $refusal=$_.Exception.Message }
+        Assert-True ($refusal -match "managed file 'SKILL.md' drifted") 'Snapshot bypassed the existing exact managed file guard.'
+        $refusal=''
+        try { & $provenance { param($p) New-MorphospaceToolingContextResolver @p } $snapshotArguments | Out-Null } catch { $refusal=$_.Exception.Message }
+        Assert-True ($refusal -match "Tooling router copy 'rusty-morphospace/SKILL.md' drifted") 'Materializer did not refuse exact damaged published snapshot bytes.'
+    } finally { [IO.File]::WriteAllBytes($snapshotSkill,$snapshotBytes) }
+    # Input errors and publication conflicts must not rewrite any existing bytes.
+    function Resolver-FilesFingerprint {
+        $values=@(foreach($root in @($workspace,$snapshotStore)){if(Test-Path -LiteralPath $root){Get-ChildItem -LiteralPath $root -Recurse -File | Sort-Object FullName | ForEach-Object { $_.FullName+':'+(Get-FileHash -LiteralPath $_.FullName).Hash }}})
+        return ($values -join [char]0)
+    }
+    function Deny-Materialization([hashtable]$Arguments,[string]$Expected) {
+        $before=Resolver-FilesFingerprint
+        $message=''
+        try { & $provenance { param($p) New-MorphospaceToolingContextResolver @p } $Arguments | Out-Null } catch { $message=$_.Exception.Message }
+        Assert-True ($message -match $Expected) ("Unexpected materialization refusal: "+$message)
+        Assert-True ((Resolver-FilesFingerprint) -ceq $before) 'Refused materialization changed existing workspace files.'
+    }
+    foreach($unsafeStore in @($workspace,(Join-Path $workspace 'cache'),$testRoot,$installerSourceRoot,(Join-Path $declaredProductRoot '../declared-product/cache'))){
+        $bad=$snapshotArguments.Clone();$bad.SnapshotRoot=$unsafeStore
+        Deny-Materialization $bad 'snapshot storage overlaps a declared repository, workspace or executor root'
+    }
+    $bad=$snapshotArguments.Clone();$bad.SnapshotRoot='relative-cache'
+    Deny-Materialization $bad 'explicit absolute retained directory'
+    $bad=$snapshotArguments.Clone();$bad.RepositoryRoots=@('relative-product')
+    Deny-Materialization $bad 'repository root locations must be absolute'
+    $bad=$snapshotArguments.Clone();$bad.RepositoryRoots=@()
+    Deny-Materialization $bad 'empty array|selected repository root locations'
+    $snapshotAlias=Join-Path $testRoot 'snapshot-storage-alias'
+    try {
+        $kind=if([OperatingSystem]::IsWindows()){'Junction'}else{'SymbolicLink'}
+        New-Item -ItemType $kind -Path $snapshotAlias -Target $declaredProductRoot | Out-Null
+        $bad=$snapshotArguments.Clone();$bad.SnapshotRoot=$snapshotAlias
+        Deny-Materialization $bad 'Reparse-point ancestors'
+    } finally { if(Test-Path -LiteralPath $snapshotAlias){Remove-Item -LiteralPath $snapshotAlias -Force} }
+    foreach($unsafe in @('resolver.json','local/tooling-router-snapshots/bad.json','../escape.json')){
+        $bad=$snapshotArguments.Clone();$bad.ResolverPath=$unsafe
+        Deny-Materialization $bad 'ignored local/|inside its router copy|may not contain'
+    }
+    $bad=$snapshotArguments.Clone();$bad.RouterLocations=@($bad.RouterLocations[0],$bad.RouterLocations[0])
+    Deny-Materialization $bad 'repeats a router location'
+    $bad=$snapshotArguments.Clone();$bad.Routers=@($router,$router)
+    Deny-Materialization $bad 'router and location sets differ'
+    $bad=$snapshotArguments.Clone();$bad.ContextId='../foreign'
+    Deny-Materialization $bad 'context identity is invalid'
+    $unmanaged=Join-Path $targetRoot 'rusty-morphospace/references/unmanaged-note.txt'
+    try {
+        [IO.File]::WriteAllText($unmanaged,'private contributor note')
+        $null=& $provenance {param($p) New-MorphospaceToolingContextResolver @p} $snapshotArguments
+        Assert-True (-not(Test-Path -LiteralPath (Join-Path $snapshotRoot 'references/unmanaged-note.txt'))) 'Materializer copied unmanaged contributor content.'
+    } finally { Remove-Item -LiteralPath $unmanaged -Force }
+    $globalSkill=Join-Path $targetRoot 'rusty-morphospace/SKILL.md';$globalBytes=[IO.File]::ReadAllBytes($globalSkill)
+    try {
+        [IO.File]::AppendAllText($globalSkill,'source drift')
+        Deny-Materialization $snapshotArguments "managed file 'SKILL.md' drifted"
+    } finally { [IO.File]::WriteAllBytes($globalSkill,$globalBytes) }
+    $conflict=Join-Path $workspace 'local/conflicting-resolver.json'
+    try {
+        [IO.File]::WriteAllText($conflict,'{}')
+        $bad=$snapshotArguments.Clone();$bad.ResolverPath='local/conflicting-resolver.json'
+        Deny-Materialization $bad 'output already contains different bytes'
+    } finally { Remove-Item -LiteralPath $conflict -Force }
+    $incomplete=Join-Path $snapshotRoot '.morphospace-skill-source.json';$provenanceBytes=[IO.File]::ReadAllBytes($incomplete)
+    try {
+        Remove-Item -LiteralPath $incomplete -Force
+        Deny-Materialization $snapshotArguments 'file set differs'
+    } finally { [IO.File]::WriteAllBytes($incomplete,$provenanceBytes) }
+    $globalContextBytes = $context | ConvertTo-Json -Depth 64 -Compress
+    $globalResolverBytes = [IO.File]::ReadAllBytes((Join-Path $workspace 'local/resolver.json'))
+    $guidanceSource = Join-Path $testRoot 'guidance-source'
+    & git clone --quiet --no-hardlinks $installerSourceRoot $guidanceSource
+    if($LASTEXITCODE -ne 0){throw 'Could not create independent guidance source.'}
+    & git -C $guidanceSource config user.name 'Fixture'; & git -C $guidanceSource config user.email 'fixture@example.invalid'
+    & git -C $guidanceSource remote set-url origin 'https://example.invalid/rusty-morphospace-work-environment.git'
+    [IO.File]::AppendAllText((Join-Path $guidanceSource 'skills/rusty-morphospace/SKILL.md'), "`nGuidance update fixture.`n")
+    & git -C $guidanceSource add -- skills/rusty-morphospace/SKILL.md
+    & git -C $guidanceSource -c commit.gpgsign=false commit -q -m 'fixture guidance update'
+    if($LASTEXITCODE -ne 0){throw 'Could not commit independent guidance update.'}
+    try {
+        $update = (Invoke-InstallerChild -Arguments @('-RepoRoot',$guidanceSource,'-TargetRoot',$targetRoot,'-BackupRoot',$backupRoot,'-Action','Update','-SkillId','rusty-morphospace','-Execute','-Json')) | ConvertFrom-Json
+        Assert-True ($update[0].action -eq 'updated') 'Independent normal managed guidance update did not execute.'
+        $refusal=''
+        try { & $provenance { param($c,$w) Assert-MorphospaceToolingContextLocalObservation $c $w } $context $workspace | Out-Null } catch { $refusal=$_.Exception.Message }
+        Assert-True ($refusal -match "router 'rusty-morphospace' provenance drifted") 'Global context no longer refuses real managed guidance drift.'
+        Assert-True (& $provenance { param($c,$w) Assert-MorphospaceToolingContextLocalObservation $c $w } $snapshotContext $workspace) 'Normal guidance update disabled the new snapshot context.'
+        Assert-True (($context|ConvertTo-Json -Depth 64 -Compress) -ceq $globalContextBytes) 'Snapshot construction changed the old context.'
+        Assert-True ([Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $workspace 'local/resolver.json'))) -ceq [Convert]::ToBase64String($globalResolverBytes)) 'Snapshot construction changed the old resolver.'
+    } finally {
+        Invoke-InstallerChild -Arguments @('-RepoRoot',$installerSourceRoot,'-TargetRoot',$targetRoot,'-BackupRoot',$backupRoot,'-Action','Update','-SkillId','rusty-morphospace','-Execute','-Json') | Out-Null
+    }
+    Write-Host 'Actual installed guidance update: snapshot context survives; global context drift and snapshot tamper remain refused.'
+
     $wrongTarget = Join-Path $testRoot 'other-skills'
     Copy-Item -LiteralPath $targetRoot -Destination $wrongTarget -Recurse
     $wrongArguments = @('-RepoRoot',$installerSourceRoot,'-TargetRoot',$wrongTarget,'-Action','Verify','-WorkspaceRoot',$workspace,'-ToolingContextPath','tooling-contexts/context.json','-Json')

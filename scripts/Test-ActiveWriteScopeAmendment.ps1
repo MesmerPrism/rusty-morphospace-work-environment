@@ -175,9 +175,120 @@ function New-WriteScopeFixture {
     return [pscustomobject]@{paths=$paths;amendment=$amendment;amendment_path=$amendmentPath;amendment_id=$amendmentId}
 }
 
+function Test-ReachableLargeWriteScope {
+    param([string]$Root)
+    # Reach the active state through the real initial Ready and Claim writers;
+    # a hand-authored active unit would not prove transition closure.
+    foreach ($name in @('GIT_DIR','GIT_COMMON_DIR','GIT_WORK_TREE','GIT_INDEX_FILE','GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES','GIT_CONFIG')) {
+        if ([Environment]::GetEnvironmentVariable($name)) { throw "Write-scope fixture refuses ambient Git redirection: $name" }
+    }
+    $root = Join-Path $Root 'reachable-large'
+    $source = Join-Path $root 'source'
+    [void][IO.Directory]::CreateDirectory((Join-Path $source 'src'))
+    $allPaths = @(1..142 | ForEach-Object { 'src/file-{0:d3}.txt' -f $_ })
+    foreach ($path in $allPaths) { [IO.File]::WriteAllText((Join-Path $source $path), "Fixture source.`n") }
+    foreach ($arguments in @(
+        @('init','-b','main'), @('add','src/'),
+        @('-c','core.hooksPath=','-c','user.name=Workflow Fixture','-c','user.email=fixture@example.invalid','commit','-m','fixture source')
+    )) {
+        $gitOutput = @(& git -C $source @arguments 2>&1)
+        if ($LASTEXITCODE -ne 0) { throw "Fixture-local Git failed: $($gitOutput -join ' ')" }
+        if ($arguments[0] -ceq 'init') {
+            $metadata = Join-Path $source '.git'
+            Assert-WriteScopeTest ([IO.Directory]::Exists($metadata) -and -not ([IO.File]::GetAttributes($metadata) -band [IO.FileAttributes]::ReparsePoint)) 'fixture Git metadata is not an ordinary local directory'
+            $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+            foreach ($probe in @(
+                @{arguments=@('rev-parse','--show-toplevel');expected=$source},
+                @{arguments=@('rev-parse','--absolute-git-dir');expected=$metadata},
+                @{arguments=@('rev-parse','--path-format=absolute','--git-common-dir');expected=$metadata}
+            )) {
+                $actual = @(& git -C $source @($probe.arguments) 2>&1)
+                Assert-WriteScopeTest ($LASTEXITCODE -eq 0 -and $actual.Count -eq 1 -and [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath([string]$actual[0])).Equals($probe.expected,$comparison)) 'fixture Git worktree or metadata was redirected'
+            }
+        }
+    }
+    $projectRoot = Join-Path $root 'project'
+    [void][IO.Directory]::CreateDirectory($projectRoot)
+    & (Join-Path $PSScriptRoot 'New-ProjectWorkspace.ps1') -ProjectRoot $projectRoot -ProjectId 'write-scope-reachable' -Purpose 'Reach a large active scope through initial owner admission.' -Execute | Out-Null
+    $workspace = Join-Path $projectRoot 'morphospace'
+    $seed = New-WriteScopeFixture $root 'seed'
+    $unit = Read-MorphospaceProtocolJson $seed.paths.unit
+    $unit.project_id = 'write-scope-reachable'
+    $unit.status = 'proposed'
+    $unit.allowed_repositories = @([pscustomobject]@{repo_id='project-shell';allowed_paths=@($allPaths[0..133])})
+    $unit.validation = @([pscustomobject]@{profile_id='workflow';command='Fixture validation only.'})
+    $unit | Add-Member -NotePropertyName claim_requirements -NotePropertyValue ([pscustomobject]@{minimum_free_disk_mib=0;required_tools=@();product_inputs=@()})
+    $unitPath = Join-Path $workspace 'iteration-units/unit-write-scope-001.json'
+    Write-WriteScopeJson $unitPath $unit
+    $mapPath = Join-Path $root 'repository-map.json'
+    Write-WriteScopeJson $mapPath ([pscustomobject]@{schema='rusty.morphospace.workflow.repository_map.v1';repositories=@([pscustomobject]@{repo_id='project-shell';path=$source;role='source'})})
+    foreach ($action in @('Ready','Claim')) {
+        $receipt = & (Join-Path $PSScriptRoot 'Invoke-WorkUnitAutomation.ps1') -Action $action -WorkspaceRoot $workspace -UnitId $unit.unit_id -RepoMapPath $mapPath -Timestamp '2026-08-10T02:00:00.0000000Z' -Execute | ConvertFrom-Json
+        Assert-WriteScopeTest ($receipt.executed) "large initial $action did not execute"
+    }
+    Import-Module (Join-Path $PSScriptRoot 'ActiveWriteScopeAmendment.psm1') -Force
+    Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force
+    $projectPath = Join-Path $workspace 'project.spec.json'
+    $statePath = Join-Path $workspace 'workspace.state.json'
+    $eventsPath = Join-Path $workspace 'iteration-events.jsonl'
+    $project = Read-MorphospaceProtocolJson $projectPath
+    $state = Read-MorphospaceProtocolJson $statePath
+    $active = Read-MorphospaceProtocolJson $unitPath
+    Assert-WriteScopeTest ($active.status -ceq 'active' -and $state.current_unit -ceq $unit.unit_id -and @($active.allowed_repositories[0].allowed_paths).Count -eq 134 -and $null -eq $state.last_accepted_receipt) 'initial Ready/Claim did not admit 134 exact paths without an accepted predecessor'
+    Assert-IterationUnitSchema $active $true 'the reachable 134-path active unit does not satisfy the unit schema'
+    $amendment = [pscustomobject][ordered]@{
+        schema='rusty.morphospace.workflow.active_write_scope_amendment.v1'
+        amendment_id='reachable-large-add-eight';project_id=$project.project_id;unit_id=$unit.unit_id;repository_id='project-shell'
+        reason='Add eight exact tracked paths within the unchanged project source ceiling.'
+        expected=[pscustomobject]@{
+            status='active';current_unit=$state.current_unit;project_revision=$project.revision
+            project_sha256=(Get-MorphospaceCanonicalJsonSha256 $project);state_sha256=(Get-MorphospaceCanonicalJsonSha256 $state)
+            unit_sha256=(Get-MorphospaceCanonicalJsonSha256 $active);events_sha256=(Get-MorphospaceFileSha256 $eventsPath)
+            events_length=[IO.FileInfo]::new($eventsPath).Length;event_tail_id=$state.last_event_id
+        }
+        before_allowed_paths=@($active.allowed_repositories[0].allowed_paths);after_allowed_paths=$allPaths
+        does_not_prove=@('Fixture-only source-scope continuity; no product, device, build, acceptance or publication authority.')
+    }
+    $amendmentPath = Join-Path $root 'large-amendment.json'
+    $outPath = Join-Path $workspace 'receipts/reachable-large-add-eight.json'
+    Write-WriteScopeJson $amendmentPath $amendment
+    $before = @{}
+    foreach ($path in @($projectPath,$statePath,$unitPath,$eventsPath)) { $before[$path] = Get-MorphospaceFileSha256 $path }
+    $dry = Invoke-MorphospaceAmendActiveWriteScope -WorkspaceRoot $workspace -UnitId $unit.unit_id -ActiveWriteScopeAmendment $amendmentPath -OutPath $outPath
+    Assert-WriteScopeTest (-not $dry.executed -and -not [IO.File]::Exists($outPath)) 'large-scope dry run performed a transition'
+    foreach ($path in $before.Keys) { Assert-WriteScopeTest ($before[$path] -ceq (Get-MorphospaceFileSha256 $path)) 'large-scope dry run changed owner bytes' }
+    foreach ($case in @('stale-cas','wrong-before','removal','outside-project','unsafe-path','case-duplicate')) {
+        $bad = Copy-WriteScopeValue $amendment
+        switch ($case) {
+            'stale-cas' { $bad.expected.unit_sha256 = '0'*64 }
+            'wrong-before' { $bad.before_allowed_paths[133] = 'src/not-declared.txt' }
+            'removal' { $bad.after_allowed_paths = @($allPaths[1..141]) }
+            'outside-project' { $bad.after_allowed_paths += 'private/extra.txt' }
+            'unsafe-path' { $bad.after_allowed_paths += '../escape.txt' }
+            'case-duplicate' { $bad.after_allowed_paths += 'src/FILE-001.txt' }
+        }
+        $badPath = Join-Path $root "large-$case.json"
+        Write-WriteScopeJson $badPath $bad
+        Assert-WriteScopeRejected { Invoke-MorphospaceAmendActiveWriteScope -WorkspaceRoot $workspace -UnitId $unit.unit_id -ActiveWriteScopeAmendment $badPath -OutPath $outPath } "large-scope $case was accepted"
+    }
+    $hash = Get-MorphospaceFileSha256 $amendmentPath
+    Assert-WriteScopeRejected { Invoke-MorphospaceAmendActiveWriteScope -WorkspaceRoot $workspace -UnitId $unit.unit_id -ActiveWriteScopeAmendment $amendmentPath -OutPath $outPath -Execute } 'large-scope execute without dry-run input hash was accepted'
+    $executed = Invoke-MorphospaceAmendActiveWriteScope -WorkspaceRoot $workspace -UnitId $unit.unit_id -ActiveWriteScopeAmendment $amendmentPath -ExpectedActiveWriteScopeAmendmentSha256 $hash -OutPath $outPath -Timestamp '2026-08-10T02:01:00.0000000Z' -Execute
+    $after = Read-MorphospaceProtocolJson $unitPath
+    $afterState = Read-MorphospaceProtocolJson $statePath
+    $expectedUnit = Copy-WriteScopeValue $active
+    $expectedUnit.allowed_repositories[0].allowed_paths = $allPaths
+    $expectedState = Copy-WriteScopeValue $state
+    $expectedState.last_event_id = 'reachable-large-add-eight-recorded'
+    Assert-WriteScopeTest ($executed.executed -and @($after.allowed_repositories[0].allowed_paths).Count -eq 142 -and (Get-MorphospaceCanonicalJsonSha256 $after) -ceq (Get-MorphospaceCanonicalJsonSha256 $expectedUnit)) 'large amendment changed more than the exact additive path set'
+    Assert-WriteScopeTest ((Get-MorphospaceCanonicalJsonSha256 $afterState) -ceq (Get-MorphospaceCanonicalJsonSha256 $expectedState) -and $before[$projectPath] -ceq (Get-MorphospaceFileSha256 $projectPath) -and (Get-MorphospaceFileSha256 $outPath) -ceq $hash) 'large amendment detached project/state/input-hash continuity'
+    Write-Output 'Reachable large-scope control passed: actual Ready/Claim 134 paths, dry-run/execute 142 paths, seven refusal guards.'
+}
+
 $temp = Join-Path ([IO.Path]::GetTempPath()) ("workenv-active-write-scope-" + [guid]::NewGuid().ToString('N'))
 try {
     [IO.Directory]::CreateDirectory($temp) | Out-Null
+    Test-ReachableLargeWriteScope $temp
     $fixture = New-WriteScopeFixture $temp
     $paths = $fixture.paths
     $before = @{}
@@ -341,9 +452,14 @@ try {
             -OutPath $race.paths.out -Timestamp '2026-08-10T01:20:00.0000000Z' -BeforeTransitionHook $raceHook -Execute
     } 'mutex-protected project CAS race was accepted'
 
-    [pscustomobject]@{result='pass';action='AmendActiveWriteScope';additive=$true;project_bounded=$true;transactional=$true;architecture_decision_optional_and_strict=$true;manual_owner_review_preserved=$true;unknown_push_checkpoint_rejected=$true;update_instruction_null_compatible=$true;compatibility_and_roadmap_surfaces_strict=$true;git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false} | ConvertTo-Json -Compress
+    # Mutation flags describe the amendment action, not the isolated fixture's
+    # initial Git setup or its real Ready/Claim transitions.
+    [pscustomobject]@{result='pass';action='AmendActiveWriteScope';additive=$true;project_bounded=$true;transactional=$true;reachable_initial_paths=134;amended_paths=142;isolated_fixture_git_setup=$true;architecture_decision_optional_and_strict=$true;manual_owner_review_preserved=$true;unknown_push_checkpoint_rejected=$true;update_instruction_null_compatible=$true;compatibility_and_roadmap_surfaces_strict=$true;git_mutation_performed=$false;device_mutation_performed=$false;remote_mutation_performed=$false} | ConvertTo-Json -Compress
 } finally {
     if ([IO.Directory]::Exists($temp)) {
+        $resolvedTemp = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $temp).Path)
+        $tempPrefix = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar
+        if (-not $resolvedTemp.StartsWith($tempPrefix,[StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($resolvedTemp) -notlike 'workenv-active-write-scope-*' -or ([IO.File]::GetAttributes($resolvedTemp) -band [IO.FileAttributes]::ReparsePoint)) { throw 'Unsafe write-scope fixture cleanup path.' }
         foreach ($file in [IO.Directory]::EnumerateFiles($temp,'*',[IO.SearchOption]::AllDirectories)) {
             try { [IO.File]::SetAttributes($file,[IO.FileAttributes]::Normal) } catch {}
         }

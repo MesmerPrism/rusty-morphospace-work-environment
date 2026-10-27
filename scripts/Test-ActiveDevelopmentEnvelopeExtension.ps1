@@ -1,7 +1,7 @@
-param([switch]$SelfTest,[switch]$RetainedAuthorityOnly,[switch]$CheckpointProofOnly,[switch]$PreparationConsumerOnly,[switch]$ExtendedSourceConsumerOnly)
+param([switch]$SelfTest,[switch]$RetainedAuthorityOnly,[switch]$CheckpointProofOnly,[switch]$PreparationConsumerOnly,[switch]$ExtendedSourceConsumerOnly,[switch]$BootstrapOriginOnly,[string]$BootstrapFixtureRoot='')
 $ErrorActionPreference='Stop'
 $repoRoot=Split-Path $PSScriptRoot -Parent
-& (Join-Path $PSScriptRoot 'Test-PlanningAuthorityRelocation.ps1') -SelfTest
+if(-not$BootstrapOriginOnly){& (Join-Path $PSScriptRoot 'Test-PlanningAuthorityRelocation.ps1') -SelfTest}
 
 $protocolModule=Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceProtocolCommon.psm1') -Force -PassThru
 Import-Module (Join-Path $PSScriptRoot 'DevelopmentEnvelopePreparation.psm1') -Force
@@ -18,6 +18,7 @@ if($null-eq$transitionModule){throw 'Active-envelope test cannot retain the tran
 $continuationModule=Import-Module (Join-Path $PSScriptRoot 'lib\MorphospaceDevelopmentContinuation.psm1') -PassThru
 . (Join-Path $PSScriptRoot 'test-support\DevelopmentAdmissionFixture.ps1')
 . (Join-Path $PSScriptRoot 'test-support\ActiveUnitRetirementFixture.ps1')
+. (Join-Path $PSScriptRoot 'test-support/BootstrapEnvelopeFixture.ps1')
 
 function Assert-ActiveEnvelopeTest([bool]$Condition,[string]$Message){if(-not$Condition){throw "Active development-envelope extension self-test failed: $Message"}}
 function Assert-ActiveEnvelopeRejected([scriptblock]$Action,[string]$Message){$rejected=$false;try{&$Action|Out-Null}catch{$rejected=$true};Assert-ActiveEnvelopeTest $rejected $Message}
@@ -387,10 +388,16 @@ function Test-ActiveEnvelopeFeaturelessRootsOnly {
 $retainedAuthorityResult=Invoke-RetainedAuthorityFocusedTests
 if($RetainedAuthorityOnly){$retainedAuthorityResult|ConvertTo-Json -Compress;return}
 
+if($BootstrapOriginOnly){
+    $bootstrapRoot=if($BootstrapFixtureRoot){[IO.Path]::GetFullPath($BootstrapFixtureRoot)}else{Join-Path ([IO.Path]::GetTempPath()) ('bootstrap-envelope-'+[guid]::NewGuid().ToString('N'))}
+    Test-NativeBootstrapEnvelopeExtension -Root $bootstrapRoot
+    return
+}
 $tempParent=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')
 $temp=Join-Path $tempParent ('active-envelope-extension-'+[guid]::NewGuid().ToString('N'))
 try{
     [IO.Directory]::CreateDirectory($temp)|Out-Null
+    if(-not$PreparationConsumerOnly-and-not$ExtendedSourceConsumerOnly-and-not$CheckpointProofOnly){Test-NativeBootstrapEnvelopeExtension -Root (Join-Path $temp 'native-bootstrap')}
     if(-not$PreparationConsumerOnly-and-not$ExtendedSourceConsumerOnly){foreach($mode in @('external','separate-artifact')){
         $writer=if($mode-ceq'external'){New-ActiveEnvelopeCheckpointWriter -ExternalReceipt}else{New-ActiveEnvelopeCheckpointWriter -SeparateReceiptProducer}
         $proofSeed=New-EnvelopeAdmissionPreparedFixture -Root (Join-Path $temp "proof-$mode") -RepositoryRoot $repoRoot -TransitionLedgerModule $writer -OwnerProducedPreparation -AdditiveFeature

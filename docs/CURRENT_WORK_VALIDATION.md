@@ -20,6 +20,18 @@ this workspace mode supplies no conformance, acceptance or execution credit.
 It is unavailable for alternative instruction-only, delta or historical-debt
 modes. It requires an explicit workspace and both existing switches.
 
+A frozen consumer whose original workflow command cannot be changed may use
+normal-validation selector v2 at its declared Standard or Deep tier. The fixed
+`Invoke-WorkflowCurrentValidation.ps1` producer comes directly from the live
+adopted context executor and its unique exact closure entry. It invokes the
+same current-work modes above through the existing retained raw-stream capture;
+no consumer tool copy or configurable command is accepted. The selector,
+original command/freeze, current unit/context, tier, terminal and evidence bytes
+remain bound through public receipt, Record and Accept. All other criteria,
+gates and mandatory instruction completion remain required. See
+[NORMAL_VALIDATION_SELECTOR.md](NORMAL_VALIDATION_SELECTOR.md). The retained v1
+Quick route and unsupported archive/rematerialization boundaries are unchanged.
+
 Before history authentication, this mode checks the required workspace files
 and any current or queued unit's exact tooling-context file and local resolver
 pin. A missing or changed resolver therefore denies early. The later complete
@@ -39,6 +51,22 @@ identity. Caller mutations of returned objects cannot change this private proof.
 Nested readers may share it only on the same thread, workspace and held ledger
 observation. Completions, artifacts, event placement, required paths and tail
 checks remain live on every read; changed intent or policy bytes refuse.
+
+Preparation provenance readers use that same existing owner scope for immutable
+intent semantics. Equivalent nested scopes must share their private intent proof
+dictionary and exact ledger/policy observation; ambiguous scopes refuse.
+Standalone reads remain fresh. Completion, placement, artifact, state and
+successor checks still run for each consumer. Focused controls distinguish fewer
+semantic evaluations from unchanged live guard counts; they do not establish an
+application-wide timing improvement.
+
+Ordinary preparation also rejects an unavailable or tracked-dirty selected source
+before costly history authentication. This early observation only refuses work;
+the later complete source snapshot and immediate mutation guards still run.
+Before creating an immutable feature admission, authored instruction checks also
+reject reviewed skill records outside that feature's category routing. Ready
+retains its complete path, source, map and instruction checks; admission supplies
+no Claim authority.
 
 Active retirement uses the same private proof scope around its existing owner
 checks. It retains current repository/source observations, preparation
@@ -63,7 +91,98 @@ compatibility cases below explain specific authenticated histories; they are not
 a startup checklist or new prerequisites for every iteration. Read the relevant
 case when a current validator diagnostic or explicit history task names it.
 
+## Initial source-lock validation receipts
+
+An initial owner may reach native `BeginValidation` without a development
+admission or Candidate Freeze. `New-ValidationReceipt.ps1` supports that finite
+case for an exact `source_composition_lock.v1`; absence of a Freeze alone is
+not evidence of eligibility. Receipt consumption authenticates the current
+native unit/state target before routing, so edited schema or Freeze markers
+cannot select a weaker path. The public command and product-evidence input are
+unchanged:
+
+```powershell
+pwsh -NoProfile -File <work-environment>/scripts/New-ValidationReceipt.ps1 `
+  -WorkspaceRoot <project-root>/morphospace -UnitId <current-unit> `
+  -RepoMapPath <selected-repository-map> -EvidencePath <product-evidence> `
+  -OutPath <project-root>/morphospace/receipts/<validation-receipt>.json
+```
+
+The producer authenticates the first native Ready/Claim origin, supported typed
+active supersession or initial-profile correction, actual instruction completion,
+and Begin transition. It checks current unit/state/project, the closed map,
+source-lock identity, exact repository baselines and Git objects, permitted
+descendants and source scope. Product and read-only source roots remain clean;
+planning changes remain inside declared owner paths. An immutable lock witness
+must be present: the exact committed blob at a mapped planning checkpoint
+recorded by Begin, or the existing authenticated initial-profile correction's
+raw-lock binding. A self-recomputed fingerprint is insufficient.
+
+The producer adds three reserved ordinary hashed artifacts:
+`bootstrap-source-lock`, `bootstrap-repository-map`, and
+`bootstrap-begin-intent`. Caller evidence cannot occupy those IDs. Native v1
+Ready/Claim did not bind historical map raw bytes: the reader checks native map
+semantics and any later typed raw binding, then pins the selected raw map from
+generation through Record and Accept. It does not invent earlier map custody.
+Control files and live Git observations are rechecked before output or mutation.
+
+Use ordinary `RecordValidation` and `Accept` with the same selected map. Both
+authenticate the bootstrap predicate and exact receipt baselines. A new
+bootstrap Record preserves the producer input and retains its exact bytes as
+one new native ledger artifact in the same receipt directory. Accept validates
+that copy and owns a separate exact final copy in its own native transaction;
+the validation checkpoint and accepted-receipt pointer select this final copy.
+The existing committed-history reader therefore authenticates later receipt
+reads from the Accept proof. Producer and Record inputs remain unchanged.
+Only the exact authenticated stage-owned output is excluded from product
+changed-path comparisons. Missing,
+substituted or changed bindings, source, artifacts or
+native history refuse. Existing admitted units still require their authentic
+Candidate Freeze; existing accepted history is not migrated or relabeled.
+
+The producer observes artifact bytes but does not execute the caller's product
+commands or grant product, publication, adoption or device evidence. Reuse valid
+unchanged evidence only under its owning unit's actual requirements. Do not
+fabricate assessment/Freeze markers, alter immutable profile history, or enroll
+an unrelated unit to manufacture this route. Unsupported origins remain refused.
+
+Run `scripts/Test-BootstrapValidationReceipt.ps1 -SelfTest` for genuine initial
+and superseded producer/Record/Accept journeys, current/project readers, source
+and receipt drift controls, and the ordinary admitted-Freeze continuation. The
+initial-profile correction's existing owning test also uses the public producer
+while retaining its explicit modeled-product limits.
+
 ## Authenticated history and recovery cases
+
+An authentic initial unit can be `active`, or `validating` before any recorded
+validation, while an older Ready/Claim owner allowed a validation profile ID
+absent from `project.spec.json`. `CorrectInitialValidationProfileClosure` adds
+only that immutable unit's exact missing profile IDs and ordinal-deduplicated
+literal commands. It never runs those strings or infers passing evidence from
+them. Existing project profiles, the raw unit, source lock, status and committed
+ledger prefix remain unchanged. Project/feature-lock revisions and the workspace
+registry advance together through the existing v6 raw-preimage transaction.
+
+Use `Invoke-WorkUnitAutomation.ps1 -Action CorrectInitialValidationProfileClosure`
+with `-WorkspaceRoot`, `-UnitId`, `-InitialValidationProfileCorrectionPath` and
+the exact workspace `-OutPath receipts/<correction-id>.json`. The closed request
+schema binds current canonical/raw project, lock, state and unit hashes,
+revisions, original feature-lock timestamp, exact source-lock path/raw hash and
+ledger hash/length/tail. Supply the dry-run request hash through
+`-ExpectedInitialValidationProfileCorrectionSha256` for `-Execute`. An exact
+interrupted transaction uses existing authenticated repair; changed inputs or an
+unrelated pending transaction refuse. Historical reads authenticate the same
+additive projection through genuine later continuation.
+
+This standalone initial-owner action excludes admitted, frozen, accepted or
+checkpointed owners, bound tooling contexts, queued successors, blockers and
+pending publication. It does not expand an old context's fixed allowed-action
+protocol. Do not rewrite a claimed unit or use admission, retirement or a false
+acceptance to repair an initial project omission. Fresh Ready and Claim now
+refuse only unknown validation profile IDs with `validation-profile-unknown`;
+known IDs do not impose global equality between unit and project commands.
+Other claim advisories and existing idempotent owner continuations keep their
+existing meanings.
 
 Supersession-origin retirement preserves authenticated historical instruction
 repository observations, including recorded dirt, through its existing narrow

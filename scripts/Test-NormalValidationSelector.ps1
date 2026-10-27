@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([switch]$SelfTest)
+param([switch]$SelfTest,[switch]$DeclaredTierOnly)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -66,6 +66,7 @@ function New-SelectorValidationReceipt {
         [object]$MatrixRow,
         [string]$EvidencePath,
         [string]$ReceiptLeaf,
+        [ValidateSet('quick','standard','deep')][string]$Tier='quick',
         [object]$RepositoryRevision = $null
     )
 
@@ -81,7 +82,7 @@ function New-SelectorValidationReceipt {
         project_id = 'selector-consumer-test'
         unit_id = $UnitId
         created_at = '2026-08-29T06:00:00Z'
-        tier = 'quick'
+        tier = $Tier
         result = $Result
         repository_revisions = $repositoryRevisions
         changed_paths = @()
@@ -118,6 +119,14 @@ function Assert-Rejected([string]$Name, [string]$Pattern, [scriptblock]$Action) 
 
 if (-not $SelfTest) { throw 'Test-NormalValidationSelector.ps1 requires -SelfTest.' }
 
+# The declared-tier contract is separate from the retained workspace Quick v1.
+$declaredTierSchema = Join-Path $repoRoot 'schemas/normal-validation-selector-v2.schema.json'
+Assert-SelectorTest (Test-Path -LiteralPath $declaredTierSchema -PathType Leaf) 'declared-tier v2 schema is absent'
+$declaredTierContract = Get-Content -LiteralPath $declaredTierSchema -Raw | ConvertFrom-Json -Depth 64
+Assert-SelectorTest ((@($declaredTierContract.properties.selection.properties.tier.enum) -join '|') -ceq 'quick|standard|deep') 'v2 must declare every ordinary tier without relaxing v1'
+Assert-SelectorTest ($declaredTierContract.properties.selection.properties.producer.properties.path.const -ceq 'scripts/Invoke-WorkflowCurrentValidation.ps1') 'v2 producer is not the fixed bound-owner entrypoint'
+Assert-SelectorTest ((Get-Content -LiteralPath (Join-Path $repoRoot 'schemas/normal-validation-selector-v1.schema.json') -Raw | ConvertFrom-Json -Depth 64).properties.selection.properties.tier.const -ceq 'quick') 'v1 Quick contract changed'
+
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('morphospace-normal-selector-' + [guid]::NewGuid().ToString('N'))
 $projectRoot = Join-Path $testRoot 'project'
 $workspace = Join-Path $projectRoot 'morphospace'
@@ -152,7 +161,7 @@ try {
         authority_map = @([ordered]@{ parameter = 'project.composition'; owner = 'selector-consumer-owner'; adapters = @() })
         repositories = @([ordered]@{ repo_id = 'project-shell'; role = 'planning'; path = '..'; allowed_paths = @('morphospace/') })
         modules = @(); non_scope = @('Product, build, device, acceptance, and publication work.')
-        validation_profiles = @([ordered]@{ profile_id = $declaredProfile; commands = @('activation-only fixture command') })
+        validation_profiles = @([ordered]@{ profile_id = $declaredProfile; commands = @('activation-only fixture command') },[ordered]@{profile_id='workflow-current';commands=@('Reserved current-work fixture declaration.')})
         acceptance_profiles = @([ordered]@{ profile_id = 'manual-review'; commands = @('Independent review is required.') })
         release_policy = [ordered]@{ versioning = 'semver'; commit_policy = 'Fixture only.'; push_checkpoint = 'manual-owner-review'; source_first = $true; planning_last = $true; force_push_allowed = $false }
         public_boundary = [ordered]@{ mode = 'public'; private_overlay = 'local/'; prohibited_evidence = @('device serials') }
@@ -277,6 +286,128 @@ throw 'The selector consumer must never execute the evidence producer.'
     }
 
     $positiveSelector = New-SelectorDocument
+    $selectorModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceNormalValidationSelector.psm1') -PassThru
+    $declaredMatrix=@([pscustomobject]@{order=1;gate_id="validation-$declaredProfile";kind='command';profile_id=$declaredProfile;command=$declaredCommand;disposition='required'})
+    foreach($tier in @('quick','standard','deep')) {
+        $tierUnit=$unit|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64
+        $tierUnit.risk_tier=$tier
+        $tierUnit.validation[0].profile_id='workflow-current'
+        $tierMatrix=@([pscustomobject]@{order=1;gate_id='validation-workflow-current';kind='command';profile_id='workflow-current';command=$declaredCommand;disposition='required'})
+        Write-TestJson $unitPath $tierUnit
+        $v2=$positiveSelector|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64
+        $v2.schema='rusty.morphospace.workflow.normal_validation_selector.v2'
+        $v2.selection.tier=$tier
+        $v2.declared_gate.profile_id='workflow-current'
+        $v2.unit.raw_sha256=(Get-FileHash -LiteralPath $unitPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $v2.unit.contract_sha256=Get-TestUnitContractSha256 $tierUnit
+        $v2.selection.producer.kind='bound-workflow-current-evidence-v2'
+        $v2.selection.producer.path='scripts/Invoke-WorkflowCurrentValidation.ps1'
+        $v2.selection.output_evidence.schema='rusty.morphospace.workflow.current_validation_evidence.v1'
+        $v2|Add-Member tooling_context ([pscustomobject]@{path='tooling-contexts/context-test.json';sha256='a'*64;canonical_sha256='b'*64;protocol_id='tooling-context-v1'})
+        Assert-SelectorTest (Test-Json -Json ($v2|ConvertTo-Json -Depth 64) -SchemaFile $declaredTierSchema) "v2 $tier schema refused"
+        Write-TestJson $selectorPath $v2
+        $v2Hash=(Get-FileHash -LiteralPath $selectorPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        Assert-Rejected "v2 $tier cannot borrow unauthenticated tooling" '*exact live adopted tooling-context pointer*' {
+            Resolve-MorphospaceNormalValidationSelector -WorkspaceRoot $workspace -SelectorReference $selectorRelative -ExpectedSelectorSha256 $v2Hash -EvidencePath $evidencePath -Spec ([pscustomobject]$project) -Unit $tierUnit -DeclaredValidationMatrix $tierMatrix -Action BeginValidation -ValidationTier $tier
+        }
+        $wrongTier=if($tier-ceq'deep'){'standard'}else{'deep'}
+        Assert-Rejected "v2 $tier downgrade or mismatch" '*declared tier differs*' {
+            Resolve-MorphospaceNormalValidationSelector -WorkspaceRoot $workspace -SelectorReference $selectorRelative -ExpectedSelectorSha256 $v2Hash -EvidencePath $evidencePath -Spec ([pscustomobject]$project) -Unit ([pscustomobject]$unit) -DeclaredValidationMatrix $tierMatrix -Action BeginValidation -ValidationTier $wrongTier
+        }
+        if($tier-cne'deep'){
+            $riskBefore=$tierUnit.risk_tier;$tierUnit.risk_tier='deep'
+            Assert-Rejected "v2 $tier below admitted Deep risk" '*may not downgrade*' {
+                Resolve-MorphospaceNormalValidationSelector -WorkspaceRoot $workspace -SelectorReference $selectorRelative -ExpectedSelectorSha256 $v2Hash -EvidencePath $evidencePath -Spec ([pscustomobject]$project) -Unit $tierUnit -DeclaredValidationMatrix $tierMatrix -Action BeginValidation -ValidationTier $tier
+            }
+            $tierUnit.risk_tier=$riskBefore
+        }
+        foreach($damage in @('tier','profile','producer-path','producer-kind','evidence-type','context-protocol')) {
+            $bad=$v2|ConvertTo-Json -Depth 64|ConvertFrom-Json -Depth 64
+            switch($damage){'tier'{$bad.selection.tier='fast'};'profile'{$bad.declared_gate.profile_id='host-build'};'producer-path'{$bad.selection.producer.path='tools/CallerChosen.ps1'};'producer-kind'{$bad.selection.producer.kind='workspace-powershell-evidence-v1'};'evidence-type'{$bad.selection.output_evidence.schema='caller.chosen.v1'};'context-protocol'{$bad.tooling_context.protocol_id='caller-protocol'}}
+            Assert-SelectorTest (-not(Test-Json -Json ($bad|ConvertTo-Json -Depth 64) -SchemaFile $declaredTierSchema -ErrorAction SilentlyContinue)) "v2 $tier schema accepted $damage"
+        }
+    }
+    Write-TestJson $unitPath $unit
+    # Typed-reader controls model terminal metadata explicitly; the complete
+    # ToolingContext scenario separately earns the real Standard child closure.
+    $readerSelector=$v2;$readerUnit=$tierUnit
+    $readerMap='local/reader-map.json';Write-TestJson (Join-Path $workspace $readerMap) (Get-Content -LiteralPath $repoMapPath -Raw|ConvertFrom-Json)
+    $validator=Join-Path $repoRoot 'scripts/Test-WorkflowContracts.ps1'
+    $readerProducer=[pscustomobject]@{executor_root=$repoRoot;binding=$readerSelector.tooling_context;context=[pscustomobject]@{executor=[pscustomobject]@{commit='1'*40;tree='2'*40;closure=@([pscustomobject]@{path='scripts/Test-WorkflowContracts.ps1';sha256=(Get-FileHash -LiteralPath $validator).Hash.ToLowerInvariant()})};product_projection=[pscustomobject]@{repository_map=[pscustomobject]@{path=$readerMap;sha256=(Get-FileHash -LiteralPath (Join-Path $workspace $readerMap)).Hash.ToLowerInvariant()}}}}
+    $readerSelection=[pscustomobject]@{unit_id=$readerSelector.unit.unit_id;unit_raw_sha256=$readerSelector.unit.raw_sha256;unit_contract_sha256=$readerSelector.unit.contract_sha256;tier='deep';selector_id=$readerSelector.selector_id;selector_path=$selectorRelative;selector_sha256='3'*64;evidence_path_sha256=$readerSelector.selection.output_evidence.canonical_path_sha256}
+    $readerCommand=&$selectorModule {param($w,$p)Get-MorphospaceCurrentValidationCommand -WorkspaceRoot $w -ProducerObservation $p} $workspace $readerProducer
+    function New-ReaderEvidence([bool]$Pass){
+        $text=if($Pass){"Workflow contract validation passed for current project workspace; owner conformance not repeated.`n"}else{"Explicit modeled child failure.`n"}
+        [IO.File]::WriteAllText(($evidencePath+'.stdout.bin'),$text,[Text.UTF8Encoding]::new($false));[IO.File]::WriteAllBytes(($evidencePath+'.stderr.bin'),[byte[]]::new(0))
+        $streams=[ordered]@{captured=$true}
+        foreach($name in @('stdout','stderr')){$path=$evidencePath+".$name.bin";$size=(Get-Item -LiteralPath $path).Length;$streams[$name]=[ordered]@{path=$path;sha256=(Get-FileHash -LiteralPath $path).Hash.ToLowerInvariant();size_bytes=$size;drained_bytes=$size;stored_bytes=$size;eof=$true;storage_error=$null;read_error=$null}}
+        $status=if($Pass){'passed'}else{'failed'};$code=if($Pass){0}else{9}
+        $capture=[ordered]@{Status=$status;ExitCode=$code;Streams=$streams;ChildProcess=[ordered]@{started=$true;outcome=$status;estimated_warning_seconds=60;elapsed_milliseconds=10;cancellation='not-requested';termination_requested=$false;automatic_retry=$false;process_reaped=$true;stdout_eof=$true;stderr_eof=$true;raw_capture_complete=$true;warning_count=0;warning_publication_failures=0;observer_errors=@();exit_code=$code}}
+        Write-TestJson ($evidencePath+'.terminal.json') $capture
+        $doc=[ordered]@{schema='rusty.morphospace.workflow.current_validation_evidence.v1';project_id=$readerSelector.project.project_id;unit_id=$readerSelector.unit.unit_id;tier='deep';workspace_root=[IO.Path]::GetFullPath($workspace);selection=$readerSelection;project_raw_sha256=$readerSelector.project.spec_raw_sha256;declared_command_sha256=$readerSelector.declared_gate.command_sha256;freeze_receipt_sha256=$readerSelector.candidate_freeze.receipt_sha256;frozen_repositories=@($readerSelector.candidate_freeze.final_repositories);tooling_context=$readerProducer.binding;executor_commit=$readerProducer.context.executor.commit;executor_tree=$readerProducer.context.executor.tree;executed_command=$readerCommand;terminal=[ordered]@{path=$evidencePath+'.terminal.json';sha256=(Get-FileHash -LiteralPath ($evidencePath+'.terminal.json')).Hash.ToLowerInvariant();capture=$capture};result=$(if($Pass){'pass'}else{'fail'});does_not_authorize=@('Modeled typed-reader fixture only; no actual child or authority claim.')}
+        Write-TestJson $evidencePath $doc
+        return ($doc|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100)
+    }
+    function Read-ReaderEvidence {&$selectorModule {param($w,$path,$s,$selection,$p)Assert-MorphospaceCurrentValidationEvidence -WorkspaceRoot $w -EvidencePath $path -Selector $s -Selection $selection -ProducerObservation $p} $workspace $evidencePath $readerSelector $readerSelection $readerProducer}
+    $readerPass=New-ReaderEvidence $true;Read-ReaderEvidence
+    foreach($damage in @('tier','unit','declared-command','frozen-source','context','executed-command','terminal-hash','raw-stdout','raw-stderr','terminal-eof','terminal-reap','terminal-exit','terminal-cancel','terminal-capture','result','success-marker')){
+        $doc=New-ReaderEvidence $true
+        switch($damage){
+            'tier'{$doc.tier='standard'};'unit'{$doc.selection.unit_raw_sha256='0'*64};'declared-command'{$doc.declared_command_sha256='0'*64};'frozen-source'{$doc.frozen_repositories[0].tree='0'*40};'context'{$doc.tooling_context.sha256='0'*64};'executed-command'{$doc.executed_command.arguments[0]='-CallerChoice'};'terminal-hash'{$doc.terminal.sha256='0'*64};'raw-stdout'{[IO.File]::AppendAllText(($evidencePath+'.stdout.bin'),'drift')};'raw-stderr'{[IO.File]::AppendAllText(($evidencePath+'.stderr.bin'),'drift')};'result'{$doc.result='fail'}
+            'success-marker'{[IO.File]::WriteAllText(($evidencePath+'.stdout.bin'),'No success marker');$stream=$doc.terminal.capture.Streams.stdout;$stream.sha256=(Get-FileHash -LiteralPath ($evidencePath+'.stdout.bin')).Hash.ToLowerInvariant();$stream.size_bytes=(Get-Item ($evidencePath+'.stdout.bin')).Length;$stream.drained_bytes=$stream.size_bytes;$stream.stored_bytes=$stream.size_bytes}
+            default{switch($damage){'terminal-eof'{$doc.terminal.capture.ChildProcess.stdout_eof=$false};'terminal-reap'{$doc.terminal.capture.ChildProcess.process_reaped=$false};'terminal-exit'{$doc.terminal.capture.ExitCode=9;$doc.terminal.capture.ChildProcess.exit_code=9};'terminal-cancel'{$doc.terminal.capture.ChildProcess.termination_requested=$true};'terminal-capture'{$doc.terminal.capture.Streams.captured=$false}}}
+        }
+        if($damage-like'terminal-*'-and$damage-cne'terminal-hash'-or$damage-ceq'success-marker'){Write-TestJson ($evidencePath+'.terminal.json') $doc.terminal.capture;$doc.terminal.sha256=(Get-FileHash -LiteralPath ($evidencePath+'.terminal.json')).Hash.ToLowerInvariant()}
+        Write-TestJson $evidencePath $doc
+        Assert-Rejected "typed Deep reader $damage" '*Current validation*' {Read-ReaderEvidence}
+    }
+    $readerFail=New-ReaderEvidence $false
+    Read-ReaderEvidence # A genuine closed nonzero result must remain usable non-PASS evidence.
+    $readerGate=[pscustomobject]@{order=1;gate_id='validation-workflow-current';kind='command';profile_id='workflow-current';command=$declaredCommand;disposition='required';selection_kind='exact-external-evidence';selector=[pscustomobject]@{evidence=[pscustomobject]@{path=$evidencePath;sha256=(Get-FileHash -LiteralPath $evidencePath).Hash.ToLowerInvariant();producer_result='fail'}}}
+    $badPassReceipt=New-SelectorValidationReceipt -Workspace $workspace -UnitId $unitId -Result pass -Tier deep -MatrixRow $readerGate -EvidencePath $evidencePath -ReceiptLeaf 'deep-failure-cannot-pass.json'
+    $readerAutomation=Import-Module (Join-Path $PSScriptRoot 'WorkUnitAutomation.psm1') -PassThru
+    Assert-Rejected 'failed producer cannot satisfy a passing selected gate' '*status differs from its authenticated producer result*' {
+        &$readerAutomation {param($w,$u,$spec,$matrix,$path)Test-MorphospaceValidationReceipt -WorkspaceRoot $w -ReceiptReference $path -Spec $spec -Unit $u -RepositoryMap @{} -RepositoryStates @([pscustomobject]@{repo_id='unreached-negative-fixture';available=$true;is_git=$false}) -ValidationMatrix @($matrix) -ExpectedResult pass -ExpectedTier deep} $workspace $readerUnit ([pscustomobject]$project) $readerGate $badPassReceipt
+    }
+    # Real consumers have other gates after the selected command. The matched
+    # row, never the last matrix-loop variable, owns evidence/result checks.
+    $roleUnit=$readerUnit|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100
+    $roleUnit.validation=@($roleUnit.validation)+@($unit.validation[0])
+    $unselectedGate=[pscustomobject]@{order=2;gate_id="validation-$declaredProfile";kind='command';profile_id=$declaredProfile;command=$declaredCommand;disposition='required'}
+    $roleReceipt=Get-Content -LiteralPath $badPassReceipt -Raw|ConvertFrom-Json -Depth 100
+    $roleReceipt.gates=@($roleReceipt.gates)+@([pscustomobject]@{gate_id=$unselectedGate.gate_id;status='pass';command=$unselectedGate.command;evidence_refs=@([string]$roleReceipt.artifacts[0].artifact_id)})
+    $roleReceiptPath=Join-Path $workspace 'receipts/selected-gate-role-damage.json'
+    foreach($roleDamage in @('selected-first','selected-last','selected-hash','selected-path')){
+        $selectedRole=$readerGate|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100
+        $roleMatrix=if($roleDamage-ceq'selected-last'){@($unselectedGate,$selectedRole)}else{@($selectedRole,$unselectedGate)}
+        $expectedRoleMessage="*Selected validation gate 'validation-workflow-current' status differs from its authenticated producer result*"
+        if($roleDamage-in@('selected-hash','selected-path')){
+            $selectedRole.selector.evidence.producer_result='pass'
+            if($roleDamage-ceq'selected-hash'){$selectedRole.selector.evidence.sha256='0'*64;$expectedRoleMessage="*Selected validation gate 'validation-workflow-current' external evidence hash drifted*"}
+            else{$selectedRole.selector.evidence.path=$projectPath;$expectedRoleMessage="*Selected validation gate 'validation-workflow-current' must reference exactly its bound external evidence artifact*"}
+        }
+        $roleCaseReceipt=$roleReceipt|ConvertTo-Json -Depth 100|ConvertFrom-Json -Depth 100
+        if($roleDamage-ceq'selected-last'){$roleCaseReceipt.gates=@($roleCaseReceipt.gates[1],$roleCaseReceipt.gates[0])}
+        Write-TestJson $roleReceiptPath $roleCaseReceipt
+        Assert-Rejected "multi-gate exact selected role $roleDamage" $expectedRoleMessage {
+            &$readerAutomation {param($w,$u,$spec,$matrix,$path)Test-MorphospaceValidationReceipt -WorkspaceRoot $w -ReceiptReference $path -Spec $spec -Unit $u -RepositoryMap @{} -RepositoryStates @([pscustomobject]@{repo_id='unreached-negative-fixture';available=$true;is_git=$false}) -ValidationMatrix @($matrix) -ExpectedResult pass -ExpectedTier deep} $workspace $roleUnit ([pscustomobject]$project) $roleMatrix $roleReceiptPath
+        }
+    }
+    foreach($suffix in @('','.terminal.json','.stdout.bin','.stderr.bin')){Remove-Item -LiteralPath ($evidencePath+$suffix)}
+    # Actual fresh CLI import lifetime, without any selected owner action. A
+    # lost Common export must not be mistaken for the intended closed refusal.
+    $probeBefore=@($projectPath,$statePath,$eventsPath,$unitPath,$receiptPath|ForEach-Object{(Get-FileHash -LiteralPath $_).Hash})
+    $probeCaptureModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceRetainedBuildProcess.psm1') -PassThru
+    $probeBase=Join-Path $testRoot 'fresh-producer-refusal'
+    $probeEnvironment=@{};foreach($entry in [Environment]::GetEnvironmentVariables().GetEnumerator()){$probeEnvironment[[string]$entry.Key]=[string]$entry.Value}
+    $probeExecution=[pscustomobject]@{FileName=(Join-Path $PSHOME $(if($IsWindows){'pwsh.exe'}else{'pwsh'}));WorkingDirectory=$workspace;Arguments=@('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $PSScriptRoot 'Invoke-WorkflowCurrentValidation.ps1'),'-WorkspaceRoot',$workspace,'-EvidencePath',($probeBase+'.evidence.json'))}
+    $probe=&$probeCaptureModule {param($e,$envValues,$path)Invoke-MorphospaceRetainedBuildProcess -Execution $e -EnvironmentValues $envValues -BaseReceiptPath $path -EstimatedWarningSeconds 60} $probeExecution $probeEnvironment $probeBase
+    $probeError=[IO.File]::ReadAllText($probeBase+'.stderr.bin')
+    Assert-SelectorTest ($probe.ExitCode-ne0-and$probe.ChildProcess.process_reaped-and$probe.ChildProcess.raw_capture_complete-and$probe.ChildProcess.stdout_eof-and$probe.ChildProcess.stderr_eof) 'fresh producer refusal did not close honestly'
+    Assert-SelectorTest ($probeError-like'*Current validation requires an actual selected BeginValidation binding.*'-and$probeError-notlike'*not recognized*') 'fresh producer lost exact module command bindings before its intended guard'
+    $probeAfter=@($projectPath,$statePath,$eventsPath,$unitPath,$receiptPath|ForEach-Object{(Get-FileHash -LiteralPath $_).Hash})
+    Assert-SelectorTest (($probeBefore-join'|')-ceq($probeAfter-join'|')) 'fresh producer refusal changed fixture owner inputs'
+    if($DeclaredTierOnly){[pscustomobject]@{result='pass';declared_tiers=3;tooling_refusals=3;tier_mismatches=3;risk_downgrades=2;schema_damages=18;modeled_deep_reader_damages=16;modeled_nonpass_usable=$true;nonpass_cannot_pass_gate=$true;selected_gate_role_controls=4;fresh_producer_refusal=$true;successful_producer_invoked=$false;child_workflow_validation_dispatched=$false}|ConvertTo-Json -Compress;return}
     Write-TestJson $selectorPath $positiveSelector
     $selectorSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $selectorPath).Hash.ToLowerInvariant()
     $protectedPaths = @($projectPath, $statePath, $eventsPath, $unitPath, $receiptPath, $producerPath)
@@ -532,6 +663,9 @@ throw 'The selector consumer must never execute the evidence producer.'
     $successor = Get-Content -Raw -LiteralPath $terminalUnitPath | ConvertFrom-Json
     $successor.unit_id = $successorId
     $successor.status = 'proposed'
+    # The new requested declaration uses a registered category. Retained
+    # terminal fixture declarations keep their original historical bytes.
+    $successor.change_categories = @('implementation')
     $successor.objective = 'Prove exact recovery of a historical terminal selector binding.'
     if ($successor.PSObject.Properties.Name -contains 'candidate_freeze') {
         $successor.PSObject.Properties.Remove('candidate_freeze')

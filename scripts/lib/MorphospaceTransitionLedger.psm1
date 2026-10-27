@@ -863,12 +863,18 @@ function Test-MorphospaceCommittedTransitionLedger {
     Test-MorphospaceCommittedTransitionLedgerCore @PSBoundParameters
 }
 function Assert-MorphospaceLedgerExternalOwnerBindings {
-    param([string]$WorkspaceRoot,[object]$Intent,[object]$CurrentUnit=$null,[switch]$BeforeIntent)
+    param([string]$WorkspaceRoot,[object]$Intent,[object]$CurrentUnit=$null,[switch]$BeforeIntent,[object[]]$SourceArtifacts=@())
     foreach($artifact in @($Intent.artifacts)){
         try{$candidate=ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$artifact.bytes_base64))}catch{continue}
-        if($null-ne$candidate-and$candidate.PSObject.Properties.Name-contains'schema'-and[string]$candidate.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v3'){
+        if($null-ne$candidate-and$candidate.PSObject.Properties.Name-contains'schema'-and[string]$candidate.schema-cin@('rusty.morphospace.workflow.candidate_freeze.v3','rusty.morphospace.workflow.candidate_freeze.v4')){
             $revisionOwner=Import-Module (Join-Path $PSScriptRoot '../CandidateFreeze.psm1') -PassThru
-            &$revisionOwner {param($root,$transition) Assert-MorphospaceCandidateRevisionRecoveryBindings $root $transition} $WorkspaceRoot $Intent
+            $requestPath=''
+            if($BeforeIntent-and[string]$candidate.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v4'){
+                $sources=@($SourceArtifacts|Where-Object {[string]$_.path-ceq[string]$artifact.path-and$null-ne$_.PSObject.Properties['source_path']})
+                if($sources.Count-ne1){throw 'Native nonpass recovery requires its exact physical source request before staging.'}
+                $requestPath=[IO.Path]::GetFullPath([string]$sources[0].source_path)
+            }
+            &$revisionOwner {param($root,$transition,$request) Assert-MorphospaceCandidateRevisionRecoveryBindings $root $transition -RequestPath $request} $WorkspaceRoot $Intent $requestPath
         }
     }
     # These two actions bind inputs outside the mutable state/unit projections.
@@ -1245,7 +1251,7 @@ function Start-MorphospaceTransitionLedger {
         $intentFields.status='prepared'
         $intent=[pscustomobject]$intentFields
         Assert-MorphospaceLedgerIntent $intent $TransactionId
-        Assert-MorphospaceLedgerExternalOwnerBindings -WorkspaceRoot $workspace -Intent $intent -CurrentUnit $unit -BeforeIntent
+        Assert-MorphospaceLedgerExternalOwnerBindings -WorkspaceRoot $workspace -Intent $intent -CurrentUnit $unit -BeforeIntent -SourceArtifacts @($Artifacts)
         if($ExpectedPreUnitRawSha256-and(Get-MorphospaceLedgerBoundPreUnitRawSha256 $intent)-cne$ExpectedPreUnitRawSha256){
             throw 'Raw pre-unit CAS is not durably bound by the transition-owned receipt artifact.'
         }

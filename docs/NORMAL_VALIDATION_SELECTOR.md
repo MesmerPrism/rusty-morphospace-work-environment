@@ -32,11 +32,20 @@ permitted invocation shape and returns it in the original gate's matrix row.
 The original `gate_id` and `profile_id` remain unchanged and the selector
 identity, producer identity, and output evidence identity are explicit.
 
-Selection is limited to the Quick tier. Dispatch is limited to `BeginValidation`;
+The retained v1 workspace producer is limited to Quick. Declared-tier v2 supports
+Quick, Standard and Deep without downgrading the admitted risk tier. Dispatch is limited to `BeginValidation`;
 receipt consumption is limited to `ReturnToActive`, `RecordValidation`, and
 `Accept`. The selector must
 be a non-reparse-point file under `validation-authority/selectors/`; the producer
-must be a non-reparse-point `tools/*.ps1` leaf. The evidence path must be
+in v1 must be a non-reparse-point `tools/*.ps1` leaf. Version 2 instead fixes
+`bound-workflow-current-evidence-v2` and
+`scripts/Invoke-WorkflowCurrentValidation.ps1` in the actual context executor.
+Version 2 selects only the existing `workflow-current` profile; it cannot
+replace a host or build gate. Its exact live adopted context, executing and
+loaded owner roots, complete clean
+source closure and unique producer closure row authenticate before dispatch.
+The original prepared map and context remain authority; a caller cannot select
+a producer root, alternate command, copied tool or fallback owner. The evidence path must be
 absolute, outside the planning workspace, have the exact selected file name,
 have an existing parent, match the selector's canonical path digest, and not
 already exist at dispatch. An executed dispatch persists only the unit ID,
@@ -75,6 +84,59 @@ create-new artifact and the Ready event names it. The dry run reports the proof
 identity but creates neither it nor any state change.
 Missing, ambiguous, altered, non-terminal, or non-`Ready` cross-unit bindings
 continue to reject.
+
+The v2 producer accepts only `WorkspaceRoot` and `EvidencePath`. It requires the
+persisted executed Begin selection, observes the exact current unit and frozen
+source, and uses the bound executor's `Test-WorkflowContracts.ps1` with its exact
+product map and `-CurrentWorkspaceOnly -CurrentWorkOnly -SkipOwnerSelfTests`.
+The existing retained capture owns the one child through actual exit, reap and
+both raw EOFs. Terminal and stdout/stderr paths are create-new companions to the
+evidence path. No environment values are serialized. Live raw unit, state,
+ledger, source and context checks repeat after the child. The typed evidence
+binds the original declaration/freeze and the current context, tier, fixed
+executed command, selector tuple, terminal result and raw streams. Consumption
+requires the real terminal result and intact bytes, not only a matching schema
+label. A passing child also requires the actual current-work success marker;
+a closed nonzero child remains usable non-passing evidence. The selected gate
+status must equal that authenticated producer result, so failure cannot satisfy
+a passing gate. No tier removes another criterion, gate or instruction
+obligation. The original marker and receipt stay byte-exact through Record and
+Accept, which repeats the same selector companions.
+
+The v2 contract covers ordinary selected Record/Accept. It does not extend
+snapshot/archive or older Quick-only stale-successor release routes. Existing
+unsupported snapshot routes keep refusing; later policy never rewrites Quick
+history.
+
+For a tooling-aware workspace nested inside its read-only planning repository,
+current owner-produced control files may remain uncommitted after Freeze. The
+candidate owner derives a finite closure from the authenticated same-unit
+continuation: exact state/unit/ledger bytes, committed transition intents and
+completions, their exact artifacts, and each typed upgrade's hash-bound
+compatibility input. It also admits the exact validated selector file. Git
+checkpoints may commit some of these files, so observed dirt must be a subset
+of this closed set. Planning role or a workspace/directory prefix alone never
+admits dirt; unrelated control files, neighboring selectors, source changes and
+different staged bytes still refuse. Source pins, ancestry, raw artifacts,
+transaction order and module/context bindings remain required.
+
+A public validation receipt is a prospective input before Record creates its
+transition. For a selected declared-tier action, the lifecycle owner first runs
+the existing complete native receipt predicate, retaining the physical receipt's
+raw hash across that check. Before Record, ReturnToActive or Accept can change
+state, it repeats selector/evidence/source closure with only that exact consumed
+receipt path and unchanged raw bytes. An unrelated receipt for the same unit
+does not enter the closure. An initial consumption resolution supplies no dirt
+exemption or effect authority. The fixed producer continues to check dispatch
+closure before and after its settled child, and active Begin forwards its exact
+validated prospective selector into the independent frozen-candidate check.
+
+The registered tooling `validating-upgrade` fixture exercises this nested
+owner-produced Freeze, ordinary Begin, compatible upgrade, seven instruction
+completions, declared Standard selector, actual fresh-process producer, public
+receipt, Record, Accept and accepted current-work read. Its host-only product
+facts remain modeled; source qualification does not adopt tooling into another
+project or transfer APK, device or product acceptance evidence.
 
 The normal consumer does not execute the producer and does not create evidence.
 It changes no source, unit, freeze, repository, device, or remote bytes. Normal

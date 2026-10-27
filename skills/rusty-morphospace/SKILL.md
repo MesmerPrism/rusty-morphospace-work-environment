@@ -1,6 +1,6 @@
 ---
 name: rusty-morphospace
-description: Route Rusty Morphospace architecture, ownership, project-workflow, validation, and instruction work to the owning contracts and specialists.
+description: Use for Rusty Morphospace architecture, ownership, workflow, validation, and Quest development feedback questions.
 ---
 
 # Rusty Morphospace
@@ -29,7 +29,8 @@ Read [ownership-map.md](references/ownership-map.md) for lanes, ownership,
 module boundaries, and agent routing. Read
 [project-workflow.md](references/project-workflow.md) for project composition,
 feature activation, source locks, lifecycle, validation, privacy boundaries,
-or instruction synchronization.
+or instruction synchronization. It also resolves the adopted external authority's
+issue queue for package planning, concrete discoveries and handoff.
 For a fresh unit in an idle project, use that reference's preparation and
 admission routes, including retained proposal retirements and exact owner roots.
 
@@ -52,8 +53,10 @@ Select only the specialist routes that match the task:
   observability, validation design, and cross-repository decisions.
 - Use `$rust-work-graph` for bounded inventories, source roots, dependency or
   instruction-surface impact, and refactor maps.
-- Use `$meta-quest-workflow` before live Quest, ADB, APK, launch, capture,
-  logcat, Perfetto, Wi-Fi ADB, or Meta tooling work.
+- Use `$meta-quest-workflow` before Quest/ADB/APK/launch/capture/logcat/
+  Perfetto/Wi-Fi ADB/Meta work. For Java/Kotlin/JNI/Rust hotload/reload/live-edit
+  or avoid-rebuild questions, read its feedback guide/evidence before app
+  loader/ABI/lifetime contract.
 - For reusable Android media and in-process broker integration, read the Quest
   owner's `docs/MEDIA_SESSION_RUNTIME.md` and `docs/MEDIA_STREAM_RUNTIME.md`.
   Map the shared AAR and Rust library consumers separately from each host's

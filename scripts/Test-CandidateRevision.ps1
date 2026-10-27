@@ -31,14 +31,17 @@ function New-RevisionValidation([string]$Id){
     $evidence=Join-Path $ws "receipts/attempts/$Id.txt";[IO.Directory]::CreateDirectory((Split-Path $evidence -Parent))|Out-Null;[IO.File]::WriteAllText($evidence,"source predicate result: $result`n")
     $unit=Read-EnvelopeProtocolJson (Join-Path $ws 'iteration-units/u002.json')
     $matrix=@($script:revisionMatrix|Where-Object disposition -CNE 'forbidden')
-    $receipt=[ordered]@{schema='rusty.morphospace.workflow.validation_receipt.v1';receipt_id=$Id;project_id='envelope-test';unit_id='u002';created_at='2026-10-20T10:00:00Z';tier='quick';result=$result;repository_revisions=@([ordered]@{repo_id='project-shell';base_revision=$seed.source_commit;head_revision=(@(Invoke-EnvelopeGit $source @('rev-parse','HEAD'))[0]).Trim();branch=(@(Invoke-EnvelopeGit $source @('rev-parse','--abbrev-ref','HEAD'))[0]).Trim()});changed_paths=@();artifacts=@([ordered]@{artifact_id='source-evidence';kind='test-log';path="$Id.txt";sha256=Get-EnvelopeFileSha256 $evidence});criteria=@($unit.acceptance|ForEach-Object{[ordered]@{acceptance_id=$_.acceptance_id;status=$result;command=$_.command;evidence_refs=@('source-evidence')}});gates=@($matrix|ForEach-Object{[ordered]@{gate_id=$_.gate_id;status=$result;command=$_.command;evidence_refs=@('source-evidence')}});device_validation=$null}
+    $receipt=[ordered]@{schema='rusty.morphospace.workflow.validation_receipt.v1';receipt_id=$Id;project_id='envelope-test';unit_id='u002';created_at='2026-10-20T10:00:00Z';tier='quick';result=$result;repository_revisions=@([ordered]@{repo_id='project-shell';base_revision=$seed.source_commit;head_revision=(@(Invoke-EnvelopeGit $source @('rev-parse','HEAD'))[0]).Trim();branch=(@(Invoke-EnvelopeGit $source @('rev-parse','--abbrev-ref','HEAD'))[0]).Trim()});changed_paths=@();artifacts=@([ordered]@{artifact_id='source-evidence';kind='test-log';path="attempts/$Id.txt";sha256=Get-EnvelopeFileSha256 $evidence});criteria=@($unit.acceptance|ForEach-Object{[ordered]@{acceptance_id=$_.acceptance_id;status=$result;command=$_.command;evidence_refs=@('source-evidence')}});gates=@($matrix|ForEach-Object{
+        $references=if($_.PSObject.Properties.Name-ccontains'selection_kind'-and[string]$_.selection_kind-ceq'exact-external-evidence'){@('selector-evidence')}else{@('source-evidence')}
+        [ordered]@{gate_id=$_.gate_id;status=$result;command=$_.command;evidence_refs=@($references)}
+    });device_validation=$null}
     $receipt.changed_paths=@(Invoke-EnvelopeGit $source @('diff','--name-only',"$($seed.source_commit)..HEAD",'--')|Where-Object{$_}|ForEach-Object{[ordered]@{repo_id='project-shell';path=[string]$_}})
     if($null-ne$script:revisionSelector){
         $evidencePath=$script:revisionSelector.ValidationEvidencePath
         Write-EnvelopeJson $evidencePath ([ordered]@{schema='rusty.morphospace.test.revision.v1';result=$result})
         $receipt.artifacts+=,[ordered]@{artifact_id='selector-evidence';kind='test-log';path=$evidencePath;sha256=Get-EnvelopeFileSha256 $evidencePath}
     }
-    $relative="receipts/attempts/$Id.json"
+    $relative="receipts/$Id.json"
     $productEvidence=[ordered]@{};foreach($key in @('receipt_id','tier','result','criteria','gates','device_validation')){$productEvidence[$key]=$receipt[$key]}
     $productEvidence.artifacts=@($receipt.artifacts|ForEach-Object{[ordered]@{artifact_id=$_.artifact_id;kind=$_.kind;path=$_.path}})
     $productEvidencePath=Join-Path $root "$Id-product-evidence.json";Write-EnvelopeJson $productEvidencePath $productEvidence
@@ -58,12 +61,38 @@ function New-RevisionSelector([string]$Id){
     @{ValidationSelector=$relative;ExpectedValidationSelectorSha256=Get-EnvelopeFileSha256 (Join-Path $ws $relative);ValidationEvidencePath=$evidence}
 }
 $script:revisionSelector=$null;$script:revisionMatrix=@()
-function Assert-RevisionRefuses([scriptblock]$Action,[string]$Name){
+function Assert-RevisionRefuses([scriptblock]$Action,[string]$Name,[string]$ExpectedMessage=''){
     $before=Get-EnvelopeWorkspaceByteInventorySha256 $ws;$caught=$null
     try{&$Action|Out-Null}catch{$caught=$_}
     if($caught-and$caught.Exception-is[Management.Automation.CommandNotFoundException]){throw $caught}
     Assert-Envelope ($null-ne$caught) "candidate revision accepted $Name"
+    if($ExpectedMessage){Assert-Envelope ($caught.Exception.Message.Contains($ExpectedMessage,[StringComparison]::Ordinal)) "candidate revision refused $Name for an unrelated reason: $($caught.Exception.Message)"}
     Assert-Envelope ($before-ceq(Get-EnvelopeWorkspaceByteInventorySha256 $ws)) "candidate revision wrote while refusing $Name"
+}
+function Assert-RevisionSelectedEvidenceControls([string]$Relative,[string]$TransitionAction,[string]$Result){
+    $path=Join-Path $ws $Relative;$original=[IO.File]::ReadAllBytes($path);$receipt=Read-EnvelopeProtocolJson $path
+    # This fixture selects its declared workflow gate; ordinary proof stays on the source predicate.
+    $selected=@($receipt.gates|Where-Object gate_id -CEQ 'validation-workflow')
+    Assert-Envelope ($selected.Count-eq1-and@($selected[0].evidence_refs).Count-eq1-and$selected[0].evidence_refs[0]-ceq'selector-evidence') 'selected workflow gate lost its independent evidence'
+    $ordinary=@($receipt.gates|Where-Object gate_id -CNE 'validation-workflow')
+    Assert-Envelope ($ordinary.Count-gt0) 'candidate revision lacks an ordinary instruction gate'
+    foreach($row in @($ordinary)+@($receipt.criteria)){
+        Assert-Envelope (@($row.evidence_refs).Count-eq1-and$row.evidence_refs[0]-ceq'source-evidence') 'ordinary proof was replaced by selected evidence'
+    }
+    foreach($damage in @('wrong','omitted','duplicate')){
+        $changed=Copy-Envelope $receipt;$gate=@($changed.gates|Where-Object gate_id -CEQ 'validation-workflow')[0]
+        switch($damage){
+            'wrong'{$gate.evidence_refs=@('source-evidence')}
+            'omitted'{$gate.evidence_refs=@()}
+            'duplicate'{$gate.evidence_refs=@('selector-evidence','selector-evidence')}
+        }
+        Write-EnvelopeJson $path $changed
+        try{
+            $expected=if($damage-ceq'wrong'){"Selected validation gate 'validation-workflow' must reference exactly its bound external evidence artifact."}else{'Validation receipt does not satisfy structural schema'}
+            Assert-RevisionRefuses {Invoke-RevisionAutomation $TransitionAction @{ValidationResult=$Result;ValidationReceipt=$Relative;Execute=$true}} "$TransitionAction $damage selected evidence" $expected
+        }finally{[IO.File]::WriteAllBytes($path,$original)}
+    }
+    Write-Host "PASS $TransitionAction selected versus ordinary evidence and wrong/omitted/duplicate reference no-write controls."
 }
 function Assert-RevisionRetirementConsumer([string]$EventId){
     $retirementModule=Import-Module (Join-Path $PSScriptRoot 'ActiveUnitRetirement.psm1') -PassThru
@@ -76,6 +105,15 @@ $root=Join-Path ([IO.Path]::GetTempPath()) ('wef-candidate-revision-'+[guid]::Ne
 try{
     $seed=New-EnvelopeAdmissionPreparedFixture -Root $root -RepositoryRoot $repoRoot -TransitionLedgerModule $transitionLedgerModule -OwnerProducedPreparation
     $ws=$seed.workspace;$source=$seed.source_repository;$admission=Join-Path $root 'admission.json';Write-EnvelopeJson $admission $seed.admission_template
+    # The fixture owner declares its private custody storage before admission
+    # and Freeze. The producer neither invents Git ownership nor changes policy.
+    Invoke-EnvelopeGit $ws @('init','-b','main')|Out-Null
+    Invoke-EnvelopeGit $ws @('config','user.name','Candidate revision fixture')|Out-Null
+    Invoke-EnvelopeGit $ws @('config','user.email','candidate-revision@example.invalid')|Out-Null
+    Invoke-EnvelopeGit $ws @('config','commit.gpgsign','false')|Out-Null
+    Invoke-EnvelopeGit $ws @('config','core.autocrlf','false')|Out-Null
+    [IO.File]::WriteAllText((Join-Path $ws '.gitignore'),"/receipts/candidate-a-failure-evidence/`n",[Text.UTF8Encoding]::new($false))
+    Invoke-EnvelopeGit $ws @('add','--all')|Out-Null;Invoke-EnvelopeGit $ws @('commit','-qm','Own native candidate revision control and private failure custody')|Out-Null
     $admissionOut=Join-Path $ws 'receipts/u002-admission.json'
     Invoke-MorphospaceAdmitDevelopmentUnit -WorkspaceRoot $ws -DevelopmentUnitAdmission $admission -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $admission) -OutPath $admissionOut -Timestamp '2026-08-25T00:01:00.0000000Z' -Execute|Out-Null
     foreach($action in @('Ready','Claim')){Invoke-RevisionAutomation $action @{Execute=$true}|Out-Null}
@@ -85,6 +123,11 @@ try{
     $script:revisionSelector=New-RevisionSelector 'candidate-a-selector'
     $script:revisionMatrix=(Invoke-RevisionAutomation BeginValidation @{Execute=$true}).validation_matrix
     $failed=New-RevisionValidation 'candidate-a-failure'
+    $failedDocument=Read-EnvelopeProtocolJson (Join-Path $ws $failed)
+    $custody=@($failedDocument.artifacts|Where-Object kind -CEQ 'nonpass-evidence-custody')
+    Assert-Envelope ($custody.Count-eq1) 'eligible frozen failure did not produce immutable custody'
+    Invoke-EnvelopeGit $ws @('check-ignore','--quiet','--',('receipts/'+[string]$custody[0].path))|Out-Null
+    Assert-RevisionSelectedEvidenceControls $failed ReturnToActive fail
     Assert-RevisionRefuses {Invoke-RevisionAutomation ReturnToActive @{ValidationResult='pass';ValidationReceipt=$failed;Execute=$true}} 'passing ReturnToActive'
     Invoke-RevisionAutomation ReturnToActive @{ValidationResult='fail';ValidationReceipt=$failed;Execute=$true}|Out-Null
     Assert-RevisionRetirementConsumer ([string](Read-EnvelopeProtocolJson (Join-Path $ws 'workspace.state.json')).last_event_id)
@@ -97,7 +140,9 @@ try{
     $originalB=[IO.File]::ReadAllBytes($freezeB)
     foreach($damage in @('predecessor','stale-CAS','scope','feature-lock','tooling','failed-receipt','failed-artifact','accepted')){
         $unitPath=Join-Path $ws 'iteration-units/u002.json';$lockPath=Join-Path $ws 'feature.lock.json';$savedUnit=[IO.File]::ReadAllBytes($unitPath);$savedLock=[IO.File]::ReadAllBytes($lockPath);$savedFailed=[IO.File]::ReadAllBytes((Join-Path $ws $failed))
-        $failedEvidence=Join-Path $ws 'receipts/attempts/candidate-a-failure.txt';$savedEvidence=[IO.File]::ReadAllBytes($failedEvidence)
+        $failedPayload=@($failedDocument.artifacts|Where-Object artifact_id -CEQ 'source-evidence')
+        Assert-Envelope ($failedPayload.Count-eq1-and[string]$failedPayload[0].path-cne'attempts/candidate-a-failure.txt') 'failed-artifact damage must target the actual immutable receipt payload'
+        $failedEvidence=Join-Path (Split-Path (Join-Path $ws $failed) -Parent) ([string]$failedPayload[0].path);$savedEvidence=[IO.File]::ReadAllBytes($failedEvidence)
         try{
             $candidate=Read-EnvelopeProtocolJson $freezeB
             switch($damage){
@@ -150,6 +195,7 @@ try{
     $script:revisionMatrix=(Invoke-RevisionAutomation BeginValidation @{Execute=$true}).validation_matrix
     Assert-RevisionRefuses {Invoke-RevisionAutomation RecordValidation @{ValidationResult='pass';ValidationReceipt=$failed;Execute=$true}} 'old failed validation reused on corrected source'
     $passed=New-RevisionValidation 'candidate-b-passing'
+    Assert-RevisionSelectedEvidenceControls $passed RecordValidation pass
     Invoke-RevisionAutomation RecordValidation @{ValidationResult='pass';ValidationReceipt=$passed;Execute=$true}|Out-Null
     Invoke-RevisionAutomation Accept @{Execute=$true}|Out-Null
     $unit=Read-EnvelopeProtocolJson (Join-Path $ws 'iteration-units/u002.json')

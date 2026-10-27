@@ -24,6 +24,37 @@ limited to bounded implementation, validation, or documentation. Select
 `risk_tier` independently: guard profile controls authority, while risk tier
 controls validation depth.
 
+## Source landing and downstream adoption
+
+A bounded source package and a downstream product adoption unit have distinct
+outcomes. Source checks, review and protected normal CI/merge can qualify and
+land the source while product adoption remains pending. A package that changes
+workflow or publication authority still requires its own locked owner; this
+separation cannot downgrade that source work to the fast lane.
+
+The exact failed-NONPASS custody repair has a narrow prospective source-policy
+bootstrap in [Native NONPASS Recovery Authority](NATIVE_NONPASS_RECOVERY_AUTHORITY.md).
+An explicit repository-owner decision, including an exact decision under active
+Full Authority delegation, may qualify the independent policy/verifier and its
+bounded producer/correction source delivery through the existing external-owner
+protected Static gate, independent review, required dynamic CI and normal merge.
+This evolves the locked-source prerequisite for those exact source deliveries;
+it is not a fast package, a general recovery exemption or native unit acceptance.
+The reviewed candidate and complete path/mode/size/hash set must exist before
+each candidate-specific decision. Independently adopted policy, source
+qualification and a separate signed current-state authorization remain mandatory
+before the native repair runs.
+
+When a frozen product contract explicitly orders source publication after its
+acceptance, preserve that contract and record the human's explicit superseding
+decision through the stateless source-delivery disposition in
+[Source-only publication](SOURCE_ONLY_PUBLICATION.md). The record changes no
+product state, event, tooling pointer, source reference or acceptance status.
+Preparing a disposition earns no landed-source credit. A later landed record
+must authenticate the actual publication subject's checks and normal merge.
+A port is a distinct source subject with an explicit review and limitations;
+the built original's APK, tests and adoption evidence do not transfer to it.
+
 ## Agent and framework adaptation
 
 Framework practices operate inside the selected owner package. Reuse its
@@ -70,17 +101,71 @@ remaining limits and resource custody. Preserve meaningful ignored inputs and
 original evidence still authenticated by consumers before worktree archival;
 use the existing cleanup and evidence-relocation contracts for retirement.
 
+## Opt-in publication interface diagnostics
+
+For a final candidate that changes workflow runners or aggregate invocation
+forms, the owner provides a focused composition diagnostic:
+
+```powershell
+./scripts/Test-AffectedPublicationInterfaces.ps1 -RepositoryRoot . -BaseCommit $exactBase -HeadCommit $exactHead -EvidenceDirectory $newEvidenceDirectory
+```
+
+Run it on real Linux from the exact clean committed candidate, with a new
+retained evidence directory outside the source checkout. Put the selected
+Linux PowerShell runtime first on `PATH` in that invocation's process only so
+nested `pwsh` resolves the same runtime. The command reuses the canonical Quick
+selector, actual aggregate ownership parser, production graph/import and
+dependency children, phase binding self-test, artifact-reader contract controls,
+and existing source/dependency manifest APIs. It preserves the selector's actual
+escalation and full selection; it executes only these named diagnostics.
+The portable `-SelfTest` covers the finite WUA data row and malformed invocation
+forms, and is selected only for its owner or aggregate changes.
+
+This opt-in command adds no ordinary continuation gate. Its diagnostic result
+earns no CI, lifecycle, acceptance or publication credit. It does not exercise
+the candidate's managed projection publisher, guarded launch, leaf snapshot/cache
+publication, full required CI or merge. Successful child streams are retained as
+raw bytes; shared-launcher failures retain decoded details, not the original
+failed-child stream bytes. Preserve the outer command's original capture and
+follow the existing required publication route separately.
+
+## Central issue queue
+
+Use the existing queue published by the adopted external planning authority.
+Resolve the installed work-environment source through
+`references/local-work-environment.json`; its provenance does not grant authority.
+Use the authority binding in the nearest owner instructions or explicit task
+context. Otherwise, its root may be discovered through `repos.planning_authority`
+in the work-environment clone's ignored `local/local.paths.json`. This optional
+local path is navigation only. Read that authority root's `AGENTS.md` and
+`README.md`, and follow their existing queue pointer. Keep private identities
+and machine paths in ignored local configuration, never in portable source.
+
+Apply three triggers through one queue writer:
+
+- **New package:** skim relevant open items once. Keep one primary outcome and
+  record selected IDs plus brief deferrals in existing owner notes. Balanced
+  mode may include related work sharing actual validation with bounded cost/risk;
+  user-selected fast track includes direct delivery dependencies only.
+- **Concrete discovery:** deduplicate by cause. Update the existing row with
+  owner, state/problem, next action, done-when and an evidence pointer; continue
+  the selected product work. Add a new ID only for a distinct cause.
+- **Result or handoff:** reconcile selected IDs with final PR/evidence links,
+  remaining actions and limits. Keep source-landed, adoption-pending and
+  runtime-proven facts separate.
+
+If the binding is missing, conflicting or unavailable, or another writer owns
+the queue, retain one small linked pending update in existing owner notes and
+continue product work. Do not guess a queue, replace it with an ignored CURRENT
+backlog, or infer adoption/grants from a path. Queue upkeep does not widen an
+admitted scope, require a ticket per commit, rescan the full backlog, add a
+validation/build gate or create another approval loop. GSD/Superpowers notes
+reuse this authority and the selected owner; they are not another issue queue.
+
 ## Minimal package
 
-When an external planning authority publishes a central issue queue, consult
-relevant open items once when planning a new package. Keep one primary outcome;
-use balanced mode by default or fast track when the user prioritizes delivery.
-Balanced work may include related extras sharing actual validation, with bounded
-cost and risk; fast track includes only direct delivery dependencies. Record
-selected IDs and brief deferrals in existing notes, without new manifest fields
-or guards. Queue other discoveries for later and continue the selected work;
-do not rescan the full backlog or replan before each command. This selection
-does not widen an admitted unit or replace its owner requirements.
+Use the [central issue queue procedure](#central-issue-queue) for the three
+checkpoint triggers above. Package selection does not replace owner requirements.
 
 Keep the record outside public source repositories when it contains private
 intent or commands. Use public repository identities and portable relative

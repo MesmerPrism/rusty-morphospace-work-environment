@@ -1,7 +1,7 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'MorphospaceProtocolCommon.psm1')
-Import-Module (Join-Path $PSScriptRoot 'MorphospaceTransitionLedger.psm1')
+$script:developmentContinuationLedgerModule=Import-Module (Join-Path $PSScriptRoot 'MorphospaceTransitionLedger.psm1') -PassThru
 
 function Assert-DevelopmentContinuationEqual {
     param([object]$Expected, [object]$Actual, [string]$Context)
@@ -149,9 +149,23 @@ function Get-MorphospaceDevelopmentEnvelopeContinuation {
        The preparation reader separately authenticates the immutable origin.
        No caller can supply a substituted origin, projection, or skip predicate. #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$WorkspaceRoot, [Parameter(Mandatory)][object]$Admission, [switch]$ReadOnlyReady)
+    param([Parameter(Mandatory)][string]$WorkspaceRoot, [object]$Admission=$null, [switch]$ReadOnlyReady, [string]$BootstrapUnitId='', [string]$BootstrapRepositoryMapPath='')
     $workspace = [IO.Path]::GetFullPath($WorkspaceRoot)
     $ownerRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $lock=Enter-MorphospaceWorkspaceMutex -WorkspaceRoot $workspace
+    $ledgerBatch=''
+    try {
+    $bootstrap=$null
+    if($BootstrapUnitId){
+        if($null-ne$Admission-or$ReadOnlyReady){throw 'Native bootstrap continuation cannot substitute an admission or Ready-only origin.'}
+        $originModule=Import-Module (Join-Path $PSScriptRoot '../DevelopmentEnvelopeProvenance.psm1') -PassThru
+        $bootstrap=&$originModule {param($w,$id,$map)Get-PreparationProvenanceBootstrapOrigin $w $id $map} $workspace $BootstrapUnitId $BootstrapRepositoryMapPath
+        $unitId=$BootstrapUnitId;$projectId=[string]$bootstrap.unit.project_id;$unitPath="iteration-units/$unitId.json"
+        $liveUnit=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace $unitPath -RequireLeaf);$liveState=Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'workspace.state.json' -RequireLeaf)
+        $original=$null;$admissionProof=$null;$source=$bootstrap.source;$sourcePath=[string]$bootstrap.binding.path;$sourceSha=[string]$bootstrap.binding.raw_sha256;$mapPath=[string]$bootstrap.binding.repository_map.path;$mapSha=[string]$bootstrap.binding.repository_map.raw_sha256
+        $events=@($bootstrap.events);$admissionIndex=[int]$bootstrap.claim_index;$project=$bootstrap.project;$featureLock=$bootstrap.feature_lock;$previous=$bootstrap.claim_proof.intent;$currentUnit=$previous.target.unit.document
+        $records=@([pscustomobject]@{kind='ready';event=$bootstrap.ready_proof.intent.event;transition=$bootstrap.ready_proof},[pscustomobject]@{kind='claimed';event=$bootstrap.claim_proof.intent.event;transition=$bootstrap.claim_proof})
+    }else{
     if (-not (Test-Json -Json ($Admission | ConvertTo-Json -Depth 100) -SchemaFile (Join-Path $ownerRoot 'schemas/development-unit-admission-v1.schema.json'))) { throw 'Development continuation admission schema is invalid.' }
     $unitId = [string]$Admission.unit_id
     $projectId = [string]$Admission.project_id
@@ -172,7 +186,10 @@ function Get-MorphospaceDevelopmentEnvelopeContinuation {
     $indices = @(for ($index=0; $index -lt $events.Count; $index++) { if ([string]$events[$index].event_id -ceq $admissionEventId) { $index } })
     if ($indices.Count -ne 1) { throw 'Development continuation admission event is missing or ambiguous.' }
     $admissionIndex = [int]$indices[0]
-    $admissionProof = Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $workspace -TransactionId "$admissionEventId-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath $unitPath -ExpectedEventsPath 'iteration-events.jsonl'
+    # Authenticate one immutable ledger/policy observation for this invocation.
+    # Every edge still runs the native core's live bytes and completion guards.
+    $ledgerBatch=& $script:developmentContinuationLedgerModule {param($w) New-MorphospaceReadOnlyLedgerBatch $w} $workspace
+    $admissionProof = & $script:developmentContinuationLedgerModule {param($w,$id,$path,$batch) Test-MorphospaceCommittedTransitionLedgerCore -WorkspaceRoot $w -TransactionId $id -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath $path -ExpectedEventsPath 'iteration-events.jsonl' -BatchToken $batch} $workspace "$admissionEventId-transition" $unitPath $ledgerBatch
     Assert-DevelopmentContinuationEqual $events[$admissionIndex] $admissionProof.intent.event 'admission event'
     Assert-DevelopmentContinuationEqual $Admission.unit $admissionProof.intent.target.unit.document 'admitted unit'
     $admissionArtifact = Get-DevelopmentContinuationArtifact $admissionProof.intent 'rusty.morphospace.workflow.development_unit_admission.v1'
@@ -184,6 +201,7 @@ function Get-MorphospaceDevelopmentEnvelopeContinuation {
     $previous = $admissionProof.intent
     $currentUnit = $previous.target.unit.document
     $records = @()
+    }
     $extensions = @()
     $toolingUpgrades = @()
     $frozen = $false
@@ -191,7 +209,9 @@ function Get-MorphospaceDevelopmentEnvelopeContinuation {
         $event = $events[$index]
         if ([string]$event.unit_id -cne $unitId -or [string]$event.project_id -cne $projectId) { throw 'Development continuation interleaves another owner unit.' }
         if ([int]$event.sequence -ne ([int]$previous.event.sequence+1)) { throw 'Development continuation is not contiguous.' }
-        $proof = Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $workspace -TransactionId "$([string]$event.event_id)-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath $unitPath -ExpectedEventsPath 'iteration-events.jsonl'
+        # Bootstrap origins need no new snapshot unless a suffix edge uses it.
+        if(-not$ledgerBatch){$ledgerBatch=& $script:developmentContinuationLedgerModule {param($w) New-MorphospaceReadOnlyLedgerBatch $w} $workspace}
+        $proof = & $script:developmentContinuationLedgerModule {param($w,$id,$path,$batch) Test-MorphospaceCommittedTransitionLedgerCore -WorkspaceRoot $w -TransactionId $id -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath $path -ExpectedEventsPath 'iteration-events.jsonl' -BatchToken $batch} $workspace "$([string]$event.event_id)-transition" $unitPath $ledgerBatch
         $intent = $proof.intent
         Assert-DevelopmentContinuationEqual $event $intent.event 'event'
         if ([string]$intent.pre.state.sha256 -cne [string]$previous.target.state.sha256 -or [string]$intent.pre.unit.sha256 -cne [string]$previous.target.unit.sha256) { throw 'Development continuation state/unit chain is detached.' }
@@ -254,7 +274,7 @@ function Get-MorphospaceDevelopmentEnvelopeContinuation {
                 $amendmentModule = Import-Module (Join-Path $PSScriptRoot '../ActiveWriteScopeAmendment.psm1') -PassThru
                 $null = & $amendmentModule { param($root,$expected,$transition) Assert-ActiveWriteScopeHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $expected -Transition $transition } $workspace $event $proof
                 $kind = 'amendment'
-            } elseif ($null -ne (Get-DevelopmentContinuationArtifact $intent 'rusty.morphospace.workflow.candidate_freeze.v3')) {
+            } elseif ($null -ne (Get-DevelopmentContinuationArtifact $intent 'rusty.morphospace.workflow.candidate_freeze.v3') -or $null -ne (Get-DevelopmentContinuationArtifact $intent 'rusty.morphospace.workflow.candidate_freeze.v4')) {
                 $revisionOwner=Import-Module (Join-Path $PSScriptRoot '../CandidateFreeze.psm1') -PassThru
                 &$revisionOwner {param($root,$transition) Assert-MorphospaceCandidateRevisionRecoveryBindings $root $transition -Historical} $workspace $intent
                 Assert-DevelopmentContinuationStableAuthority $currentUnit $targetUnit @('candidate_freeze') 'candidate revision'
@@ -305,7 +325,7 @@ function Get-MorphospaceDevelopmentEnvelopeContinuation {
     Assert-DevelopmentContinuationEqual $project (Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'project.spec.json' -RequireLeaf)) 'live project'
     Assert-DevelopmentContinuationEqual $featureLock (Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'feature.lock.json' -RequireLeaf)) 'live feature lock'
     if ([string]$liveUnit.source_composition.lock_path -cne $sourcePath) { throw 'Development continuation live source pointer is detached.' }
-    [pscustomobject]@{
+    $result=[pscustomobject]@{
         admission=$Admission; preparation=$original; admission_proof=$admissionProof
         project=$project; feature_lock=$featureLock; source_composition=$source
         source_composition_binding=[pscustomobject]@{path=$sourcePath;raw_sha256=$sourceSha}
@@ -313,6 +333,11 @@ function Get-MorphospaceDevelopmentEnvelopeContinuation {
         unit=$liveUnit; state=$liveState; event_tail=$events[-1]
         records=@($records); extensions=@($extensions); tooling_upgrades=@($toolingUpgrades)
     }
+    } finally {
+        try {if($ledgerBatch){& $script:developmentContinuationLedgerModule {param($batch) Close-MorphospaceReadOnlyLedgerBatch $batch} $ledgerBatch}}
+        finally {Exit-MorphospaceWorkspaceMutex $lock}
+    }
+    $result
 }
 
 Export-ModuleMember -Function Get-MorphospaceDevelopmentEnvelopeContinuation

@@ -44,6 +44,86 @@ Host compilation requires only the relevant build-root coordination. Acquire
 the exact headset claim immediately before an install, launch, or device
 observation. A warm build does not authorize a device mutation.
 
+### Quest-owned source provider for local iteration
+
+An optional `preflight.source_composition.provider_document` contains exactly
+`path`, `sha256`, `provider_binding_id` and `provider_module_sha256`. The path is
+an absolute local JSON file with the Quest-owned
+`rusty.quest.apk_source_composition.v1` or `v2` composition. The selected existing
+environment directory binding supplies only the fixed
+`tools/lib/SourceComposition.psm1` module and its fixed
+`Assert-QuestBuildSourceCompositionCurrent -Composition` export. It cannot name
+an arbitrary script, export or command line.
+
+The runner holds and authenticates the raw document and module, joins every
+bound Git directory and the executing SourceRoot to unique composition roots
+and exact commit/tree identities, then invokes Quest's assertion under the
+selected build context before dispatch and after the child naturally closes.
+Quest owns fingerprint and overlay verification; WEF does not reproduce that
+algorithm or treat a returned Boolean as authority. The primary Quest root is
+`rusty-quest`/`primary`; an application-owned executing root uses
+`app-owned-input`.
+
+The selected provider tooling checkout may differ from that primary input. Its
+existing directory binding must join its own unique composition row and retain
+the exact bound Git commit/tree checks. Add a separate tooling owner input through
+Quest's existing `Add-QuestBuildOwnedRepository` API; do not replace the primary
+Quest row or substitute the tooling checkout for the application's source.
+Multiple binding IDs may still reference one canonical row. Missing, duplicate,
+wrong-root or wrong-base tooling rows remain invalid.
+
+Only the `warm` output lane with Boolean `source.require_clean=false` permits
+authenticated working-tree overlays on those matching roots. Candidate and
+clean-required profiles remain clean. Profiles without a provider retain the
+existing source/environment checks. The existing binding and source-composition
+payload retain the provider reference, module hash and actual fingerprint. A
+post-child provider failure makes the wrapper fail while preserving the actual
+child exit, raw streams and original failure reason. These facts do not confer
+qualification, acceptance, publication or device authority.
+
+### Select an accepted build executor
+
+Use `scripts/New-QuestBuildExecutorSelection.ps1` when a caller needs a retained
+selection of an accepted, normally published build executor:
+
+```powershell
+pwsh -NoProfile -File ./scripts/New-QuestBuildExecutorSelection.ps1 `
+  -InputPath ./local/executor-request.json `
+  -ExpectedInputSha256 <reviewed-request-raw-sha256> `
+  -OutputDirectory ./local/executor-selection01
+```
+
+The request uses `quest-build-executor-selection-v1.schema.json`. It names the
+actual owner workspace/project/unit, repository identity, ordinary preparation
+baseline, candidate qualification base/head/tree, exact changed paths, published
+executor, pinned Git executable and retained acceptance/qualification/publication
+references. The supported route requires the current idle owner boundary and
+its actual Accept tail, a public committed acceptance transaction, passing deep
+validation, the accepted current-source hosted intake and protected static
+proof, and the ordinary merge followed by its authenticated attestation branch.
+A different actual postmerge branch needs its owning normal-delta intake; it is
+never relabelled as this route. The producer performs read-only Git observations,
+including one fresh `ls-remote`, and writes only a create-new evidence directory.
+It does not invoke hosted checks or reconstruct historical reuse genesis.
+
+The result preserves the existing fifteen-field
+`task.actual_legacy_executor_selection.v1` wire and three sibling proof files:
+`EXECUTOR_PINS.json`, `ACCEPTANCE_OBSERVATION.json`, and
+`QUALIFICATION_OBSERVATION.json`. The legacy schema name and
+`current039_tooling_context_created: false` field are compatibility provenance.
+`Read-MorphospaceQuestBuildExecutorSelection` in the public module validates
+retained bytes, proof joins and the complete clean physical/Git source closure
+without remote access. Retained evidence remains distinct from a fresh current
+owner selection; an active successor does not make an earlier Accept current.
+
+The selected executor owns build execution only. Its same-tree candidate may
+retain a different validation commit; preparation, installed router provenance,
+tooling context, product adoption, build/cache custody and device authority keep
+their own identities. Neither producer nor reader creates or advances them.
+Run `scripts/Test-QuestBuildExecutorSelection.ps1` for focused conformance and
+damage controls. Optional explicit retained inputs exercise immutable actual
+qualification/consumer evidence without replaying collection or acceptance.
+
 The public
 [`Quest APK Build Lanes`](https://github.com/MesmerPrism/meta-quest-agent-workflow/blob/main/docs/quest-apk-build-lanes.md)
 playbook owns the portable procedure. The selected app shell or `rusty-quest`
@@ -84,8 +164,10 @@ contract set from that template. The resolver rejects older provider pins that
 do not advertise QFM v5 inspected deployment, preflight/deploy, bounded
 diagnostic result/bundle, typed stop, shared-forward inventory, one typed JSON
 launch envelope on success or failure, the current-Quest launcher-export proof,
-runtime observation v5, global-focus observation v1, and read-only permission
-observation v1. Resolve the provider
+runtime observation v5 or v6, global-focus observation v1, and read-only permission
+observation v1. The example retains its supported v5 pin. For a v6 provider, set
+`runtime_observation_contract` to `questionable.file_manager.app_runtime_observation.v6`;
+the executable must advertise the exact configured runtime contract. Resolve the provider
 without touching a headset:
 
 ```powershell
@@ -106,10 +188,17 @@ The current File Manager consumer contract preserves owner-native result
 schemas rather than wrapping their payloads. Its `apk_launch_result.v1` outer envelope is exactly
 `{schema,succeeded,mutation,result,failure}`: success has non-null mutation
 and result with null failure; failure has null mutation/result with non-null
-failure. Explicit legacy-v3, legacy-v4, and current-v5 adapters keep installed
+failure. Explicit legacy-v3, legacy-v4, current-v5, and current-v6 adapters keep installed
 identity, process, task/top-resumed, and global Android focus distinct. Runtime
-v5 adds bounded `mCurrentFocus`/`mFocusedApp` facts through global-focus v1;
-these remain raw Android observations. Neither a PID, process liveness,
+v5 adds bounded `mCurrentFocus`/`mFocusedApp` facts through global-focus v1.
+Runtime v6 additionally retains the `pidof` exit code, separately typed
+presence corroboration (state, PID, process birth ticks, current-user UID,
+source and absence-authority boundary), and the native nullable `ProcessAlive`
+value. An empty `pidof` result can coexist with verified presence; inconclusive,
+unavailable or conflicting corroboration does not establish absence. The adapter
+projects these native facts independently without recomputing liveness. Missing
+families remain unavailable, and unrecognized runtime versions remain unknown.
+These remain raw Android observations. Neither a PID, process liveness,
 top-resumed state, target focus, nor FocusPlaceholder state establishes
 application/OpenXR readiness, an application effect, or wearer visibility.
 `apk permissions` is a separate exact-package, read-only fact family for

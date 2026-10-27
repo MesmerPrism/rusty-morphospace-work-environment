@@ -7,6 +7,7 @@ Import-Module (Join-Path $PSScriptRoot 'MorphospaceDevelopmentEnvelopeSemantics.
 Import-Module (Join-Path $PSScriptRoot 'MorphospaceSourceCompositionIdentity.psm1')
 Import-Module (Join-Path $PSScriptRoot 'MorphospaceLegacyToolingReclassification.psm1')
 Import-Module (Join-Path $PSScriptRoot '../AcceptedValidationEvidenceRelocation.psm1')
+$script:currentWorkCustodyModule=Import-Module (Join-Path $PSScriptRoot 'MorphospaceNonpassCustodyCorrection.psm1') -PassThru
 
 # A read-only lifecycle projection, not a new receipt or recovery mechanism.
 # Earlier records cannot grant current authority merely by being classified here.
@@ -131,11 +132,35 @@ function Get-MorphospaceAuthenticatedSupersededScopeConflicts {
     return [pscustomobject]@{ ids=$ids }
 }
 
+function Get-CurrentWorkInitialProfileCorrection([string]$Workspace,[object]$Event) {
+    $path=Resolve-MorphospaceWorkspacePath $Workspace "receipts/transactions/$([string]$Event.event_id)-transition.intent.json"
+    if(-not[IO.File]::Exists($path)){return $null}
+    $intent=Read-MorphospaceProtocolJson $path
+    if($intent.PSObject.Properties.Name-cnotcontains'artifacts'){return $null}
+    $count=0
+    foreach($artifact in @($intent.artifacts)){
+        try{$document=ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$artifact.bytes_base64))}catch{continue}
+        if($null-ne$document-and$document.PSObject.Properties.Name-ccontains'schema'-and[string]$document.schema-ceq'rusty.morphospace.workflow.initial_validation_profile_closure_correction.v1'){$count++}
+    }
+    if($count-eq0){return $null}
+    if($count-ne1){throw 'Current-work repeats an initial profile closure request.'}
+    Import-Module (Join-Path $PSScriptRoot '../InitialValidationProfileClosureCorrection.psm1')
+    Test-MorphospaceHistoricalInitialValidationProfileClosure -WorkspaceRoot $Workspace -ExpectedEvent $Event
+}
+
 function Get-MorphospaceCurrentWorkHistory {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$WorkspaceRoot, [switch]$RequireIdle)
     $workspace = [IO.Path]::GetFullPath($WorkspaceRoot)
     $state = Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace 'workspace.state.json' -RequireLeaf)
+    # Authenticate immutable correction inventory before recursive retirement
+    # or accepted-boundary traversal. This report is audit-only; no consumer
+    # accepts it as a validation proof or as an input classification.
+    $custodyAudit=@(&$script:currentWorkCustodyModule {param($w)
+        foreach($row in @(Get-NonpassCustodyCommittedInventory $w)){
+            [pscustomobject]@{unit_id=[string]$row.unit_id;return_event_id=[string]$row.return_event_id;artifact_id=[string]$row.artifact_id;classification='nonpass-audit-inert-unavailable';current_policy_revalidated=$false;grants_validation_credit=$false;grants_acceptance_credit=$false;proof_reuse=$false}
+        }
+    } $workspace)
     $archive = $null
     $archiveTransactions = Join-Path $workspace 'history-archive/transactions'
     if (($state.PSObject.Properties.Name -contains 'history_archive' -and $null -ne $state.history_archive) -or
@@ -189,6 +214,35 @@ function Get-MorphospaceCurrentWorkHistory {
         foreach ($pending in @(Get-ChildItem -LiteralPath (Join-Path $workspace 'receipts/transactions') -Filter '*.intent.json' -File -ErrorAction SilentlyContinue)) {
             if (-not [IO.File]::Exists(($pending.FullName -creplace '\.intent\.json$','.completion.json'))) { throw 'Current-work has an incomplete transaction without an authenticated historical boundary.' }
         }
+        # An initial correction grants no history exemption. Authenticate its
+        # typed semantics and every later real suffix, even without acceptance.
+        $initialProfileBoundary=$null;$initialProfileProjections=@{}
+        foreach($event in $events){
+            $correction=Get-CurrentWorkInitialProfileCorrection $workspace $event
+            if($null-ne$correction){
+                if($null-ne$initialProfileBoundary){throw 'Current-work repeats an initial profile closure correction.'}
+                $initialProfileBoundary=$correction
+                foreach($projection in @($correction.intent.additional_projections)){$initialProfileProjections[[string]$projection.path]=[string]$projection.target_sha256}
+            }
+            if($null-ne$initialProfileBoundary-and[int]$event.sequence-gt[int]$initialProfileBoundary.intent.event.sequence){
+                $next=Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $workspace -TransactionId "$([string]$event.event_id)-transition" -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$([string]$event.unit_id).json" -ExpectedEventsPath 'iteration-events.jsonl'
+                if([string]$next.intent.pre.state.sha256-cne[string]$initialProfileBoundary.intent.target.state.sha256-or[string]$next.intent.pre.unit.sha256-cne[string]$initialProfileBoundary.intent.target.unit.sha256){throw 'Current-work initial correction continuation has a detached preimage.'}
+                if($next.intent.PSObject.Properties.Name-ccontains'additional_projections'){
+                    foreach($projection in @($next.intent.additional_projections)){
+                        if($initialProfileProjections.ContainsKey([string]$projection.path)-and[string]$projection.pre_sha256-cne$initialProfileProjections[[string]$projection.path]){throw 'Current-work initial correction continuation has a detached additional projection.'}
+                        $initialProfileProjections[[string]$projection.path]=[string]$projection.target_sha256
+                    }
+                }
+                $initialProfileBoundary=$next
+            }
+        }
+        if($null-ne$initialProfileBoundary-and[string]$initialProfileBoundary.intent.target.state.sha256-cne(Get-MorphospaceCanonicalJsonSha256 $state)){throw 'Current-work initial correction continuation differs from live state.'}
+        if($null-ne$initialProfileBoundary){
+            $currentId=[string]$initialProfileBoundary.intent.target.unit.document.unit_id
+            if(-not$units.ContainsKey($currentId)-or(Get-MorphospaceCanonicalJsonSha256 $units[$currentId])-cne[string]$initialProfileBoundary.intent.target.unit.sha256){throw 'Current-work initial correction continuation differs from live unit.'}
+            foreach($path in $initialProfileProjections.Keys){if((Get-MorphospaceCanonicalJsonSha256 (Read-MorphospaceProtocolJson (Resolve-MorphospaceWorkspacePath $workspace $path -RequireLeaf)))-cne$initialProfileProjections[$path]){throw 'Current-work initial correction continuation differs from its live project or lock.'}}
+        }
+
         return [pscustomobject]@{ authenticated=$false; sequence=0; historical_ids=$historical; retired_ids=$retired; historically_retired_proposed_ids=$historicallyRetiredProposed; retired_active_ids=$retiredActive; active_retirements=$activeRetirements; authenticated_superseded_scope_conflict_ids=$supersededScopeConflicts; units=$units; events=$events; audit_only=@() }
     }
     if ($accepts.Count -ne 1) { throw 'Current-work accepted checkpoint is ambiguous.' }
@@ -203,6 +257,9 @@ function Get-MorphospaceCurrentWorkHistory {
         throw 'Current-work accepted checkpoint does not authenticate the retained endpoint.'
     }
     $sequence = [int]$acceptedEvent.sequence
+    # Acceptance authenticates the retained prefix; the additive initial action
+    # still keeps its own pure semantics when it precedes that checkpoint.
+    foreach($event in @($events|Where-Object{[int]$_.sequence-le$sequence-and[string]$_.summary-ceq'Added only exact missing immutable initial-unit validation profile declarations without executing commands or changing unit, source, status or acceptance authority.'})){[void](Get-CurrentWorkInitialProfileCorrection $workspace $event)}
     $priorStateHash = [string]$accepted.intent.target.state.sha256
     $projectionHashes = @{}
     $suffixTransitions = @{}
@@ -355,7 +412,7 @@ function Get-MorphospaceCurrentWorkHistory {
                     $bytes=[Convert]::FromBase64String([string]$artifact.bytes_base64)
                     try{$document=ConvertFrom-MorphospaceProtocolJsonBytes $bytes}catch{continue}
                     if($null-eq$document-or-not($document.PSObject.Properties.Name-contains'schema')){continue}
-                    if(@('rusty.morphospace.workflow.active_development_envelope_extension.v1','rusty.morphospace.workflow.tooling_context_upgrade.v1','rusty.morphospace.workflow.active_write_scope_amendment.v1')-ccontains[string]$document.schema){
+                    if(@('rusty.morphospace.workflow.active_development_envelope_extension.v1','rusty.morphospace.workflow.tooling_context_upgrade.v1','rusty.morphospace.workflow.active_write_scope_amendment.v1','rusty.morphospace.workflow.initial_validation_profile_closure_correction.v1')-ccontains[string]$document.schema){
                         if(-not$ownerActionSchemas.Add([string]$document.schema)){throw 'Current-work continuation repeats an owner-action request.'}
                     }
                     if([string]$document.schema-ceq'rusty.morphospace.workflow.active_development_envelope_extension.v1'){
@@ -366,6 +423,15 @@ function Get-MorphospaceCurrentWorkHistory {
                         $hasNewOwnerAction=$true
                         $toolingUpgradeOwnerModule=Import-Module (Join-Path $PSScriptRoot '../ToolingContextUpgrade.psm1') -PassThru
                         [void](&$toolingUpgradeOwnerModule {param($root,$event,$transition) Assert-ToolingContextHistoricalTransition -WorkspaceRoot $root -ExpectedEvent $event -Transition $transition} $workspace $event $step)
+                    }elseif([string]$document.schema-ceq'rusty.morphospace.workflow.initial_validation_profile_closure_correction.v1'){
+                        $hasNewOwnerAction=$true
+                        Import-Module (Join-Path $PSScriptRoot '../InitialValidationProfileClosureCorrection.psm1')
+                        [void](Test-MorphospaceHistoricalInitialValidationProfileClosure -WorkspaceRoot $workspace -ExpectedEvent $event)
+                    }elseif([string]$document.schema-ceq'rusty.morphospace.workflow.candidate_freeze.v4'){
+                        $hasNewOwnerAction=$true
+                        if(-not$ownerActionSchemas.Add([string]$document.schema)){throw 'Current-work continuation repeats a v4 custody correction.'}
+                        $candidateOwner=Import-Module (Join-Path $PSScriptRoot '../CandidateFreeze.psm1') -PassThru
+                        &$candidateOwner {param($w,$i)Assert-MorphospaceCandidateRevisionRecoveryBindings $w $i -Historical} $workspace $intent
                     }
                 }
                 if($hasNewOwnerAction-and$ownerActionSchemas.Count-ne1){throw 'Current-work continuation mixes distinct owner actions.'}
@@ -484,7 +550,7 @@ function Get-MorphospaceCurrentWorkHistory {
         }
         if ([string]$proof.intent.target.unit.sha256 -cne (Get-MorphospaceCanonicalJsonSha256 $units[$id]) -or [string]$proof.intent.target.unit.document.status -cne 'accepted') { throw "Current-work prerequisite '$id' differs from accepted evidence." }
     }
-    return [pscustomobject]@{ authenticated=$true; sequence=$sequence; accepted_unit_id=$acceptedId; historical_ids=$historical; retired_ids=$retired; historically_retired_proposed_ids=$historicallyRetiredProposed; retired_active_ids=$retiredActive; active_retirements=$activeRetirements; authenticated_superseded_scope_conflict_ids=$supersededScopeConflicts; units=$units; events=$events; audit_only=@($audit.ToArray()) }
+    return [pscustomobject]@{ authenticated=$true; sequence=$sequence; accepted_unit_id=$acceptedId; historical_ids=$historical; retired_ids=$retired; historically_retired_proposed_ids=$historicallyRetiredProposed; retired_active_ids=$retiredActive; active_retirements=$activeRetirements; authenticated_superseded_scope_conflict_ids=$supersededScopeConflicts; units=$units; events=$events; audit_only=@($audit.ToArray())+@($custodyAudit) }
 }
 
 function Get-MorphospacePreparationStepEvidence {

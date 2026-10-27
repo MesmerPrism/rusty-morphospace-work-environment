@@ -1293,8 +1293,13 @@ try {
     Assert-Automation (
         $unit045Inspect.claim_preflight.advisory_status -eq "fail" -and
         @($unit045Inspect.claim_preflight.reason_codes) -contains "validation-profile-unknown" -and
-        $unit045Inspect.claim_preflight.ready_to_claim
-    ) "Unit045-shaped unknown validation profile was not advisory-failed without changing Claim behavior"
+        -not $unit045Inspect.claim_preflight.ready_to_claim
+    ) "Unknown validation profile did not block fresh Claim while retaining its precise Inspect reason"
+    $unknownProfileBefore=Get-TestDirectoryByteFingerprint $unit045Workspace
+    $unknownProfileDenied=$false
+    try { Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $unit045Workspace -UnitId 'unit045-shape-001' -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | Out-Null }
+    catch { $unknownProfileDenied=$_.Exception.Message.Contains('validation-profile-unknown') }
+    Assert-Automation ($unknownProfileDenied-and(Get-TestDirectoryByteFingerprint $unit045Workspace)-ceq$unknownProfileBefore) 'Unknown profile Claim wrote authority or lost its refusal reason'
 
     $unit046Workspace = New-TestWorkspace -Root (Join-Path $testRoot "unit046-shape") -ProjectId "unit046-shape" -UnitId "unit046-shape-001"
     $unit046Path = Join-Path $unit046Workspace "iteration-units\unit046-shape-001.json"
@@ -2204,6 +2209,12 @@ try {
         [pscustomobject][ordered]@{ profile_id = "source-only"; command = "second source-only command" },
         [pscustomobject][ordered]@{ profile_id = "source-only"; command = "third source-only command" }
     )
+    $duplicateGateSpecPath = Join-Path $duplicateGateWorkspace "project.spec.json"
+    $duplicateGateSpec = Get-Content -LiteralPath $duplicateGateSpecPath -Raw | ConvertFrom-Json
+    $duplicateGateSpec.validation_profiles = @($duplicateGateSpec.validation_profiles) + @(
+        [pscustomobject][ordered]@{ profile_id = "source-only"; commands = @("first source-only command", "second source-only command", "third source-only command") }
+    )
+    Write-TestJson -Path $duplicateGateSpecPath -Value $duplicateGateSpec
     Write-TestJson -Path $duplicateGateUnitPath -Value $duplicateGateUnit
     Invoke-MorphospaceWorkUnitAutomation -Action Claim -WorkspaceRoot $duplicateGateWorkspace -UnitId "unit-duplicate-gate-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | Out-Null
     Invoke-MorphospaceWorkUnitAutomation -Action BeginValidation -WorkspaceRoot $duplicateGateWorkspace -UnitId "unit-duplicate-gate-001" -RepoMapPath $repoMapPath -Timestamp $fixed -Execute | Out-Null
