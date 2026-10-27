@@ -133,14 +133,52 @@ function Read-BuildProfile {
     }
     if ((@($document.arguments)).Count -gt 128 -or (@($document.arguments | Where-Object { $_ -isnot [string] -or $_.Length -gt 1024 })).Count -gt 0) { throw "Build profile arguments are invalid." }
     Assert-PropertySet $document.artifact @("relative_path", "kind") @() "Build profile artifact"
-    if ([string]$document.artifact.kind -cne "single-base-apk") { throw "Build profile artifact kind is invalid." }
+    $artifactKind = [string]$document.artifact.kind
+    if ($artifactKind -cnotin @("single-base-apk", "jvm-preflight-result")) { throw "Build profile artifact kind is invalid." }
     $artifactRelativePath = [string]$document.artifact.relative_path
     $artifact = Resolve-ContainedPath $Root $artifactRelativePath "artifact.relative_path"
-    if ([System.IO.Path]::GetExtension($artifact) -cne ".apk") { throw "Build profile artifact must be one APK." }
+    $artifactExtension = if ($artifactKind -ceq "single-base-apk") { ".apk" } else { ".json" }
+    if ([System.IO.Path]::GetExtension($artifact) -cne $artifactExtension) { throw "Build profile artifact extension does not match its kind." }
     if ($null -eq $document.environment -or (@($document.environment.PSObject.Properties)).Count -gt 32 -or (@($document.environment.PSObject.Properties | Where-Object { $_.Name -cnotmatch "^[A-Z][A-Z0-9_]{0,63}$" -or [string]$_.Value -cnotmatch "^[a-z0-9][a-z0-9._-]{0,95}$" })).Count -gt 0) { throw "Build profile environment bindings are invalid." }
     $preflight = Get-OptionalProperty $document "preflight"
     if ($null -ne $preflight) { Assert-PropertySet $preflight @() @("manifest_relative_dependencies", "lockfiles", "toolchain", "identity", "environment_projection", "source_composition", "output") "Build profile preflight" }
-    return [pscustomobject]@{ Document = $document; Path = $fullPath; Sha256 = $actualSha256; Root = $Root; WorkingDirectory = $workingDirectory; ProfileExecutable = $profileExecutable; ExternalToolId = $externalToolId; Artifact = $artifact; ArtifactRelativePath = $artifactRelativePath; Preflight = $preflight }
+    return [pscustomobject]@{ Document = $document; Path = $fullPath; Sha256 = $actualSha256; Root = $Root; WorkingDirectory = $workingDirectory; ProfileExecutable = $profileExecutable; ExternalToolId = $externalToolId; Artifact = $artifact; ArtifactKind = $artifactKind; ArtifactRelativePath = $artifactRelativePath; Preflight = $preflight }
+}
+
+function Assert-BuildArtifactKind {
+    param([object]$Profile)
+    # Discriminate the closed phase result without imposing APK inspection on
+    # the established single-base-apk transport (including its host fixtures).
+    $document = $null
+    $reader = [IO.StreamReader]::new($Profile.Artifact)
+    try {
+        while ($reader.Peek() -ge 0 -and [char]::IsWhiteSpace([char]$reader.Peek())) { [void]$reader.Read() }
+        if ($reader.Peek() -eq [int][char]'{') {
+            try { $document = $reader.ReadToEnd() | ConvertFrom-Json -Depth 64 } catch { }
+        }
+    } finally { $reader.Dispose() }
+    $phaseSchema = "rusty.quest.spatial_camera_panel.jvm_preflight_result.v1"
+    if ($Profile.ArtifactKind -ceq "single-base-apk") {
+        if ($null -ne $document -and (Get-OptionalProperty $document 'schema') -ceq $phaseSchema) { throw 'JVM phase result cannot satisfy single-base-apk.' }
+        return
+    }
+    if ($null -eq $document) { throw 'JVM phase result must be JSON.' }
+    Assert-PropertySet $document @('schema', 'status', 'build_stage', 'apk_produced', 'runtime_authority', 'product_id', 'app_id', 'build_type', 'android_jvm_compilation', 'source_composition', 'android_components', 'build_phase_receipts') @() 'JVM phase result'
+    if ([string]$document.schema -cne $phaseSchema -or [string]$document.status -cne 'phase-complete' -or [string]$document.build_stage -cne 'JvmPreflight' -or $document.apk_produced -isnot [bool] -or $document.apk_produced -or $document.runtime_authority -isnot [bool] -or $document.runtime_authority) { throw 'JVM phase result markers are invalid.' }
+    foreach ($name in @('product_id', 'app_id', 'build_type')) {
+        if ($document.$name -isnot [string] -or [string]::IsNullOrWhiteSpace($document.$name)) { throw 'JVM phase result identity is invalid.' }
+    }
+    $summary = $document.android_jvm_compilation
+    if ($null -eq $summary -or [string]$summary.status -cne 'passed' -or [string]$summary.scope -cne 'jvm-compilation-only' -or $summary.runtime_authority -isnot [bool] -or $summary.runtime_authority) { throw 'JVM compilation summary is invalid.' }
+    foreach ($name in @('inventory_sha256', 'compiled_sha256', 'gradle_inputs_sha256')) {
+        if ([string]$summary.$name -cnotmatch '^[a-f0-9]{64}$') { throw 'JVM compilation summary digest is invalid.' }
+    }
+    Assert-PropertySet $document.android_components @('inventory', 'jvm_inputs', 'jvm_compilation') @() 'JVM component references'
+    foreach ($reference in @($document.source_composition, $document.android_components.inventory, $document.android_components.jvm_inputs, $document.android_components.jvm_compilation, $document.build_phase_receipts)) {
+        if ($null -eq $reference -or $reference.path -isnot [string] -or [string]::IsNullOrWhiteSpace($reference.path) -or [string]$reference.sha256 -cnotmatch '^[a-f0-9]{64}$') { throw 'JVM phase result reference is invalid.' }
+    }
+    # The producer owns the referenced component semantics. This runner binds
+    # the completed result bytes; it supplies no runtime or APK authority.
 }
 
 function Resolve-EnvironmentBindings {
@@ -771,7 +809,9 @@ try {
                 $artifactInfo = Get-Item -LiteralPath $profile.Artifact
                 if ($artifactInfo.Length -le 0) { $terminal = New-TerminalResult "build" "failed" $profile $execution $preflight @("artifact-empty") $child.Streams $payload $TimeoutSeconds $child.ChildProcess }
                 else {
-                    $payload.artifact = [ordered]@{ kind = "single-base-apk"; path = $profile.Artifact; sha256 = Get-Sha256 $profile.Artifact; size_bytes = $artifactInfo.Length }
+                    try { Assert-BuildArtifactKind $profile }
+                    catch { $failure = [InvalidOperationException]::new('Build artifact does not match its declared kind.', $_.Exception); $failure.Data['ReasonCode'] = 'artifact-kind-mismatch'; throw $failure }
+                    $payload.artifact = [ordered]@{ kind = $profile.ArtifactKind; path = $profile.Artifact; sha256 = Get-Sha256 $profile.Artifact; size_bytes = $artifactInfo.Length }
                     $terminal = New-TerminalResult "build" "passed" $profile $execution $preflight @() $child.Streams $payload $TimeoutSeconds $child.ChildProcess
                 }
             }

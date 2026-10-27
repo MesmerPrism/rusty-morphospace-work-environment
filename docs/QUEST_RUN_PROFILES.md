@@ -3,7 +3,7 @@
 A regular iteration now has two portable, non-authoritative inputs:
 
 - a reviewed `rusty.morphospace.quest_build_profile.v1` in the owning app
-repository, containing the fixed build vector and expected single-base APK;
+repository, containing the fixed build vector and expected artifact kind;
 - a private `rusty.morphospace.quest_run_request.v1`, binding the resulting APK
   bytes, exact serial, 2D/XR/process observation policy, app-owned log oracle,
 and named diagnostic recipes.
@@ -29,6 +29,27 @@ host-only composition evidence, not permission to inspect, deploy, invoke ADB,
 or otherwise act in the external owner's lane. The later single-APK terminal
 proof remains one digest-bound `single-base-apk` result, and any QFM-specific
 inspection remains QFM-owned.
+
+The closed artifact kinds are `single-base-apk` (the existing `.apk` build)
+and `jvm-preflight-result` (one `.json` host phase result). Both use the same
+profile, context, environment projection, child execution, stream capture and
+post-exit artifact binding. A successful terminal result retains the selected
+kind and the file's exact path, SHA-256 and size. A typed JVM phase JSON cannot
+satisfy `single-base-apk`; APK bytes cannot satisfy `jvm-preflight-result`.
+Single-base APK transport keeps its existing behavior and host fixtures;
+inspection remains a separate APK-owner operation.
+
+The phase result uses `rusty.quest.spatial_camera_panel.jvm_preflight_result.v1`,
+`status=phase-complete`, `build_stage=JvmPreflight`, `apk_produced=false` and
+`runtime_authority=false`. It retains product/application/build identity, the
+original `android_jvm_compilation` summary, and references to source composition,
+Android component inventory/JVM inputs/compilation and build phase receipts.
+The public builder writes `OutDir/jvm-preflight-result.json`; a private wrapper
+can copy those exact bytes to its own declared output. The runner discriminates
+this shape and binds its bytes; referenced component semantics stay with the
+producer. This host result supplies no APK, inspect/install, runtime or release
+capsule completion evidence. `-Mode Preflight` remains the runner's separate
+advisory pre-dispatch operation.
 
 The build profile removes recurring Gradle/PowerShell command reconstruction.
 The run request does not contain an arbitrary device command. A private Hostess
