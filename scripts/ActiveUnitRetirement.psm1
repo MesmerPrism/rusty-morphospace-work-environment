@@ -662,8 +662,7 @@ function Test-ActiveRetirementCommittedReadyDescriptor {
     $rows=@($lock.features|Where-Object{$_.selected-eq$true-and$Path-ceq($WorkspacePrefix+[string]$_.descriptor.path)})
     if($rows.Count-ne1){return $false}
     $row=$rows[0];$pin=$row.descriptor
-    if([string]$pin.path-cnotmatch'^features/[a-z0-9][a-z0-9-]*\.json$'-or[string]$pin.source_repo-cne$RepositoryId-or
-        [string]$pin.source_revision-cne$LockedCommit){return $false}
+    if([string]$pin.source_repo-cne$RepositoryId-or[string]$pin.source_revision-cne$LockedCommit){return $false}
     $admittedUnit=$Admitted.target.unit.document
     $ready=$ReadyProof.intent
     $dependencies=@($admittedUnit.read_only_dependencies|Where-Object{[string]$_.repo_id-ceq$RepositoryId-and@($_.paths)-ccontains$Path})
@@ -815,6 +814,8 @@ function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
         foreach($path in @($expected.Keys)){$live=Join-Path $repository $path;$sha=if($CommittedSnapshot-and-not$auxiliaryProofs.Contains($path)){Get-MorphospaceSha256Bytes (Read-ActiveRetirementCommittedBytes $repository $ObservedHead $path)}elseif([IO.File]::Exists($live)){Get-MorphospaceFileSha256 $live}else{''};if($sha-cne[string]$expected[$path]){throw "Active retirement committed planning projection is damaged: $path"}}
         $changed=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         $readyDescriptors=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        # Other unbound paths retain the ordinary planning refusal.
+        $descriptorPattern='^'+[regex]::Escape($workspacePrefix)+'features/[a-z0-9][a-z0-9-]*\.json\z'
         $cursor=$ObservedHead
         while($cursor-cne$LockedCommit){
             $line=(@(& git -C $repository rev-list --parents -n 1 $cursor 2>&1)-join'').Trim()
@@ -825,7 +826,7 @@ function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
             foreach($path in $paths){
                 $relative=([string]$path).Replace('\','/')
                 if(-not$expected.ContainsKey($relative)){
-                    if(-not$direct-or$readyDescriptors.Contains($relative)-or-not(Test-ActiveRetirementCommittedReadyDescriptor -Repository $repository -RepositoryId ([string]$RepositoryEntry.repo_id) -WorkspacePrefix $workspacePrefix -LockedCommit $LockedCommit -ObservedHead $ObservedHead -Parent $parent -Commit $cursor -Path $relative -PreparationIntent $preparationIntent -Admitted $admittedIntent -ReadyProof $readyProof)){
+                    if(-not$direct-or$relative-cnotmatch$descriptorPattern-or$readyDescriptors.Contains($relative)-or-not(Test-ActiveRetirementCommittedReadyDescriptor -Repository $repository -RepositoryId ([string]$RepositoryEntry.repo_id) -WorkspacePrefix $workspacePrefix -LockedCommit $LockedCommit -ObservedHead $ObservedHead -Parent $parent -Commit $cursor -Path $relative -PreparationIntent $preparationIntent -Admitted $admittedIntent -ReadyProof $readyProof)){
                         throw "Active retirement committed planning descendant changes unauthenticated path: $relative"
                     }
                     [void]$readyDescriptors.Add($relative)
