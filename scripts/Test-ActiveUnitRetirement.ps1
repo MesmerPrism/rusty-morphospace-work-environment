@@ -1,7 +1,7 @@
 param(
     [switch]$SelfTest,
     [switch]$InertProposalsOnly,
-    [ValidateSet('All', 'Core', 'InstructionHeads', 'NestedPositive', 'NestedCommitted', 'PostNonpass', 'NestedMapGuards', 'AmendmentRecovery', 'NestedRecovery', 'NestedDamage')]
+    [ValidateSet('All', 'Core', 'InstructionHeads', 'NestedPositive', 'NestedCommitted', 'NestedExtension', 'PostNonpass', 'NestedMapGuards', 'AmendmentRecovery', 'NestedRecovery', 'NestedDamage')]
     [string]$Scenario = 'All',
     [ValidateSet('', 'Base', 'Diagnostics')][string]$CoreWorkerGroup = ''
 )
@@ -464,6 +464,9 @@ function New-ReadonlyPlanningRetirementSeed([string]$Root,[switch]$Replacement,[
     $ledger=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1') -PassThru
     $seed=@(New-EnvelopeAdmissionPreparedFixture -Root $Root -RepositoryRoot $repository -TransitionLedgerModule $ledger -OwnerProducedPreparation -AdditiveFeature)[-1]
     $planning=[string]$seed.source_repository;$workspace=Join-Path $planning 'morphospace'
+    if($ReadyDescriptor){
+        Invoke-EnvelopeGit $planning @('config','--local','core.autocrlf','false')|Out-Null
+    }
     foreach($entry in @(Get-ChildItem -LiteralPath $seed.workspace -Force)){Copy-Item -LiteralPath $entry.FullName -Destination $workspace -Recurse -Force}
     $preparationIntent=$seed.preparation_intent
     Write-EnvelopeJson (Join-Path $workspace 'project.spec.json') $preparationIntent.pre.project.document;Write-EnvelopeJson (Join-Path $workspace 'workspace.state.json') $preparationIntent.pre.state.document;Write-EnvelopeJson (Join-Path $workspace 'feature.lock.json') $preparationIntent.pre.feature_lock.document;Write-EnvelopeJson (Join-Path $workspace 'iteration-units/u001.json') $preparationIntent.pre.predecessor_unit.document
@@ -504,7 +507,7 @@ function New-ReadonlyPlanningRetirementSeed([string]$Root,[switch]$Replacement,[
         $descriptorRelative=[string]$featureRow.descriptor.path
         $descriptorPath=Join-Path $workspace $descriptorRelative
         [void][IO.Directory]::CreateDirectory((Split-Path $descriptorPath -Parent))
-        [IO.File]::WriteAllBytes($descriptorPath,(ConvertTo-MorphospaceProtocolJsonBytes $descriptor))
+        [IO.File]::WriteAllBytes($descriptorPath,(&$protocolModule {param($value)ConvertTo-MorphospaceProtocolJsonBytes $value} $descriptor))
         $featureRow.descriptor.sha256=Get-EnvelopeFileSha256 $descriptorPath
         $preparationDocument.envelope.feature_lock.lock_fingerprint=Get-EnvelopeLockFingerprint $preparationDocument.envelope.feature_lock
     }
@@ -912,7 +915,6 @@ try{
         Invoke-EnvelopeGit $committed.repository @('commit','-m','authenticated prepare admit ready claim')|Out-Null
         Assert-RetirementTest (@(Invoke-EnvelopeGit $committed.repository @('status','--porcelain=v1','--untracked-files=all')).Count-eq0) 'committed lifecycle fixture is dirty'
         $checkpoint=(@(Invoke-EnvelopeGit $committed.repository @('rev-parse','HEAD'))[0]).Trim()
-        Test-ExtensionPlanningObservation $committed
         $unrelated=Join-Path $committed.repository 'unrelated.txt';[IO.File]::WriteAllText($unrelated,'unrelated')
         $message='';try{Invoke-NestedRetirement $committed u002 u003 '2026-08-25T00:00:43.0000000Z'|Out-Null}catch{$message=$_.Exception.Message}
         Assert-RetirementTest ($message-like'*clean available source*') "dirty committed descendant was accepted: $message"
@@ -955,7 +957,10 @@ try{
         Remove-Item -LiteralPath $unrelated -Force;Invoke-EnvelopeGit $arbitrary.repository @('add','-u',$unrelatedRelative)|Out-Null;Invoke-EnvelopeGit $arbitrary.repository @('commit','-m','revert unrelated descendant')|Out-Null
         $message='';try{Invoke-NestedRetirement $arbitrary u002 u003 '2026-08-25T00:00:43.0000000Z'|Out-Null}catch{$message=$_.Exception.Message}
         Assert-RetirementTest ($message-like'*unauthenticated path*') "reverted arbitrary committed descendant was accepted: $message"
-        $extensionSeed=@(New-RetirementNestedPlanningProjection $descriptorSeed $temp 'nested-root-extension')[-1]
+    }
+    if($runNestedCommitted-or$Scenario-ceq'NestedExtension'){
+        $extensionOrigin=if($runNestedCommitted){$descriptorSeed}else{@(New-ReadonlyPlanningRetirementSeed (Join-Path $temp 'ready-descriptor-seed') -ReadyDescriptor)[-1]}
+        $extensionSeed=@(New-RetirementNestedPlanningProjection $extensionOrigin $temp 'nested-root-extension')[-1]
         Invoke-EnvelopeGit $extensionSeed.repository @('add','-f','morphospace')|Out-Null
         Invoke-EnvelopeGit $extensionSeed.repository @('commit','-m','authenticated claim for root extension')|Out-Null
         Test-ExtensionPlanningObservation $extensionSeed -ExerciseReplay
@@ -1162,6 +1167,7 @@ try{
     $checkName=switch($Scenario){
         'NestedPositive' {'active-unit-retirement-nested-positive'}
         'NestedCommitted' {'active-unit-retirement-nested-committed'}
+        'NestedExtension' {'active-unit-retirement-nested-extension'}
         'NestedMapGuards' {'active-unit-retirement-nested-map-guards'}
         'AmendmentRecovery' {'active-unit-retirement-amendment-recovery'}
         'NestedRecovery' {'active-unit-retirement-nested-recovery'}
