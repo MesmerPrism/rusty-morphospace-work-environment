@@ -654,6 +654,61 @@ function Read-ActiveRetirementCommittedBytes([string]$Repository,[string]$Head,[
     if($bytes.LongLength-ne[long]$size){throw 'Committed planning snapshot blob size changed.'}
     return ,$bytes
 }
+function Test-ActiveRetirementCommittedReadyDescriptor {
+    param([string]$Repository,[string]$RepositoryId,[string]$WorkspacePrefix,[string]$LockedCommit,[string]$ObservedHead,
+        [string]$Parent,[string]$Commit,[string]$Path,[object]$PreparationIntent,[object]$Admitted,[object]$ReadyProof)
+    $lock=$PreparationIntent.target.feature_lock.document
+    if([string]$lock.schema-cne'rusty.morphospace.workflow.feature_lock.v2'){return $false}
+    $rows=@($lock.features|Where-Object{$_.selected-eq$true-and$Path-ceq($WorkspacePrefix+[string]$_.descriptor.path)})
+    if($rows.Count-ne1){return $false}
+    $row=$rows[0];$pin=$row.descriptor
+    if([string]$pin.path-cnotmatch'^features/[a-z0-9][a-z0-9-]*\.json$'-or[string]$pin.source_repo-cne$RepositoryId-or
+        [string]$pin.source_revision-cne$LockedCommit){return $false}
+    $admittedUnit=$Admitted.target.unit.document
+    $ready=$ReadyProof.intent
+    $dependencies=@($admittedUnit.read_only_dependencies|Where-Object{[string]$_.repo_id-ceq$RepositoryId-and@($_.paths)-ccontains$Path})
+    if($dependencies.Count-ne1-or@($admittedUnit.allowed_repositories|Where-Object{[string]$_.repo_id-ceq$RepositoryId}).Count-ne0){return $false}
+    if([string]$Ready.event.event_type-cne'state-transition'-or@($Ready.event.receipts).Count-ne0-or@($Ready.artifacts).Count-ne0-or
+        [string]$Ready.expected.event_tail_id-cne[string]$Admitted.event.event_id-or
+        [string]$Ready.pre.unit.sha256-cne[string]$Admitted.target.unit.sha256-or[string]$Ready.pre.state.sha256-cne[string]$Admitted.target.state.sha256-or
+        [string]$Ready.target.unit.document.status-cne'ready'-or$null-ne$Ready.target.state.document.current_unit-or
+        [string]$Ready.target.state.document.next_ready_unit-cne[string]$admittedUnit.unit_id){return $false}
+    $expectedUnit=Copy-ActiveRetirementValue $admittedUnit
+    $expectedUnit.status='ready'
+    if((Get-MorphospaceCanonicalJsonSha256 $expectedUnit)-cne[string]$Ready.target.unit.sha256){return $false}
+
+    # The descriptor and the original Ready proof must be new regular files
+    # in the same commit. A later edit cannot borrow Ready's authority.
+    $readyIntentPath=$WorkspacePrefix+"receipts/transactions/$($Ready.transaction_id).intent.json"
+    $readyCompletionPath=$WorkspacePrefix+"receipts/transactions/$($Ready.transaction_id).completion.json"
+    foreach($addition in @($Path,$readyIntentPath,$readyCompletionPath)){
+        $diff=@(&git -C $Repository --literal-pathspecs diff --name-status --no-renames $Parent $Commit -- $addition 2>&1)
+        if($LASTEXITCODE-ne0-or$diff.Count-ne1-or[string]$diff[0]-cne("A`t"+$addition)){return $false}
+        $entry=@(&git -C $Repository --literal-pathspecs ls-tree $Commit -- $addition 2>&1)
+        if($LASTEXITCODE-ne0-or$entry.Count-ne1-or[string]$entry[0]-cnotmatch'^100644 blob [0-9a-f]{40}\t'){return $false}
+    }
+    if((Get-MorphospaceSha256Bytes (Read-ActiveRetirementCommittedBytes $Repository $Commit $readyCompletionPath))-cne(Get-ActiveRetirementCanonicalRawSha256 $ReadyProof.completion)-or
+        (Get-MorphospaceSha256Bytes (Read-ActiveRetirementCommittedBytes $Repository $Commit $readyIntentPath))-cne(Get-ActiveRetirementCanonicalRawSha256 $Ready)-or
+        (Get-MorphospaceSha256Bytes (Read-ActiveRetirementCommittedBytes $Repository $Parent ($WorkspacePrefix+'feature.lock.json')))-cne(Get-ActiveRetirementCanonicalRawSha256 $lock)-or
+        (Get-MorphospaceSha256Bytes (Read-ActiveRetirementCommittedBytes $Repository $Commit ($WorkspacePrefix+[string]$Ready.state.path)))-cne(Get-ActiveRetirementCanonicalRawSha256 $Ready.target.state.document)-or
+        (Get-MorphospaceSha256Bytes (Read-ActiveRetirementCommittedBytes $Repository $Commit ($WorkspacePrefix+[string]$Ready.unit.path)))-cne(Get-ActiveRetirementCanonicalRawSha256 $Ready.target.unit.document)-or
+        (Get-MorphospaceSha256Bytes (Read-ActiveRetirementCommittedBytes $Repository $LockedCommit ([string]$pin.source_path)))-cne[string]$pin.source_sha256){return $false}
+    $eventsPath=$WorkspacePrefix+'iteration-events.jsonl'
+    [byte[]]$preEvents=Read-ActiveRetirementCommittedBytes $Repository $Parent $eventsPath
+    if($preEvents.LongLength-ne[long]$Ready.expected.events_length-or(Get-MorphospaceSha256Bytes $preEvents)-cne[string]$Ready.expected.events_sha256){return $false}
+    $ledger=Get-Module MorphospaceTransitionLedger -All|Where-Object{[IO.Path]::GetFullPath([string]$_.Path)-ceq$script:ActiveRetirementTransitionLedgerPath}|Select-Object -First 1
+    [byte[]]$eventLine=&$ledger {param($event) Get-MorphospaceLedgerEventLineBytes $event} $Ready.event
+    if((Get-MorphospaceSha256Bytes (Read-ActiveRetirementCommittedBytes $Repository $Commit $eventsPath))-cne(Get-MorphospaceSha256Bytes ([byte[]]($preEvents+$eventLine)))){return $false}
+    $bytes=Read-ActiveRetirementCommittedBytes $Repository $Commit $Path
+    if((Get-MorphospaceSha256Bytes $bytes)-cne[string]$pin.sha256-or
+        (Get-MorphospaceSha256Bytes (Read-ActiveRetirementCommittedBytes $Repository $ObservedHead $Path))-cne[string]$pin.sha256){return $false}
+    $descriptor=ConvertFrom-MorphospaceProtocolJsonBytes $bytes
+    Assert-ActiveRetirementSchema $descriptor 'feature-descriptor.schema.json'
+    return [string]$descriptor.feature_id-ceq[string]$row.feature_id-and[string]$descriptor.module_id-ceq[string]$row.module_id-and
+        [string]$descriptor.source.repo_id-ceq$RepositoryId-and[string]$descriptor.source.revision-ceq$LockedCommit-and
+        [string]$descriptor.source.path-ceq[string]$pin.source_path-and[string]$descriptor.source.sha256-ceq[string]$pin.source_sha256
+}
+
 function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
     param([string]$Workspace,[object]$Unit,[object]$RepositoryEntry,[string[]]$StatusPorcelain,[Parameter(Mandatory)][object]$Admission,[object]$RecoveryIntent=$null,[string]$LockedCommit='',[string]$ObservedHead='',[object]$Request=$null,[switch]$CommittedSnapshot)
     if([string]$RepositoryEntry.role-cne'planning'){return $false}
@@ -709,9 +764,12 @@ function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
     foreach($name in @('project','state','feature_lock')){$projection=$preparationIntent.target.$name;Set-PlanningProjection ([string]$projection.path) (Get-ActiveRetirementCanonicalRawSha256 $projection.document)}
     foreach($artifact in @($preparationIntent.artifacts)){$artifactBytes=[Convert]::FromBase64String([string]$artifact.bytes_base64);Set-PlanningProjection ([string]$artifact.path) (Get-MorphospaceSha256Bytes $artifactBytes)}
     Set-PlanningProjection $preparationIntentRelative (Get-MorphospaceFileSha256 $preparationIntentPath);Set-PlanningProjection $preparationCompletionRelative (Get-MorphospaceFileSha256 $preparationCompletionPath)
+    $admittedIntent=$null;$readyProof=$null
     foreach($event in @($projectionSuffix|Select-Object -Skip 1)){
         $transactionId="$([string]$event.event_id)-transition";$proof=Get-ActiveRetirementPlanningTransition -Workspace $workspaceFull -TransactionId $transactionId -HistoricalProjection:($null-ne$RecoveryIntent-or$CommittedSnapshot)
         if((Get-MorphospaceCanonicalJsonSha256 $proof.intent.event)-cne(Get-MorphospaceCanonicalJsonSha256 $event)){throw 'Active retirement planning lifecycle event is detached from its transaction.'}
+        if($direct-and[string]$event.event_id-ceq$admittedId){$admittedIntent=$proof.intent}
+        if($direct-and[string]$event.event_id-ceq[string]$suffix[2].event_id){$readyProof=$proof}
         if([int]$event.sequence-gt$to){
             $artifactSchemas=@($proof.intent.artifacts|ForEach-Object{[string](ConvertFrom-MorphospaceProtocolJsonBytes ([Convert]::FromBase64String([string]$_.bytes_base64))).schema})
             if($artifactSchemas-ccontains'rusty.morphospace.workflow.active_development_envelope_extension.v1'){
@@ -756,6 +814,7 @@ function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
         $staged=@(& git -C $repository diff --cached --name-only --no-renames -- 2>&1);if($LASTEXITCODE-ne0-or$staged.Count-ne0){throw 'Active retirement committed planning descendant must remain clean.'}
         foreach($path in @($expected.Keys)){$live=Join-Path $repository $path;$sha=if($CommittedSnapshot-and-not$auxiliaryProofs.Contains($path)){Get-MorphospaceSha256Bytes (Read-ActiveRetirementCommittedBytes $repository $ObservedHead $path)}elseif([IO.File]::Exists($live)){Get-MorphospaceFileSha256 $live}else{''};if($sha-cne[string]$expected[$path]){throw "Active retirement committed planning projection is damaged: $path"}}
         $changed=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $readyDescriptors=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         $cursor=$ObservedHead
         while($cursor-cne$LockedCommit){
             $line=(@(& git -C $repository rev-list --parents -n 1 $cursor 2>&1)-join'').Trim()
@@ -763,12 +822,24 @@ function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
             $parent=$line.Substring(41)
             $paths=@(& git -C $repository diff --name-only --no-renames $parent $cursor -- 2>&1)
             if($LASTEXITCODE-ne0){throw 'Active retirement committed planning descendant diff failed.'}
-            foreach($path in $paths){$relative=([string]$path).Replace('\','/');if(-not$expected.ContainsKey($relative)){throw "Active retirement committed planning descendant changes unauthenticated path: $relative"};[void]$changed.Add($relative)}
+            foreach($path in $paths){
+                $relative=([string]$path).Replace('\','/')
+                if(-not$expected.ContainsKey($relative)){
+                    if(-not$direct-or$readyDescriptors.Contains($relative)-or-not(Test-ActiveRetirementCommittedReadyDescriptor -Repository $repository -RepositoryId ([string]$RepositoryEntry.repo_id) -WorkspacePrefix $workspacePrefix -LockedCommit $LockedCommit -ObservedHead $ObservedHead -Parent $parent -Commit $cursor -Path $relative -PreparationIntent $preparationIntent -Admitted $admittedIntent -ReadyProof $readyProof)){
+                        throw "Active retirement committed planning descendant changes unauthenticated path: $relative"
+                    }
+                    [void]$readyDescriptors.Add($relative)
+                }
+                [void]$changed.Add($relative)
+            }
             $cursor=$parent
         }
         $final=@(& git -C $repository diff --name-only --no-renames $LockedCommit $ObservedHead -- 2>&1)
         if($LASTEXITCODE-ne0){throw 'Active retirement committed planning descendant final diff failed.'}
-        foreach($path in $final){if(-not$expected.ContainsKey(([string]$path).Replace('\','/'))){throw 'Active retirement committed planning descendant final projection is unauthenticated.'}}
+        foreach($path in $final){
+            $relative=([string]$path).Replace('\','/')
+            if(-not$expected.ContainsKey($relative)-and-not$readyDescriptors.Contains($relative)){throw 'Active retirement committed planning descendant final projection is unauthenticated.'}
+        }
         if($changed.Count-eq0){throw 'Active retirement committed planning descendant contains no lifecycle projection.'}
         return $true
     }
