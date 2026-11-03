@@ -109,6 +109,15 @@ binds the current effective map and the proposed effective map by relative path
 and raw SHA-256. The derivative source artifact binds the same identities.
 Recovery rechecks the maps before any transaction write.
 
+For a roots-only extension, a read-only planning row may describe the exact
+Git root that contains the active workspace. A clean checkout may be ahead of
+its locked revision through the authenticated lifecycle of the same unit.
+The extension verifies the committed preimage and lifecycle before retaining
+the original planning source identity and recording the newer commit and tree
+as an observation. Historical verification checks the captured commit and
+ledger prefix. Pending recovery requires the captured checkout identity and
+allows only exact transaction-owned changes.
+
 ## Adopted external planning destination
 
 The optional `planning_authority_relocation` binding selects one existing
