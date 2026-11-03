@@ -459,7 +459,7 @@ function New-RetirementNestedPlanningProjection([object]$Seed,[string]$Root,[str
     $mapPath=Join-Path $workspace 'repository-map.json';$map=Read-EnvelopeProtocolJson $mapPath
     [pscustomobject]@{repository=$planning;workspace=$workspace;map=$map;map_path=$mapPath}
 }
-function New-ReadonlyPlanningRetirementSeed([string]$Root,[switch]$Replacement,[switch]$NestedReadOnlySource){
+function New-ReadonlyPlanningRetirementSeed([string]$Root,[switch]$Replacement,[switch]$NestedReadOnlySource,[switch]$ReadyDescriptor){
     $protocolModule=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceProtocolCommon.psm1') -PassThru
     $ledger=Import-Module (Join-Path $PSScriptRoot 'lib/MorphospaceTransitionLedger.psm1') -PassThru
     $seed=@(New-EnvelopeAdmissionPreparedFixture -Root $Root -RepositoryRoot $repository -TransitionLedgerModule $ledger -OwnerProducedPreparation -AdditiveFeature)[-1]
@@ -478,6 +478,12 @@ function New-ReadonlyPlanningRetirementSeed([string]$Root,[switch]$Replacement,[
         $map.repositories+=,[pscustomobject][ordered]@{repo_id='nested-read-only-source';path=$nestedSource;role='source'}
     }
     Write-EnvelopeJson (Join-Path $workspace 'repository-map.json') $map
+    if($ReadyDescriptor){
+        # The lock binds the original Git blob, so keep the source bytes stable
+        # on hosts that normalize line endings when staging.
+        $sourcePath=Join-Path $workspace 'README.md'
+        [IO.File]::WriteAllText($sourcePath,"source fixture`n",[Text.UTF8Encoding]::new($false))
+    }
     Invoke-EnvelopeGit $planning @('add','-f','morphospace')|Out-Null;Invoke-EnvelopeGit $planning @('commit','-m','accepted planning baseline')|Out-Null
     $baselineStatus=@(Invoke-EnvelopeGit $planning @('status','--porcelain=v1','--untracked-files=all'));if($baselineStatus.Count-ne0){throw "Nested accepted baseline commit is dirty: $($baselineStatus-join', ')"}
     $lockedHead=(@(Invoke-EnvelopeGit $planning @('rev-parse','HEAD'))[0]).Trim().ToLowerInvariant()
@@ -488,6 +494,20 @@ function New-ReadonlyPlanningRetirementSeed([string]$Root,[switch]$Replacement,[
         $preparationDocument.envelope.source_composition.repository_ids+=,'nested-read-only-source'
     }
     @($preparationDocument.envelope.feature_lock.features)[0].descriptor.source_revision=$lockedHead;$preparationDocument.envelope.feature_lock.lock_fingerprint=Get-EnvelopeLockFingerprint $preparationDocument.envelope.feature_lock
+    if($ReadyDescriptor){
+        $featureRow=$preparationDocument.envelope.feature_lock.features[0]
+        $featureRow.version='1.0.0'
+        $featureRow.descriptor.source_sha256=Get-EnvelopeFileSha256 (Join-Path $planning ([string]$featureRow.descriptor.source_path))
+        $descriptor=[ordered]@{schema='rusty.morphospace.workflow.feature_descriptor.v1'}
+        foreach($name in @('feature_id','module_id','version','owner_lane','dependencies','conflicts','exclusive_group','effects','parameter_authorities','activation','validation_profile','rollback_profile')){$descriptor[$name]=$featureRow.$name}
+        $descriptor.source=[ordered]@{repo_id='project-shell';revision=$lockedHead;path=$featureRow.descriptor.source_path;sha256=$featureRow.descriptor.source_sha256}
+        $descriptorRelative=[string]$featureRow.descriptor.path
+        $descriptorPath=Join-Path $workspace $descriptorRelative
+        [void][IO.Directory]::CreateDirectory((Split-Path $descriptorPath -Parent))
+        [IO.File]::WriteAllBytes($descriptorPath,(ConvertTo-MorphospaceProtocolJsonBytes $descriptor))
+        $featureRow.descriptor.sha256=Get-EnvelopeFileSha256 $descriptorPath
+        $preparationDocument.envelope.feature_lock.lock_fingerprint=Get-EnvelopeLockFingerprint $preparationDocument.envelope.feature_lock
+    }
     $preparationDocument.expected.project_sha256=Get-EnvelopeCanonicalJsonSha256 $preProject;$preparationDocument.expected.state_sha256=Get-EnvelopeCanonicalJsonSha256 $preState;$preparationDocument.expected.feature_lock_sha256=Get-EnvelopeCanonicalJsonSha256 $preFeature;$preparationDocument.expected.repository_map_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace 'repository-map.json');$preparationDocument.expected.predecessor_unit_sha256=Get-EnvelopeCanonicalJsonSha256 (Read-EnvelopeProtocolJson (Join-Path $workspace 'iteration-units/u001.json'));$preparationDocument.expected.events_sha256=Get-EnvelopeFileSha256 $eventsPath;$preparationDocument.expected.events_length=([IO.FileInfo]$eventsPath).Length;$preparationDocument.expected.event_tail_id=[string]$preState.last_event_id
     $preparationPath=Join-Path $Root 'nested-preparation.json';Write-EnvelopeJson $preparationPath $preparationDocument
     $null=Invoke-MorphospacePrepareDevelopmentEnvelope -WorkspaceRoot $workspace -DevelopmentEnvelopePreparation $preparationPath -ExpectedDevelopmentEnvelopePreparationSha256 (Get-EnvelopeFileSha256 $preparationPath) -OutPath (Join-Path $workspace 'receipts/u002-envelope.json') -Timestamp '2026-08-25T00:00:30.0000000Z' -Execute
@@ -496,6 +516,7 @@ function New-ReadonlyPlanningRetirementSeed([string]$Root,[switch]$Replacement,[
     $admission.expected.project_sha256=Get-EnvelopeCanonicalJsonSha256 $project;$admission.expected.state_sha256=Get-EnvelopeCanonicalJsonSha256 $state;$admission.expected.feature_lock_sha256=Get-EnvelopeCanonicalJsonSha256 $feature;$admission.expected.source_composition_sha256=Get-EnvelopeFileSha256 $sourcePath;$admission.expected.repository_map_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace 'repository-map.json');$admission.expected.events_sha256=Get-EnvelopeFileSha256 $eventsPath;$admission.expected.events_length=([IO.FileInfo]$eventsPath).Length;$admission.expected.event_tail_id=[string]$state.last_event_id
     $admission.unit.allowed_repositories=@([pscustomobject]@{repo_id='read-only-dependency';allowed_paths=@('dependency/')})
     $admission.unit.read_only_dependencies=@([pscustomobject][ordered]@{repo_id='project-shell';paths=@('morphospace/');purpose='Nested planning authority.';verification='Exact preparation lock and authenticated lifecycle projection.'})
+    if($ReadyDescriptor){$admission.unit.read_only_dependencies[0].paths=@('morphospace/'+$descriptorRelative)}
     if($NestedReadOnlySource){
         $ownerRow=[pscustomobject][ordered]@{repo_id='nested-read-only-source';source_roots=@('SKILL.md')}
         $admission.agent_scope_assessment.owner_repositories+=,$ownerRow;$admission.unit.agent_scope_assessment.owner_repositories+=,(Copy-Envelope $ownerRow)
@@ -511,7 +532,17 @@ function New-ReadonlyPlanningRetirementSeed([string]$Root,[switch]$Replacement,[
         $admission=New-EnvelopeReplacementAdmission $admission $workspace u003-admission u003;$admissionPath=Join-Path $Root 'u003-readonly-planning-admission.json';Write-EnvelopeJson $admissionPath $admission
         $null=&$automation -Action AdmitDevelopmentUnit -WorkspaceRoot $workspace -DevelopmentUnitAdmission $admissionPath -ExpectedDevelopmentUnitAdmissionSha256 (Get-EnvelopeFileSha256 $admissionPath) -OutPath (Join-Path $workspace 'receipts/u003-admission.json') -Timestamp '2026-08-25T00:00:42.0000000Z' -Execute;$unitId='u003';$ready='2026-08-25T00:00:43.0000000Z';$claim='2026-08-25T00:00:44.0000000Z'
     }else{$unitId='u002';$ready='2026-08-25T00:00:41.0000000Z';$claim='2026-08-25T00:00:42.0000000Z'}
-    $lifecycle=@{WorkspaceRoot=$workspace;UnitId=$unitId;RepoMapPath=(Join-Path $workspace 'repository-map.json');ValidationTier='quick'};$null=&$automation @lifecycle -Action Ready -Timestamp $ready -Execute;$null=&$automation @lifecycle -Action Claim -Timestamp $claim -Execute
+    $lifecycle=@{WorkspaceRoot=$workspace;UnitId=$unitId;RepoMapPath=(Join-Path $workspace 'repository-map.json');ValidationTier='quick'}
+    if($ReadyDescriptor){
+        Invoke-EnvelopeGit $planning @('add','-f','morphospace','--',":(exclude)morphospace/$descriptorRelative")|Out-Null
+        Invoke-EnvelopeGit $planning @('commit','-m','authenticated prepare and admit')|Out-Null
+    }
+    $null=&$automation @lifecycle -Action Ready -Timestamp $ready -Execute
+    if($ReadyDescriptor){
+        Invoke-EnvelopeGit $planning @('add','-f','morphospace')|Out-Null
+        Invoke-EnvelopeGit $planning @('commit','-m','authenticated ready and selected descriptor')|Out-Null
+    }
+    $null=&$automation @lifecycle -Action Claim -Timestamp $claim -Execute
     $baselineLeak=@(Invoke-EnvelopeGit $planning @('status','--porcelain=v1','--untracked-files=all')|Where-Object{[string]$_-match'u001|repository-map'});if($baselineLeak.Count-ne0){throw "Nested lifecycle dirt leaked baseline paths: $($baselineLeak-join', ')"}
     $seed.workspace=$workspace
     $snapshot=Join-Path $Root 'retirement-planning-snapshot';if([IO.Directory]::Exists($snapshot)){throw 'Retirement fixture immutable planning snapshot already exists.'};Copy-Item -LiteralPath $planning -Destination $snapshot -Recurse -Force
@@ -803,7 +834,8 @@ try{
             $message='';try{&$retirementModule {param($event)Assert-ActiveRetirementPlanningContinuationEvents -Events @($event) -AfterSequence 5 -UnitId u002} $bad}catch{$message=$_.Exception.Message}
             Assert-RetirementTest ($message-like'*same-unit authenticated transition suffix*') "unowned planning continuation shape was accepted: $message"
         }
-        $committed=@(New-RetirementNestedPlanningProjection $readonlySeed $temp 'nested-committed')[-1]
+        $descriptorSeed=@(New-ReadonlyPlanningRetirementSeed (Join-Path $temp 'ready-descriptor-seed') -ReadyDescriptor)[-1]
+        $committed=@(New-RetirementNestedPlanningProjection $descriptorSeed $temp 'nested-committed')[-1]
         Invoke-EnvelopeGit $committed.repository @('add','-f','morphospace')|Out-Null
         Invoke-EnvelopeGit $committed.repository @('commit','-m','authenticated prepare admit ready claim')|Out-Null
         Assert-RetirementTest (@(Invoke-EnvelopeGit $committed.repository @('status','--porcelain=v1','--untracked-files=all')).Count-eq0) 'committed lifecycle fixture is dirty'
@@ -818,14 +850,34 @@ try{
         Invoke-EnvelopeGit $committed.repository @('reset','--','unrelated.txt')|Out-Null;Remove-Item -LiteralPath $unrelated -Force
         $dry=Invoke-NestedRetirement $committed u002 u003 '2026-08-25T00:00:43.0000000Z'
         Assert-RetirementTest (-not$dry.executed) 'clean authenticated committed planning descendant dry run failed'
+        $descriptorPath=Join-Path $committed.workspace 'features/fixture-observation.json'
+        $descriptorHash=Get-EnvelopeFileSha256 $descriptorPath
         $done=Invoke-NestedRetirement $committed u002 u003 '2026-08-25T00:00:43.0000000Z' -Execute
         Assert-RetirementTest ($done.executed-and(@(Invoke-EnvelopeGit $committed.repository @('rev-parse','HEAD'))[0]).Trim()-ceq$checkpoint) 'committed planning descendant retirement did not preserve HEAD'
+        Assert-RetirementTest ((Get-EnvelopeFileSha256 $descriptorPath)-ceq$descriptorHash) 'retirement changed the original Ready descriptor bytes'
+        $changedDescriptor=@(New-RetirementNestedPlanningProjection $descriptorSeed $temp 'nested-changed-descriptor')[-1]
+        Invoke-EnvelopeGit $changedDescriptor.repository @('add','-f','morphospace')|Out-Null
+        Invoke-EnvelopeGit $changedDescriptor.repository @('commit','-m','authenticated claim')|Out-Null
+        $descriptorPath=Join-Path $changedDescriptor.workspace 'features/fixture-observation.json'
+        $originalDescriptor=[IO.File]::ReadAllBytes($descriptorPath)
+        [IO.File]::AppendAllText($descriptorPath,"`n")
+        Invoke-EnvelopeGit $changedDescriptor.repository @('add','-u','morphospace')|Out-Null
+        Invoke-EnvelopeGit $changedDescriptor.repository @('commit','-m','changed selected descriptor')|Out-Null
+        $message='';try{Invoke-NestedRetirement $changedDescriptor u002 u003 '2026-08-25T00:00:43.0000000Z'|Out-Null}catch{$message=$_.Exception.Message}
+        Assert-RetirementTest ($message-like'*unauthenticated path*morphospace/features/fixture-observation.json*') "changed Ready descriptor was accepted: $message"
+        [IO.File]::WriteAllBytes($descriptorPath,$originalDescriptor)
+        Invoke-EnvelopeGit $changedDescriptor.repository @('add','-u','morphospace')|Out-Null
+        Invoke-EnvelopeGit $changedDescriptor.repository @('commit','-m','restore changed selected descriptor')|Out-Null
+        $message='';try{Invoke-NestedRetirement $changedDescriptor u002 u003 '2026-08-25T00:00:43.0000000Z'|Out-Null}catch{$message=$_.Exception.Message}
+        Assert-RetirementTest ($message-like'*unauthenticated path*morphospace/features/fixture-observation.json*') "reverted Ready descriptor edit was accepted: $message"
         $arbitrary=@(New-RetirementNestedPlanningProjection $readonlySeed $temp 'nested-arbitrary')[-1]
         Invoke-EnvelopeGit $arbitrary.repository @('add','-f','morphospace')|Out-Null;Invoke-EnvelopeGit $arbitrary.repository @('commit','-m','authenticated prepare admit ready claim')|Out-Null
-        $unrelated=Join-Path $arbitrary.repository 'unrelated.txt';[IO.File]::WriteAllText($unrelated,'unrelated');Invoke-EnvelopeGit $arbitrary.repository @('add','unrelated.txt')|Out-Null;Invoke-EnvelopeGit $arbitrary.repository @('commit','-m','unrelated descendant')|Out-Null
+        $unrelatedRelative='morphospace/features/unrelated.json'
+        $unrelated=Join-Path $arbitrary.repository $unrelatedRelative;[void][IO.Directory]::CreateDirectory((Split-Path $unrelated -Parent))
+        [IO.File]::WriteAllBytes($unrelated,$originalDescriptor);Invoke-EnvelopeGit $arbitrary.repository @('add','-f',$unrelatedRelative)|Out-Null;Invoke-EnvelopeGit $arbitrary.repository @('commit','-m','unrelated descendant')|Out-Null
         $message='';try{Invoke-NestedRetirement $arbitrary u002 u003 '2026-08-25T00:00:43.0000000Z'|Out-Null}catch{$message=$_.Exception.Message}
         Assert-RetirementTest ($message-like'*unauthenticated path*') "arbitrary committed descendant was accepted: $message"
-        Remove-Item -LiteralPath $unrelated -Force;Invoke-EnvelopeGit $arbitrary.repository @('add','-u','unrelated.txt')|Out-Null;Invoke-EnvelopeGit $arbitrary.repository @('commit','-m','revert unrelated descendant')|Out-Null
+        Remove-Item -LiteralPath $unrelated -Force;Invoke-EnvelopeGit $arbitrary.repository @('add','-u',$unrelatedRelative)|Out-Null;Invoke-EnvelopeGit $arbitrary.repository @('commit','-m','revert unrelated descendant')|Out-Null
         $message='';try{Invoke-NestedRetirement $arbitrary u002 u003 '2026-08-25T00:00:43.0000000Z'|Out-Null}catch{$message=$_.Exception.Message}
         Assert-RetirementTest ($message-like'*unauthenticated path*') "reverted arbitrary committed descendant was accepted: $message"
     }
