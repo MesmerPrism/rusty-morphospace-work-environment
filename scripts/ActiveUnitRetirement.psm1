@@ -709,7 +709,7 @@ function Test-ActiveRetirementCommittedReadyDescriptor {
 }
 
 function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
-    param([string]$Workspace,[object]$Unit,[object]$RepositoryEntry,[string[]]$StatusPorcelain,[Parameter(Mandatory)][object]$Admission,[object]$RecoveryIntent=$null,[string]$LockedCommit='',[string]$ObservedHead='',[object]$Request=$null,[switch]$CommittedSnapshot)
+    param([string]$Workspace,[object]$Unit,[object]$RepositoryEntry,[string[]]$StatusPorcelain,[Parameter(Mandatory)][object]$Admission,[object]$RecoveryIntent=$null,[string]$LockedCommit='',[string]$ObservedHead='',[object]$Request=$null,[switch]$CommittedSnapshot,[switch]$RequireCommittedAuxiliaryProofs)
     if([string]$RepositoryEntry.role-cne'planning'){return $false}
     $committed=[bool]$LockedCommit
     if($CommittedSnapshot-and(-not$committed-or$RecoveryIntent)){throw 'Committed planning snapshot requires exact committed ancestry without a recovery override.'}
@@ -811,7 +811,7 @@ function Test-ActiveRetirementPlanningProjectionFromAuthenticatedAdmission {
     foreach($binding in @(Get-ActiveRetirementLifecycleDiagnostics $workspaceFull $repository $ObservedHead $Request $events)){Set-PlanningProjection ([string]$binding.path) ([string]$binding.sha256)}
     if($committed){
         $staged=@(& git -C $repository diff --cached --name-only --no-renames -- 2>&1);if($LASTEXITCODE-ne0-or$staged.Count-ne0){throw 'Active retirement committed planning descendant must remain clean.'}
-        foreach($path in @($expected.Keys)){$live=Join-Path $repository $path;$sha=if($CommittedSnapshot-and-not$auxiliaryProofs.Contains($path)){Get-MorphospaceSha256Bytes (Read-ActiveRetirementCommittedBytes $repository $ObservedHead $path)}elseif([IO.File]::Exists($live)){Get-MorphospaceFileSha256 $live}else{''};if($sha-cne[string]$expected[$path]){throw "Active retirement committed planning projection is damaged: $path"}}
+        foreach($path in @($expected.Keys)){$live=Join-Path $repository $path;$sha=if($CommittedSnapshot-and($RequireCommittedAuxiliaryProofs-or-not$auxiliaryProofs.Contains($path))){Get-MorphospaceSha256Bytes (Read-ActiveRetirementCommittedBytes $repository $ObservedHead $path)}elseif([IO.File]::Exists($live)){Get-MorphospaceFileSha256 $live}else{''};if($sha-cne[string]$expected[$path]){throw "Active retirement committed planning projection is damaged: $path"}}
         $changed=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         $readyDescriptors=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         # Other unbound paths retain the ordinary planning refusal.

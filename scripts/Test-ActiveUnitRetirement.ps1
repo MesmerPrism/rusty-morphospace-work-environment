@@ -550,6 +550,78 @@ function New-ReadonlyPlanningRetirementSeed([string]$Root,[switch]$Replacement,[
     $seed|Add-Member -NotePropertyName retirement_snapshot_inventory -NotePropertyValue (Get-RetirementInventory $snapshot) -Force
     return $seed
 }
+function Test-ExtensionPlanningObservation([object]$Projection,[switch]$ExerciseReplay){
+    $workspace=[string]$Projection.workspace
+    $state=Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json')
+    $unit=Read-EnvelopeProtocolJson (Join-Path $workspace "iteration-units/$($state.current_unit).json")
+    $source=Read-EnvelopeProtocolJson (Join-Path $workspace ([string]$unit.source_composition.lock_path))
+    $map=Read-EnvelopeProtocolJson $Projection.map_path
+    $mapRow=@($map.repositories|Where-Object role -CEQ 'planning')[0]
+    $locked=@($source.repositories|Where-Object repo_id -CEQ $mapRow.repo_id)[0]
+    $mapBinding=[pscustomobject]@{path='repository-map.json';raw_sha256=Get-EnvelopeFileSha256 $Projection.map_path}
+    $expected=[ordered]@{repository_map_path=$mapBinding.path;repository_map_raw_sha256=$mapBinding.raw_sha256;event_tail_id=$state.last_event_id;events_length=([IO.FileInfo](Join-Path $workspace 'iteration-events.jsonl')).Length}
+    foreach($pair in @(@('project.spec.json','project_raw_sha256'),@('feature.lock.json','feature_lock_raw_sha256'),@('workspace.state.json','state_raw_sha256'),@('iteration-events.jsonl','events_sha256'),@("iteration-units/$($state.current_unit).json",'unit_raw_sha256'))){
+        $expected[$pair[1]]=Get-EnvelopeFileSha256 (Join-Path $workspace $pair[0])
+    }
+    $request=[pscustomobject]@{unit_id=$state.current_unit;extension_id='fixture-root-extension';effective_repository_map=$mapBinding;additions=[pscustomobject]@{repository_ids=@()};expected=[pscustomobject]$expected}
+    $head=(@(Invoke-EnvelopeGit $Projection.repository @('rev-parse','HEAD'))[0]).Trim()
+    $tree=(@(Invoke-EnvelopeGit $Projection.repository @('rev-parse','HEAD^{tree}'))[0]).Trim()
+    $observation=[pscustomobject]@{head=$head;tree=$tree;dirt=@()}
+    $extension=Import-Module (Join-Path $PSScriptRoot 'ActiveDevelopmentEnvelopeExtension.psm1') -PassThru
+    &$extension {param($w,$r,$m,$c,$o)Assert-ActiveEnvelopeSelfHostedPlanning $w $r $m $c $o} $workspace $request $mapRow ([string]$locked.commit) $observation
+    if(-not$ExerciseReplay){return}
+
+    $project=Read-EnvelopeProtocolJson (Join-Path $workspace 'project.spec.json')
+    $lock=Read-EnvelopeProtocolJson (Join-Path $workspace 'feature.lock.json')
+    $before=[pscustomobject][ordered]@{project=$project;feature_lock=$lock;state=$state;agent_scope_assessment=$unit.agent_scope_assessment;allowed_repositories=@($unit.allowed_repositories);read_only_dependencies=@($unit.read_only_dependencies)}
+    $target=Copy-Envelope $before
+    $target.project.revision++
+    $target.feature_lock.project_revision=$target.project.revision
+    $target.feature_lock.revision++
+    $target.feature_lock.generated_at='2026-08-25T00:00:44.0000000Z'
+    $target.feature_lock.lock_fingerprint=Get-EnvelopeLockFingerprint $target.feature_lock
+    $target.state.plan_revision++
+    $target.state.last_event_id="$($request.extension_id)-recorded"
+    $target.state.module_registry.lock_revision=$target.feature_lock.revision
+    $target.state.module_registry.lock_fingerprint=$target.feature_lock.lock_fingerprint
+    $repo=[string]$unit.allowed_repositories[0].repo_id
+    $newRoot='additional-docs/'
+    ($target.project.repositories|Where-Object repo_id -CEQ $repo).allowed_paths+=,$newRoot
+    ($target.agent_scope_assessment.owner_repositories|Where-Object repo_id -CEQ $repo).source_roots+=,$newRoot
+    ($target.allowed_repositories|Where-Object repo_id -CEQ $repo).allowed_paths+=,$newRoot
+    $effects=[ordered]@{}
+    foreach($axis in $lock.effect_union.PSObject.Properties.Name){$effects[$axis]=@()}
+    $expected.status='active';$expected.current_unit=$unit.unit_id
+    $expected.project_revision=$project.revision;$expected.feature_lock_revision=$lock.revision;$expected.plan_revision=$state.plan_revision
+    $expected.project_sha256=Get-EnvelopeCanonicalJsonSha256 $project;$expected.feature_lock_sha256=Get-EnvelopeCanonicalJsonSha256 $lock
+    $expected.state_sha256=Get-EnvelopeCanonicalJsonSha256 $state;$expected.unit_sha256=Get-EnvelopeCanonicalJsonSha256 $unit
+    $expected.source_composition_path=$unit.source_composition.lock_path
+    $expected.source_composition_raw_sha256=Get-EnvelopeFileSha256 (Join-Path $workspace $expected.source_composition_path)
+    $expected.source_composition_canonical_sha256=Get-EnvelopeCanonicalJsonSha256 $source
+    $expected.original_source_composition_path=$expected.source_composition_path;$expected.original_source_composition_raw_sha256=$expected.source_composition_raw_sha256
+    $expected.original_repository_map_path=$mapBinding.path;$expected.original_repository_map_raw_sha256=$mapBinding.raw_sha256
+    $request=[pscustomobject][ordered]@{
+        schema='rusty.morphospace.workflow.active_development_envelope_extension.v1'
+        extension_id=$request.extension_id;project_id=$state.project_id;unit_id=$unit.unit_id
+        rationale='Extend documentation scope without selecting newer planning source.'
+        ownership_proof=@([pscustomobject][ordered]@{repo_id=$repo;source_roots=@($newRoot);owner=$repo;evidence='The test owner reviewed the added documentation root.'})
+        additions=[pscustomobject][ordered]@{repository_ids=@();owner_roots=@([pscustomobject][ordered]@{repo_id=$repo;source_roots=@($newRoot)});feature_ids=@();module_ids=@();authority_parameters=@();effects=[pscustomobject]$effects;permissions=@();validation_profile_ids=@();acceptance_profile_ids=@();build_profile_ids=@();device_kinds=@()}
+        before=$before;target=$target;expected=[pscustomobject]$expected;effective_repository_map=$mapBinding
+        source_composition=[pscustomobject][ordered]@{path='source-composition-locks/fixture-root-extension.json';repository_ids=@($source.repositories.repo_id)}
+        does_not_prove=@('No validation, acceptance, publication or device authority.')
+    }
+    $inputPath=Join-Path (Split-Path $Projection.repository -Parent) 'fixture-root-extension.json'
+    Write-EnvelopeJson $inputPath $request
+    $arguments=@{WorkspaceRoot=$workspace;UnitId=$unit.unit_id;ActiveDevelopmentEnvelopeExtension=$inputPath;RepositoryMapPath=$Projection.map_path;OutPath=(Join-Path $workspace 'receipts/fixture-root-extension.json');SourceCompositionOutPath=(Join-Path $workspace $request.source_composition.path);ExpectedActiveDevelopmentEnvelopeExtensionSha256=(Get-EnvelopeFileSha256 $inputPath);Timestamp=$target.feature_lock.generated_at}
+    $run=Invoke-MorphospaceExtendActiveDevelopmentEnvelope @arguments -Execute
+    $selected=Read-EnvelopeProtocolJson $arguments.SourceCompositionOutPath
+    $planningRow=@($selected.repositories|Where-Object repo_id -CEQ $mapRow.repo_id)[0]
+    Assert-RetirementTest ($run.executed-and$planningRow.effective_commit-ceq$locked.commit-and$planningRow.current_checkout_observation.head-ceq$head) 'extension changed selected planning identity'
+    Invoke-EnvelopeGit $Projection.repository @('add','-f','morphospace')|Out-Null
+    Invoke-EnvelopeGit $Projection.repository @('commit','-m','checkpoint authenticated root extension')|Out-Null
+    $replay=Invoke-MorphospaceExtendActiveDevelopmentEnvelope @arguments -Execute
+    Assert-RetirementTest ($replay.event_id-ceq$run.event_id-and@(Invoke-EnvelopeGit $Projection.repository @('status','--porcelain=v1','--untracked-files=all')).Count-eq0) 'completed root extension replay changed the checkpoint'
+}
 function Add-ReadonlyPlanningWriteScopeAmendment([object]$Projection,[string]$AmendmentId='u002-add-nested-file'){
     $workspace=[string]$Projection.workspace;$unitId=[string](Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json')).current_unit
     $unit=Read-EnvelopeProtocolJson (Join-Path $workspace "iteration-units/$unitId.json");$project=Read-EnvelopeProtocolJson (Join-Path $workspace 'project.spec.json');$state=Read-EnvelopeProtocolJson (Join-Path $workspace 'workspace.state.json');$eventsPath=Join-Path $workspace 'iteration-events.jsonl'
@@ -840,6 +912,7 @@ try{
         Invoke-EnvelopeGit $committed.repository @('commit','-m','authenticated prepare admit ready claim')|Out-Null
         Assert-RetirementTest (@(Invoke-EnvelopeGit $committed.repository @('status','--porcelain=v1','--untracked-files=all')).Count-eq0) 'committed lifecycle fixture is dirty'
         $checkpoint=(@(Invoke-EnvelopeGit $committed.repository @('rev-parse','HEAD'))[0]).Trim()
+        Test-ExtensionPlanningObservation $committed
         $unrelated=Join-Path $committed.repository 'unrelated.txt';[IO.File]::WriteAllText($unrelated,'unrelated')
         $message='';try{Invoke-NestedRetirement $committed u002 u003 '2026-08-25T00:00:43.0000000Z'|Out-Null}catch{$message=$_.Exception.Message}
         Assert-RetirementTest ($message-like'*clean available source*') "dirty committed descendant was accepted: $message"
@@ -877,9 +950,15 @@ try{
         [IO.File]::WriteAllBytes($unrelated,$originalDescriptor);Invoke-EnvelopeGit $arbitrary.repository @('add','-f',$unrelatedRelative)|Out-Null;Invoke-EnvelopeGit $arbitrary.repository @('commit','-m','unrelated descendant')|Out-Null
         $message='';try{Invoke-NestedRetirement $arbitrary u002 u003 '2026-08-25T00:00:43.0000000Z'|Out-Null}catch{$message=$_.Exception.Message}
         Assert-RetirementTest ($message-like'*unauthenticated path*') "arbitrary committed descendant was accepted: $message"
+        $message='';try{Test-ExtensionPlanningObservation $arbitrary}catch{$message=$_.Exception.Message}
+        Assert-RetirementTest ($message-like'*unauthenticated path*') "extension accepted an unrelated committed path: $message"
         Remove-Item -LiteralPath $unrelated -Force;Invoke-EnvelopeGit $arbitrary.repository @('add','-u',$unrelatedRelative)|Out-Null;Invoke-EnvelopeGit $arbitrary.repository @('commit','-m','revert unrelated descendant')|Out-Null
         $message='';try{Invoke-NestedRetirement $arbitrary u002 u003 '2026-08-25T00:00:43.0000000Z'|Out-Null}catch{$message=$_.Exception.Message}
         Assert-RetirementTest ($message-like'*unauthenticated path*') "reverted arbitrary committed descendant was accepted: $message"
+        $extensionSeed=@(New-RetirementNestedPlanningProjection $descriptorSeed $temp 'nested-root-extension')[-1]
+        Invoke-EnvelopeGit $extensionSeed.repository @('add','-f','morphospace')|Out-Null
+        Invoke-EnvelopeGit $extensionSeed.repository @('commit','-m','authenticated claim for root extension')|Out-Null
+        Test-ExtensionPlanningObservation $extensionSeed -ExerciseReplay
     }
     if($runNestedPositive){
     # Direct and amended nested planning positives, exact replay, caller-module
