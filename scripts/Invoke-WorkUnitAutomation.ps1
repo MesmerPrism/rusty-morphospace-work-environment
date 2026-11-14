@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "ReprepareRetiredDevelopmentEnvelope", "PrepareBlockedSuccessor", "SupersedeActive", "RetireActive", "RecoverPreparationCompletionTimestamp", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "RecoverAdmissionCompletionTimestamp", "RetireProposed", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "ExtendActiveDevelopmentEnvelope", "UpgradeToolingContext", "NarrowValidationOnlyWriteScope", "FreezeCandidate", "RematerializeValidatingCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectInitialValidationProfileClosure", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "RecordHistoricalSupersessionCompatibility", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "RelocateAcceptedValidationEvidence", "PreparePush", "PrepareSourceOnlyPublication", "RecordSourceOnlyPublication", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
+    [ValidateSet("Inspect", "PrepareDevelopmentEnvelope", "ReprepareRetiredDevelopmentEnvelope", "PrepareBlockedSuccessor", "SupersedeActive", "RetireActive", "RecoverPreparationCompletionTimestamp", "ArchiveHistoryCheckpoint", "AdmitDevelopmentUnit", "RecoverAdmissionCompletionTimestamp", "RetireProposed", "Ready", "WithdrawReady", "Claim", "Resume", "CompleteInstructionSurfaces", "AmendActiveWriteScope", "ExtendActiveDevelopmentEnvelope", "UpgradeToolingContext", "NarrowValidationOnlyWriteScope", "FreezeCandidate", "RematerializeValidatingCandidate", "MaterializeInheritedCandidate", "CorrectActiveReadOnlyDependencies", "CorrectActiveProjectRepositoryScope", "CorrectInitialValidationProfileClosure", "CorrectActiveUnitContract", "RecordHistoricalUnitCompatibilityProjection", "RecordHistoricalSupersessionCompatibility", "BeginValidation", "ReturnToActive", "PreflightValidation", "RecordValidation", "Accept", "RelocateAcceptedValidationEvidence", "PreparePush", "PrepareSourceOnlyPublication", "RecordSourceOnlyPublication", "RetireSourceOnlyPublication", "RetirePreparedPush", "ReconcilePreparedPublication", "ReconcilePreparedPushTransactionSuffix", "ResolveBlocker", "CorrectResolvedBlockerEvidence", "CorrectHistoricalBlockerResolutionIntentBinding", "CorrectCompletedTransitionSemantics", "NormalizeEventLedgerPrefix", "RecordPublication", "Recover", "ReconcilePublication", "AdoptPublishedPlanningAuthority", "ReconcilePlanningSuffixRewrite", "ReconcilePublishedPrerequisiteSuffix", "ReconcileExecutedPreparedPublication")]
     [string]$Action,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
     [string]$UnitId = "",
@@ -20,6 +20,8 @@ param(
     [string]$PublicationOrderingInterruption = "",
     [string]$SourceOnlyPublicationPlan = "",
     [string]$ExpectedSourceOnlyPublicationPlanSha256 = "",
+    [string]$SourceOnlyPublicationRetirement = "",
+    [string]$ExpectedSourceOnlyPublicationRetirementSha256 = "",
     [string]$SourceOnlyPublicationExecution = "",
     [string]$ExpectedSourceOnlyPublicationExecutionSha256 = "",
     [string]$PreparedPushRetirement = "",
@@ -128,6 +130,14 @@ if ($Action -eq "RecordSourceOnlyPublication") {
     Import-Module (Join-Path $PSScriptRoot "SourceOnlyPublication.psm1") -Force
     Invoke-MorphospaceRecordSourceOnlyPublication -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId -RepoMapPath $RepoMapPath `
         -SourceOnlyPublicationExecution $SourceOnlyPublicationExecution -ExpectedSourceOnlyPublicationExecutionSha256 $ExpectedSourceOnlyPublicationExecutionSha256 `
+        -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute | ConvertTo-Json -Depth 32
+    return
+}
+if ($Action -eq "RetireSourceOnlyPublication") {
+    if (-not $RepoMapPath -or -not $SourceOnlyPublicationRetirement -or -not $OutPath) { throw "RetireSourceOnlyPublication requires RepoMapPath, SourceOnlyPublicationRetirement, and OutPath." }
+    Import-Module (Join-Path $PSScriptRoot "SourceOnlyPublication.psm1") -Force
+    Invoke-MorphospaceRetireSourceOnlyPublication -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId -RepoMapPath $RepoMapPath `
+        -SourceOnlyPublicationRetirement $SourceOnlyPublicationRetirement -ExpectedSourceOnlyPublicationRetirementSha256 $ExpectedSourceOnlyPublicationRetirementSha256 `
         -Timestamp $Timestamp -OutPath $OutPath -Execute:$Execute | ConvertTo-Json -Depth 32
     return
 }
