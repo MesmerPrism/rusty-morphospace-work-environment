@@ -23,7 +23,7 @@
       "required": ["relative_path", "kind"],
       "properties": {
         "relative_path": { "type": "string", "minLength": 5 },
-        "kind": { "const": "single-base-apk" }
+        "kind": { "enum": ["single-base-apk", "jvm-preflight-result"] }
       }
     },
     "preflight": {

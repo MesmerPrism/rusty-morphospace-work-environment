@@ -400,10 +400,19 @@ Export-ModuleMember -Function Assert-QuestBuildSourceCompositionCurrent
             if($exit-eq13){Assert-True ($invocation.Result.reason_codes-ccontains'child-exit-nonzero') 'Provider drift masked original child failure.'}
             Write-Utf8 $qm 'local Quest iteration'
         }
+        # One actual exit-zero child causes both observed provider drift and a
+        # typed artifact mismatch. Neither independent failure may be masked.
+        $p.artifact.kind='jvm-preflight-result'
+        $p.artifact.relative_path='out/provider-kind-mismatch.json'
+        $p.arguments=@($p.artifact.relative_path,'-ProviderMarker',$qm)
+        $mixed=Invoke-Runner Build (Write-Profile $p) @options -Receipt (Join-Path $profileRoot 'provider-kind-mismatch.receipt.json') -Retained
+        Assert-True ($mixed.ExitCode-eq1-and$mixed.Result.child_process.exit_code-eq0-and$mixed.Result.child_process.process_reaped-and$mixed.Result.child_process.stdout_eof-and$mixed.Result.child_process.stderr_eof-and$mixed.Result.child_process.raw_capture_complete-and$null-eq$mixed.Result.owner_payload.artifact) 'Mixed kind/provider failure lost actual closure or acquired artifact credit.'
+        Assert-True ($mixed.Result.reason_codes-ccontains'artifact-kind-mismatch'-and$mixed.Result.reason_codes-ccontains'source-provider-drift') "Mixed kind/provider failure lost an observed reason: $($mixed.Json)"
+        Write-Utf8 $qm 'local Quest iteration'
         Write-Host 'MODELED provider transport: authenticated local source/external dirt accepted.'
     } finally {
         [IO.File]::WriteAllBytes($manifest,$savedManifest);[IO.File]::WriteAllBytes($qm,$savedQm)
-        foreach($relative in @('out/provider-0.apk','out/provider-13.apk','captured.txt')) {
+        foreach($relative in @('out/provider-0.apk','out/provider-13.apk','out/provider-kind-mismatch.json','captured.txt')) {
             $owned=Join-Path $testRoot $relative
             if(Test-Path -LiteralPath $owned -PathType Leaf){Remove-Item -LiteralPath $owned -Force}
         }
@@ -742,6 +751,92 @@ exit 13
     Assert-True ((Get-PrivacyParentFingerprint)-ceq$privacyParentBefore) 'Privacy orchestration failed exact parent restoration.'
     Assert-True ($privacyComparisons-eq4-and$privacyChildClosures-eq4-and$privacyMismatchClosures-eq2) 'Privacy public runner coverage incomplete.'
     Write-Host 'Synthetic privacy public-runner controls passed: four A/B comparisons, four exact-value retained failures, two receiver-mismatch controls, absence/prohibition, exact parent restoration.'
+
+    # This child only copies a typed host fixture or writes the established
+    # four-byte APK fixture. No compiler, Gradle, Cargo or device work occurs.
+    Write-Utf8 (Join-Path $testRoot 'typed-artifact-child.ps1') @'
+param([string]$Output, [string]$Fixture, [int]$ChildExit = 0)
+$path = Join-Path $PSScriptRoot $Output
+if ($Fixture -eq 'apk') { [IO.File]::WriteAllBytes($path, [byte[]](1, 2, 3, 4)) }
+else { [IO.File]::Copy((Join-Path $PSScriptRoot $Fixture), $path) }
+[Console]::Out.WriteLine('typed-artifact-child:stdout')
+[Console]::Error.WriteLine('typed-artifact-child:stderr')
+exit $ChildExit
+'@
+    $phaseFixture = [ordered]@{
+        schema = 'rusty.quest.spatial_camera_panel.jvm_preflight_result.v1'
+        status = 'phase-complete'; build_stage = 'JvmPreflight'; apk_produced = $false; runtime_authority = $false
+        product_id = 'fixture'; app_id = 'example.fixture'; build_type = 'debug'
+        android_jvm_compilation = [ordered]@{ status = 'passed'; scope = 'jvm-compilation-only'; runtime_authority = $false; inventory_sha256 = ('a' * 64); compiled_sha256 = ('b' * 64); gradle_inputs_sha256 = ('c' * 64) }
+        source_composition = [ordered]@{ path = 'source-composition.json'; sha256 = ('d' * 64); fingerprint = ('e' * 64) }
+        android_components = [ordered]@{
+            inventory = [ordered]@{ path = 'android-components.json'; sha256 = ('a' * 64) }
+            jvm_inputs = [ordered]@{ path = 'android-jvm-inputs.json'; sha256 = ('c' * 64) }
+            jvm_compilation = [ordered]@{ path = 'android-jvm-compilation.json'; sha256 = ('b' * 64) }
+        }
+        build_phase_receipts = [ordered]@{ path = 'build-phase-receipts.json'; sha256 = ('f' * 64) }
+    }
+    Write-Utf8 (Join-Path $testRoot 'phase-fixture.json') ($phaseFixture | ConvertTo-Json -Depth 16)
+    foreach ($flag in @('apk_produced', 'runtime_authority')) {
+        $damagedPhase = $phaseFixture | ConvertTo-Json -Depth 16 | ConvertFrom-Json -AsHashtable
+        $damagedPhase[$flag] = $true
+        Write-Utf8 (Join-Path $testRoot "phase-invalid-$flag.json") ($damagedPhase | ConvertTo-Json -Depth 16)
+    }
+    $typedCases = @(
+        @{ Id = 'apk'; Kind = 'single-base-apk'; Extension = 'apk'; Fixture = 'apk'; Expected = 'passed'; ChildExit = 0 },
+        @{ Id = 'phase'; Kind = 'jvm-preflight-result'; Extension = 'json'; Fixture = 'phase-fixture.json'; Expected = 'passed'; ChildExit = 0 },
+        @{ Id = 'phase-as-apk'; Kind = 'single-base-apk'; Extension = 'apk'; Fixture = 'phase-fixture.json'; Expected = 'failed'; ChildExit = 0 },
+        @{ Id = 'apk-as-phase'; Kind = 'jvm-preflight-result'; Extension = 'json'; Fixture = 'apk'; Expected = 'failed'; ChildExit = 0 },
+        @{ Id = 'phase-apk-claim'; Kind = 'jvm-preflight-result'; Extension = 'json'; Fixture = 'phase-invalid-apk_produced.json'; Expected = 'failed'; ChildExit = 0 },
+        @{ Id = 'phase-runtime-claim'; Kind = 'jvm-preflight-result'; Extension = 'json'; Fixture = 'phase-invalid-runtime_authority.json'; Expected = 'failed'; ChildExit = 0 },
+        @{ Id = 'phase-child-failure'; Kind = 'jvm-preflight-result'; Extension = 'json'; Fixture = 'phase-fixture.json'; Expected = 'failed'; ChildExit = 7 }
+    )
+    $typedExecutions = 0
+    foreach ($retained in @($false, $true)) {
+        foreach ($case in $typedCases) {
+            $id = "$($case.Id)-$retained"
+            $relative = "out/typed-$id.$($case.Extension)"
+            $typedProfile = New-Profile -ArtifactRelativePath $relative -Arguments @($relative, $case.Fixture, [string]$case.ChildExit)
+            $typedProfile.executable = 'typed-artifact-child.ps1'
+            $typedProfile.artifact.kind = $case.Kind
+            $typedRecord = Write-Profile $typedProfile
+            Assert-True (Test-Json -Json ($typedProfile | ConvertTo-Json -Depth 32) -SchemaFile (Join-Path $RepoRoot 'schemas/quest-build-profile-v1.schema.json')) 'Typed profile schema rejected a closed kind.'
+            $typedReceipt = Join-Path $profileRoot "typed-$id.json"
+            $typed = Invoke-Runner Build $typedRecord -Receipt $typedReceipt -Retained:$retained -BuildContextPath $privacySeed.Path -BuildContextSha256 $privacySeed.Sha256
+            $expectedExit = if ($case.Expected -ceq 'passed') { 0 } else { 1 }
+            Assert-True ($typed.ExitCode -eq $expectedExit -and $typed.Result.terminal_status -ceq $case.Expected) "Typed case $id differs: $($typed.Json)"
+            $terminalVersion = if ($retained) { 'v2' } else { 'v1' }
+            Assert-True (Test-Json -Json $typed.Json -SchemaFile (Join-Path $RepoRoot "schemas/quest-build-terminal-result-$terminalVersion.schema.json")) "Typed terminal $id violates schema."
+            Assert-True ((Get-Content -LiteralPath $typedReceipt -Raw | ConvertFrom-Json -Depth 64).terminal_status -ceq $case.Expected) 'Typed terminal publication differs.'
+            Assert-True ($typed.Result.child_process.started -and $typed.Result.child_process.exit_code -eq $case.ChildExit) "Typed child $id did not actually run."
+            if ($retained) {
+                $closure = $typed.Result.child_process
+                Assert-True ($closure.process_reaped -and $closure.stdout_eof -and $closure.stderr_eof -and $closure.raw_capture_complete -and -not $closure.termination_requested -and -not $closure.automatic_retry) "Typed retained child $id lacks reap and dual EOF."
+            }
+            foreach ($stream in @('stdout', 'stderr')) {
+                $capture = $typed.Result.streams.$stream
+                Assert-True ((Get-Sha $capture.path) -ceq $capture.sha256 -and (Get-Content -LiteralPath $capture.path -Raw).Trim() -ceq "typed-artifact-child:$stream") "Typed raw $stream identity differs."
+            }
+            if ($case.Expected -ceq 'passed') {
+                $artifact = $typed.Result.owner_payload.artifact
+                Assert-True ($artifact.kind -ceq $case.Kind -and $artifact.path -ceq (Join-Path $testRoot $relative) -and $artifact.sha256 -ceq (Get-Sha $artifact.path) -and $artifact.size_bytes -eq (Get-Item -LiteralPath $artifact.path).Length) "Typed artifact $id identity differs."
+                if ($case.Kind -ceq 'jvm-preflight-result') { Assert-True ($artifact.sha256 -ceq (Get-Sha (Join-Path $testRoot 'phase-fixture.json'))) 'Phase artifact copy changed bytes.' }
+            } else {
+                $reason = if ($case.ChildExit) { 'child-exit-nonzero' } else { 'artifact-kind-mismatch' }
+                Assert-True ($null -eq $typed.Result.owner_payload.artifact -and $reason -cin $typed.Result.reason_codes) "Typed failure $id acquired artifact credit or lost its reason."
+            }
+            $typedExecutions++
+        }
+    }
+    $unknownKind = New-Profile
+    $unknownKind.artifact.kind = 'arbitrary-result'
+    $unknown = Invoke-Runner Preflight (Write-Profile $unknownKind)
+    Assert-True ($unknown.ExitCode -eq 2 -and -not $unknown.Result.child_process.started) 'Unknown artifact kind dispatched.'
+    $wrongExtension = New-Profile
+    $wrongExtension.artifact.kind = 'jvm-preflight-result'
+    $wrong = Invoke-Runner Preflight (Write-Profile $wrongExtension)
+    Assert-True ($wrong.ExitCode -eq 2 -and -not $wrong.Result.child_process.started) 'Phase artifact accepted an APK path.'
+    Write-Host "Typed artifact runner controls passed: $typedExecutions actual children across bounded/retained modes, exact context/capture, closed kinds, both mismatch directions, phase authority claims and nonzero exit."
 
     Write-Host "Quest build-profile preflight, terminal-result, deterministic identity, zero-side-effect, bounded progress, rename-race, and fault-corpus tests passed."
 } finally {
