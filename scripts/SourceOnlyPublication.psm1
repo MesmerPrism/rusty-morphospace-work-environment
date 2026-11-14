@@ -53,7 +53,7 @@ function Assert-SourceOnlyCleanGitRepository {
 }
 
 function Assert-SourceOnlyPreparedPlanningWorktree {
-    param([string]$PlanningRoot,[string]$Workspace,[string]$PublicationId,[ValidateSet('preparation','recording')][string]$Phase='preparation')
+    param([string]$PlanningRoot,[string]$Workspace,[string]$PublicationId,[ValidateSet('preparation','recording','retirement')][string]$Phase='preparation')
     $workspaceRelative=[IO.Path]::GetRelativePath($PlanningRoot,$Workspace).Replace('\','/').TrimEnd('/')
     if($workspaceRelative-cmatch'(^|/)\.\.(/|$)'){throw 'Source-only workspace is not contained by the planning worktree.'}
     $eventId="$PublicationId-source-publication-prepared";$transactionId="$eventId-transition"
@@ -62,6 +62,10 @@ function Assert-SourceOnlyPreparedPlanningWorktree {
     if($Phase-ceq'recording'){
         $recordEventId="$PublicationId-source-publication-recorded";$recordTransactionId="$recordEventId-transition"
         foreach($path in @("receipts/$PublicationId-execution.json","receipts/transactions/$recordTransactionId.intent.json","receipts/transactions/$recordTransactionId.completion.json","receipts/transactions/$recordTransactionId.artifact-0.pending")){[void]$allowed.Add("$workspaceRelative/$path")}
+    }
+    if($Phase-ceq'retirement'){
+        $retiredId="$PublicationId-source-publication-retired";$retiredTransaction="$retiredId-transition"
+        foreach($path in @("receipts/$PublicationId-retirement.json","receipts/transactions/$retiredTransaction.intent.json","receipts/transactions/$retiredTransaction.completion.json","receipts/transactions/$retiredTransaction.artifact-0.pending")){[void]$allowed.Add("$workspaceRelative/$path")}
     }
     $status=Invoke-SourceOnlyGit $PlanningRoot @('status','--porcelain=v1','--untracked-files=all') 'prepared local-only planning owner status'
     foreach($line in @($status.lines)){if($line.Length-lt4){throw 'Prepared local-only planning owner returned malformed status.'};$path=$line.Substring(3).Replace('\','/');if($path.StartsWith('"')){throw 'Prepared local-only planning owner returned quoted status evidence.'};if(-not$allowed.Contains($path)){throw "Prepared local-only planning owner has unrelated dirty path '$path'."}}
@@ -387,8 +391,8 @@ function Assert-SourceOnlyPreparationIntentSemantics {
 }
 
 function Assert-SourceOnlyRecordingIntentSemantics {
-    param([object]$Context,[object]$Plan,[object]$Execution,[object]$Intent)
-    $publicationId=[string]$Execution.publication_id;$preparedEventId="$publicationId-source-publication-prepared";$eventId="$publicationId-source-publication-recorded"
+    param([object]$Context,[object]$Plan,[object]$Execution,[object]$Intent,[switch]$Retirement)
+    $publicationId=[string]$Execution.publication_id;$preparedEventId="$publicationId-source-publication-prepared";$eventId="$publicationId-source-publication-$(if($Retirement){'retired'}else{'recorded'})"
     $preparedTransaction=Test-SourceOnlyCommittedPredecessorTransition -Context $Context -TransactionId "$preparedEventId-transition" -PendingSuccessorIntent $Intent
     Assert-SourceOnlyPreparationIntentSemantics $Context $Plan $preparedTransaction.intent
     if([string]$Intent.schema-cne'rusty.morphospace.workflow.transition_ledger_intent.v1'-or
@@ -401,10 +405,11 @@ function Assert-SourceOnlyRecordingIntentSemantics {
        [string]$Intent.target.unit.sha256-cne[string]$preparedTransaction.intent.target.unit.sha256){
         throw 'Source-only recording recovery intent does not bind the exact prepared transition and unchanged unit.'
     }
-    $artifactPath="receipts/$publicationId-execution.json";$event=$Intent.event
+    $artifactPath="receipts/$publicationId-$(if($Retirement){'retirement'}else{'execution'}).json";$event=$Intent.event
+    $summary=if($Retirement){'Retired exact unmerged source-only publication; accepted source and known remote effects remain preserved.'}else{'Recorded ordered source publication and remote readback; planning remains local-only.'}
     if([string]$event.event_id-cne$eventId-or[string]$event.project_id-cne[string]$Execution.project_id-or
        [string]$event.unit_id-cne[string]$Execution.trigger_unit_id-or[string]$event.event_type-cne'state-transition'-or
-       [string]$event.summary-cne'Recorded ordered source publication and remote readback; planning remains local-only.'-or
+       [string]$event.summary-cne$summary-or
        @($event.receipts).Count-ne1-or[string]$event.receipts[0]-cne$artifactPath){
         throw 'Source-only recording recovery event differs from the exact source-only transition.'
     }
@@ -418,7 +423,8 @@ function Assert-SourceOnlyRecordingIntentSemantics {
     $reconstructedPre.last_event_id=$preparedEventId
     if((Get-MorphospaceCanonicalJsonSha256 $reconstructedPre)-cne[string]$Intent.pre.state.sha256){throw 'Source-only recording recovery target state contains an unauthorized change.'}
     $preparedAt=[DateTimeOffset]::Parse([string]$preparedTransaction.intent.event.timestamp)
-    $startedAt=[DateTimeOffset]::Parse([string]$Execution.started_at);$finishedAt=[DateTimeOffset]::Parse([string]$Execution.finished_at);$recordedAt=[DateTimeOffset]::Parse([string]$event.timestamp)
+    $startedAt=if($Retirement){[DateTimeOffset]::Parse([string]$Execution.observed_at)}else{[DateTimeOffset]::Parse([string]$Execution.started_at)}
+    $finishedAt=if($Retirement){$startedAt}else{[DateTimeOffset]::Parse([string]$Execution.finished_at)};$recordedAt=[DateTimeOffset]::Parse([string]$event.timestamp)
     if($preparedAt-gt$startedAt-or$finishedAt-gt$recordedAt){throw 'Source-only recording recovery chronology does not follow preparation and execution.'}
 }
 
@@ -434,7 +440,7 @@ function Assert-SourceOnlyPreparationRemotePreimage {
 }
 
 function Assert-SourceOnlyRecoveryPlanningWorktree {
-    param([object]$Context,[object]$Plan,[ValidateSet('preparation','recording')][string]$Phase)
+    param([object]$Context,[object]$Plan,[ValidateSet('preparation','recording','retirement')][string]$Phase)
     $planning=@($Context.map.repositories|Where-Object{[string]$_.role-ceq'planning'-and[string]$_.repo_id-ceq[string]$Plan.planning_owner.repo_id})
     if($planning.Count-ne1){throw 'Source-only recovery planning-owner map binding drifted.'}
     $planningRoot=(Resolve-Path ([string]$planning[0].path)).Path
@@ -654,4 +660,140 @@ function Test-MorphospaceRecordedSourceOnlyPublicationParent {
     return [pscustomobject]@{provenance_kind='recorded-source-only-publication';merge_commit=$commit;merge_tree=$tree;source_reference=[pscustomobject]@{repo_id=[string]$descriptor.repo_id};publication_subject=[pscustomobject]@{repository=$repository};observed=@($observed.GetEnumerator()|Sort-Object Key|ForEach-Object{[pscustomobject]@{path=$_.Key;sha256=$_.Value}})}
 }
 
-Export-ModuleMember -Function Invoke-MorphospacePrepareSourceOnlyPublication,Invoke-MorphospaceRecordSourceOnlyPublication,Test-MorphospaceRecordedSourceOnlyPublicationParent
+. (Join-Path $PSScriptRoot 'SourceOnlyPublicationRetirement.ps1')
+
+function Get-SourceOnlyProviderObservation {
+    param([string]$Path,[string]$RemoteUrl)
+    $full=(Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+    $bytes=[IO.File]::ReadAllBytes($full);$raw=[Text.UTF8Encoding]::new($false,$true).GetString($bytes)|ConvertFrom-Json -Depth 64 -DateKind String
+    if($raw.PSObject.Properties.Name-contains'pull_request'){$raw=$raw.pull_request}
+    $names=@($raw.PSObject.Properties.Name)
+    if(@('number','html_url','state','merged','base','head'|Where-Object{$_-notin$names}).Count-eq0-and$raw.base-isnot[string]-and$raw.head-isnot[string]){
+        foreach($value in @($raw.html_url,$raw.state,$raw.base.repo.full_name,$raw.head.repo.full_name,$raw.base.ref,$raw.base.sha,$raw.head.ref,$raw.head.sha)){if($value-isnot[string]-or[string]::IsNullOrWhiteSpace($value)){throw 'REST provider snapshot identity fields must be nonempty strings.'}}
+        $format='github-rest';$url=[string]$raw.html_url;$repository=[string]$raw.base.repo.full_name;$headRepository=[string]$raw.head.repo.full_name
+        $baseBranch=[string]$raw.base.ref;$baseRevision=[string]$raw.base.sha;$headBranch=[string]$raw.head.ref;$headRevision=[string]$raw.head.sha
+        if([IO.Path]::IsPathRooted($RemoteUrl)-and[string]$raw.base.repo.clone_url-cne$RemoteUrl){throw 'Provider snapshot local fixture remote identity drifted.'}
+    }elseif(@('number','url','state','merged','base','base_sha','head','head_sha','head_repo_full_name'|Where-Object{$_-notin$names}).Count-eq0-and$raw.base-is[string]-and$raw.head-is[string]){
+        foreach($value in @($raw.url,$raw.state,$raw.head_repo_full_name,$raw.base,$raw.base_sha,$raw.head,$raw.head_sha)){if($value-isnot[string]-or[string]::IsNullOrWhiteSpace($value)){throw 'Connector provider snapshot identity fields must be nonempty strings.'}}
+        $format='github-connector';$url=[string]$raw.url;$headRepository=[string]$raw.head_repo_full_name
+        $baseBranch=[string]$raw.base;$baseRevision=[string]$raw.base_sha;$headBranch=[string]$raw.head;$headRevision=[string]$raw.head_sha
+        $repository=''
+    }else{throw 'Provider snapshot is not a supported actual REST or connector pull-request format.'}
+    if($raw.merged-isnot[bool]-or$raw.merged-or[string]$raw.state-cnotin@('open','closed')-or($names-contains'merged_at'-and$null-ne$raw.merged_at)) {throw 'Provider snapshot does not establish an unmerged pull request.'}
+    if(($raw.number-isnot[int]-and$raw.number-isnot[long])-or$raw.number-le0-or$baseRevision-cnotmatch'^[0-9a-f]{40}$'-or$headRevision-cnotmatch'^[0-9a-f]{40}$'-or-not$baseBranch-or-not$headBranch-or-not$headRepository){throw 'Provider snapshot contains malformed identity fields.'}
+    $uri=$null
+    if(-not[Uri]::TryCreate($url,[UriKind]::Absolute,[ref]$uri)-or$uri.Scheme-cne'https'-or$uri.UserInfo-or$uri.Query-or$uri.Fragment){throw 'Provider snapshot pull-request URL is invalid.'}
+    $urlMatch=[regex]::Match($uri.AbsolutePath,'^/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/pull/([1-9][0-9]*)$')
+    if(-not$urlMatch.Success){throw 'Provider snapshot pull-request URL is invalid.'}
+    $urlRepository=$urlMatch.Groups[1].Value;$urlNumber=[long]$urlMatch.Groups[2].Value
+    if($urlNumber-ne[long]$raw.number-or($repository-and$repository-cne$urlRepository)){throw 'Provider snapshot repository or pull-request number drifted.'};$repository=$urlRepository
+    if($RemoteUrl-and-not[IO.Path]::IsPathRooted($RemoteUrl)){
+        $remoteHost='';$remoteRepository=''
+        if($RemoteUrl-cmatch'^[A-Za-z0-9._-]+@(?<host>[A-Za-z0-9.-]+):(?<repo>[A-Za-z0-9._/-]+)$'){$remoteHost=$Matches.host;$remoteRepository=$Matches.repo}
+        else{$remoteUri=$null;if(-not[Uri]::TryCreate($RemoteUrl,[UriKind]::Absolute,[ref]$remoteUri)){throw 'Provider snapshot cannot bind the planned source remote.'};$remoteHost=$remoteUri.Host;$remoteRepository=$remoteUri.AbsolutePath.Trim('/')}
+        if($remoteRepository.EndsWith('.git',[StringComparison]::Ordinal)){$remoteRepository=$remoteRepository.Substring(0,$remoteRepository.Length-4)}
+        if($uri.Host-cne$remoteHost-or$repository-cne$remoteRepository){throw 'Provider snapshot does not bind the exact planned source repository.'}
+    }
+    return [pscustomobject][ordered]@{format=$format;repository=$repository;pull_request_number=[long]$raw.number;url=$url;state=[string]$raw.state;merged=$false;base_branch=$baseBranch;base_revision=$baseRevision;head_branch=$headBranch;head_revision=$headRevision;head_repository=$headRepository;snapshot=[pscustomobject]@{path=$full;sha256=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()}}
+}
+
+function Assert-SourceOnlyRetirementObservations {
+    param([object]$Context,[object]$Plan,[object]$Retirement)
+    $failure=Test-SourceOnlyFailureEvidence $Context $Plan $Retirement.failure_evidence
+    if((Test-MorphospaceStrictUtcTimestamp ([string]$Retirement.observed_at))-lt$failure.failed_at){throw 'Retirement observation precedes actual failed required checks.'}
+    $provider=Get-SourceOnlyFailureReadback $Context $Plan $failure
+    if((Get-MorphospaceCanonicalJsonSha256 $provider.required_checks)-cne(Get-MorphospaceCanonicalJsonSha256 $Retirement.required_checks)){throw 'Retirement required checks drifted after review.'}
+    $rows=@($Retirement.source_repositories);$planned=@($Plan.source_repositories)
+    if($rows.Count-ne$planned.Count){throw 'Retirement source coverage differs from its exact pending plan.'}
+    for($i=0;$i-lt$planned.Count;$i++){
+        $row=$rows[$i];$bound=$planned[$i]
+        foreach($name in @('dependency_ordinal','repo_id','publication_mode','old_revision','candidate_revision')){if([string]$row.$name-cne[string]$bound.$name){throw 'Retirement source identity or dependency order drifted.'}}
+        $mapped=@($Context.map.repositories|Where-Object{[string]$_.repo_id-ceq[string]$bound.repo_id});if($mapped.Count-ne1){throw 'Retirement source map identity drifted.'}
+        $current=Get-SourceOnlyRemoteReadback ([string]$mapped[0].path) ([string]$bound.remote_url) ([string]$bound.target_branch)
+        if($current-cne[string]$bound.old_revision-or[string]$row.remote_readback_revision-cne$current){throw "Retirement protected ref drifted or publication has already/partially occurred for '$($bound.repo_id)'."}
+        if([string]$bound.publication_mode-ceq'provider-merge'){
+            if($null-eq$row.provider_observation){throw 'Provider-merge retirement requires its retained actual unmerged provider snapshot.'}
+            $observed=Get-SourceOnlyProviderObservation ([string]$row.provider_observation.snapshot.path) ([string]$bound.remote_url)
+            if((Get-MorphospaceCanonicalJsonSha256 $observed)-cne(Get-MorphospaceCanonicalJsonSha256 $row.provider_observation)){throw 'Retirement provider snapshot or its bound facts drifted.'}
+            if($observed.base_branch-cne[string]$bound.target_branch-or$observed.base_revision-cne[string]$bound.old_revision-or$observed.head_branch-cne[string]$bound.candidate_branch-or$observed.head_revision-cne[string]$bound.candidate_revision-or$observed.head_repository-cne$observed.repository-or$observed.url-cne[string]$failure.pull_request.url-or$observed.pull_request_number-ne[int]$failure.pull_request.number){throw 'Retirement provider head/base identity differs from the pending plan.'}
+        }elseif($null-ne$row.provider_observation){throw 'Fast-forward retirement does not admit a provider observation.'}
+    }
+}
+
+function New-MorphospaceSourceOnlyPublicationRetirement {
+    [CmdletBinding()]param([string]$WorkspaceRoot,[string]$UnitId,[string]$RepoMapPath,[string]$PlanPath,[string[]]$ProviderObservationPaths=@(),[string]$FailureEvidencePath,[string]$ExpectedFailureEvidenceSha256,[string]$Reason,[string]$Timestamp='',[string]$OutPath)
+    $c=Get-SourceOnlyContext $WorkspaceRoot $UnitId $RepoMapPath;$planPathFull=(Resolve-Path -LiteralPath $PlanPath).Path;$plan=Read-MorphospaceProtocolJson $planPathFull
+    $canonical=Resolve-MorphospaceWorkspacePath $c.workspace "receipts/$($plan.publication_id)-plan.json" -RequireLeaf
+    if($planPathFull-cne$canonical){throw 'Retirement must consume the canonical prepared SourceOnly plan.'}
+    Assert-SourceOnlyPlan $c $plan $planPathFull -AfterPrepare
+    if(-not$Reason){throw 'Retirement requires a truthful reason.'};if(-not$Timestamp){$Timestamp=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')}
+    $failurePath=(Resolve-Path -LiteralPath $FailureEvidencePath).Path
+    $failureReference=[pscustomobject]@{path=[IO.Path]::GetRelativePath($c.workspace,$failurePath).Replace('\','/');bytes=([IO.FileInfo]$failurePath).Length;sha256=$ExpectedFailureEvidenceSha256}
+    $failure=Test-SourceOnlyFailureEvidence $c $plan $failureReference
+    $requiredChecks=(Get-SourceOnlyFailureReadback $c $plan $failure).required_checks
+    $providers=@();foreach($path in $ProviderObservationPaths){$providers+=Get-SourceOnlyProviderObservation $path ''}
+    $rows=@();$used=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach($bound in @($plan.source_repositories)){
+        $mapped=@($c.map.repositories|Where-Object{[string]$_.repo_id-ceq[string]$bound.repo_id});$remote=Get-SourceOnlyRemoteReadback ([string]$mapped[0].path) ([string]$bound.remote_url) ([string]$bound.target_branch)
+        $provider=$null
+        if([string]$bound.publication_mode-ceq'provider-merge'){
+            $matches=@($providers|Where-Object{$_.head_revision-ceq[string]$bound.candidate_revision-and$_.base_revision-ceq[string]$bound.old_revision-and$_.base_branch-ceq[string]$bound.target_branch})
+            if($matches.Count-ne1-or-not$used.Add([string]$matches[0].snapshot.path)){throw 'Retirement requires exactly one distinct unmerged provider snapshot for each planned provider merge.'};$provider=Get-SourceOnlyProviderObservation ([string]$matches[0].snapshot.path) ([string]$bound.remote_url)
+        }
+        $rows+=[pscustomobject][ordered]@{dependency_ordinal=[int]$bound.dependency_ordinal;repo_id=[string]$bound.repo_id;publication_mode=[string]$bound.publication_mode;old_revision=[string]$bound.old_revision;candidate_revision=[string]$bound.candidate_revision;remote_readback_revision=$remote;provider_observation=$provider}
+    }
+    if($used.Count-ne$providers.Count){throw 'Retirement contains unused or repeated provider snapshot evidence.'}
+    $document=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.source_only_publication_retirement.v1';publication_id=[string]$plan.publication_id;project_id=[string]$plan.project_id;trigger_unit_id=$UnitId;plan=[pscustomobject]@{path="receipts/$($plan.publication_id)-plan.json";sha256=Get-MorphospaceFileSha256 $planPathFull};expected=[pscustomobject]@{project_sha256=Get-MorphospaceCanonicalJsonSha256 $c.project;state_sha256=Get-MorphospaceCanonicalJsonSha256 $c.state;unit_sha256=Get-MorphospaceCanonicalJsonSha256 $c.unit;events_sha256=Get-MorphospaceFileSha256 $c.events_path;events_length=([IO.FileInfo]$c.events_path).Length;event_tail_id=[string]$c.tail.event_id};observed_at=$Timestamp;reason=$Reason;source_repositories=$rows;preservation=[pscustomobject]@{accepted_unit_preserved=$true;prepared_plan_preserved=$true;event_prefix_preserved=$true;protected_refs_changed=$false;feature_refs_changed=$false;provider_state_changed=$false;publication_claimed=$false;provider_snapshot_executor_attested=$true;live_protected_refs_checked=$true}}
+    $document|Add-Member -NotePropertyName failure_evidence -NotePropertyValue $failureReference
+    $document|Add-Member -NotePropertyName required_checks -NotePropertyValue @($requiredChecks)
+    $document|Add-Member -NotePropertyName result -NotePropertyValue 'retired-unmerged-required-check-failure'
+    Assert-SourceOnlyRetirementObservations $c $plan $document
+    if(-not(Test-Json -Json ($document|ConvertTo-Json -Depth 64) -SchemaFile (Join-Path $c.repo_root 'schemas/source-only-publication-retirement-v1.schema.json'))){throw 'Generated SourceOnly retirement input does not satisfy its schema.'}
+    $outputFull=[IO.Path]::GetFullPath($OutPath);[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($outputFull))|Out-Null
+    [byte[]]$outputBytes=ConvertTo-MorphospaceProtocolJsonBytes -Value $document
+    $outputStream=[IO.File]::Open($outputFull,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+    try{$outputStream.Write($outputBytes,0,$outputBytes.Length);$outputStream.Flush($true)}finally{$outputStream.Dispose()}
+    return [pscustomobject]@{path=$outputFull;sha256=(Get-MorphospaceFileSha256 $outputFull);execution='not-performed'}
+}
+
+function Invoke-MorphospaceRetireSourceOnlyPublication {
+    [CmdletBinding()]param([string]$WorkspaceRoot,[string]$UnitId,[string]$RepoMapPath,[string]$SourceOnlyPublicationRetirement,[string]$ExpectedSourceOnlyPublicationRetirementSha256='',[string]$Timestamp='',[string]$OutPath,[switch]$Execute,[ValidateSet('none','after-intent','after-artifact','after-projection','after-event')][string]$FaultAfter='none')
+    $c=Get-SourceOnlyContext $WorkspaceRoot $UnitId $RepoMapPath -AllowPartialLedger;$retirementInputPath=(Resolve-Path -LiteralPath $SourceOnlyPublicationRetirement).Path;$retirement=Read-MorphospaceProtocolJson $retirementInputPath
+    if(-not(Test-Json -Json (Get-Content -Raw -LiteralPath $retirementInputPath) -SchemaFile (Join-Path $c.repo_root 'schemas/source-only-publication-retirement-v1.schema.json'))){throw 'SourceOnly retirement input does not satisfy its schema.'}
+    $eventId="$($retirement.publication_id)-source-publication-retired";$transactionId="$eventId-transition";$relative="receipts/$($retirement.publication_id)-retirement.json"
+    $intentPath=Resolve-MorphospaceWorkspacePath $c.workspace "receipts/transactions/$transactionId.intent.json";$completionPath=Resolve-MorphospaceWorkspacePath $c.workspace "receipts/transactions/$transactionId.completion.json"
+    if(Test-Path -LiteralPath $completionPath){throw 'SourceOnly publication was already retired; cancellation cannot replay.'}
+    $hash=Get-MorphospaceFileSha256 $retirementInputPath
+    if($Execute-and-not$ExpectedSourceOnlyPublicationRetirementSha256){throw 'Executed retirement requires its reviewed retirement SHA-256.'}
+    if($ExpectedSourceOnlyPublicationRetirementSha256-and$hash-cne$ExpectedSourceOnlyPublicationRetirementSha256){throw 'Expected SourceOnly retirement input hash drifted.'}
+    $planPath=Resolve-MorphospaceWorkspacePath $c.workspace ([string]$retirement.plan.path) -RequireLeaf
+    if([string]$retirement.plan.path-cne"receipts/$($retirement.publication_id)-plan.json"-or(Get-MorphospaceFileSha256 $planPath)-cne[string]$retirement.plan.sha256){throw 'Retirement exact prepared plan binding drifted.'};$plan=Read-MorphospaceProtocolJson $planPath
+    if([string]$retirement.project_id-cne[string]$plan.project_id-or[string]$retirement.trigger_unit_id-cne$UnitId-or[string]$retirement.publication_id-cne[string]$plan.publication_id){throw 'Retirement project, unit or publication identity drifted.'}
+    if(Test-Path -LiteralPath $intentPath){
+        $recovery=Get-SourceOnlyRecoveryIntent $c $transactionId $relative $retirementInputPath $ExpectedSourceOnlyPublicationRetirementSha256 'retirement'
+        Assert-SourceOnlyRecoveryCallerControls $c $recovery.intent $relative $OutPath $Timestamp $FaultAfter 'retirement'
+        Assert-SourceOnlyRecordingIntentSemantics $c $plan $retirement $recovery.intent -Retirement
+        Assert-SourceOnlyPlan $c $plan $planPath -AfterPrepare -Recovery -PendingSuccessorIntent $recovery.intent
+        foreach($name in @('state_sha256','unit_sha256','events_sha256','events_length','event_tail_id')){if([string]$retirement.expected.$name-cne[string]$recovery.intent.expected.$name){throw 'Retirement recovery input CAS differs from its immutable intent.'}}
+        Assert-SourceOnlyRetirementObservations $c $plan $retirement
+        Assert-SourceOnlyRecoveryPlanningWorktree $c $plan 'retirement'
+        if(-not$Execute){throw 'Interrupted SourceOnly retirement requires -Execute recovery.'}
+        [void](Complete-MorphospaceTransitionLedger -WorkspaceRoot $c.workspace -TransactionId $transactionId -Repair)
+    }else{
+        Assert-SourceOnlyPlan $c $plan $planPath -AfterPrepare
+        if($null-eq$c.state.pending_push_bundle-or[string]$c.state.pending_push_bundle.bundle_id-cne[string]$plan.publication_id-or[string]$c.tail.event_id-cne"$($plan.publication_id)-source-publication-prepared"){throw 'Exact prepared SourceOnly publication is not pending.'}
+        foreach($check in @(@{name='project';actual=(Get-MorphospaceCanonicalJsonSha256 $c.project)},@{name='state';actual=(Get-MorphospaceCanonicalJsonSha256 $c.state)},@{name='unit';actual=(Get-MorphospaceCanonicalJsonSha256 $c.unit)},@{name='events';actual=(Get-MorphospaceFileSha256 $c.events_path)})){if([string]$check.actual-cne[string]$retirement.expected.($check.name+'_sha256')){throw "Retirement expected $($check.name) drifted."}}
+        if([string]$retirement.expected.event_tail_id-cne[string]$c.tail.event_id-or[int64]$retirement.expected.events_length-ne([IO.FileInfo]$c.events_path).Length){throw 'Retirement expected event tail or length drifted.'}
+        Assert-SourceOnlyRetirementObservations $c $plan $retirement
+        $full=Resolve-MorphospaceWorkspacePath $c.workspace $relative;if(-not$OutPath-or[IO.Path]::GetFullPath($OutPath)-cne$full){throw "Retirement output must be '$relative'."};if(Test-Path -LiteralPath $full){throw 'SourceOnly publication retirement artifact already exists.'}
+        if(-not$Timestamp){$Timestamp=[DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffffffZ')}
+        $preparedAt=[DateTimeOffset]::Parse([string]$c.tail.timestamp);$observedAt=[DateTimeOffset]::Parse([string]$retirement.observed_at);$retiredAt=[DateTimeOffset]::Parse($Timestamp)
+        if($Timestamp-cnotmatch'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?Z$'-or$observedAt-lt$preparedAt-or$retiredAt-lt$observedAt){throw 'Retirement chronology does not follow preparation and provider observation.'}
+        $target=Copy-SourceOnlyDocument $c.state;$target.pending_push_bundle=$null;$target.last_event_id=$eventId
+        $event=[pscustomobject][ordered]@{schema='rusty.morphospace.workflow.iteration_event.v1';event_id=$eventId;sequence=[int]$c.tail.sequence+1;timestamp=$Timestamp;project_id=$plan.project_id;unit_id=$UnitId;event_type='state-transition';summary='Retired exact unmerged source-only publication; accepted source and known remote effects remain preserved.';receipts=@($relative)}
+        if($Execute){Start-MorphospaceTransitionLedger -WorkspaceRoot $c.workspace -TransactionId $transactionId -StatePath 'workspace.state.json' -UnitPath $c.unit_relative -EventsPath 'iteration-events.jsonl' -TargetState $target -TargetUnit $c.unit -Event $event -ExpectedStateSha256 $retirement.expected.state_sha256 -ExpectedUnitSha256 $retirement.expected.unit_sha256 -ExpectedEventTailId $retirement.expected.event_tail_id -ExpectedEventsSha256 $retirement.expected.events_sha256 -ExpectedEventsLength $retirement.expected.events_length -Artifacts @([pscustomobject]@{source_path=$retirementInputPath;path=$relative;sha256=$hash}) -FaultAfter $FaultAfter|Out-Null}
+    }
+    return [pscustomobject][ordered]@{schema='rusty.morphospace.workflow.source_only_publication_automation_receipt.v1';action='RetireSourceOnlyPublication';publication_id=$plan.publication_id;project_id=$plan.project_id;trigger_unit_id=$UnitId;executed=$Execute.IsPresent;plan=$retirement.plan;retirement=[ordered]@{path=$relative;sha256=$hash};event_id=$(if($Execute){$eventId}else{$null});preservation=$retirement.preservation}
+}
+
+Export-ModuleMember -Function Invoke-MorphospacePrepareSourceOnlyPublication,Invoke-MorphospaceRecordSourceOnlyPublication,Test-MorphospaceRecordedSourceOnlyPublicationParent,New-MorphospaceSourceOnlyPublicationRetirement,Invoke-MorphospaceRetireSourceOnlyPublication

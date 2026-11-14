@@ -1,0 +1,351 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/source-only-publication-retirement-v1.schema.json",
+  "title": "Unmerged source-only publication retirement",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "publication_id",
+    "project_id",
+    "trigger_unit_id",
+    "plan",
+    "expected",
+    "observed_at",
+    "reason",
+    "source_repositories",
+    "preservation",
+    "failure_evidence",
+    "required_checks",
+    "result"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rusty.morphospace.workflow.source_only_publication_retirement.v1"
+    },
+    "publication_id": {
+      "$ref": "#/$defs/id"
+    },
+    "project_id": {
+      "$ref": "#/$defs/id"
+    },
+    "trigger_unit_id": {
+      "$ref": "#/$defs/id"
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^receipts/[a-z0-9][a-z0-9-]{1,91}-plan\\.json$"
+        },
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_sha256",
+        "state_sha256",
+        "unit_sha256",
+        "events_sha256",
+        "events_length",
+        "event_tail_id"
+      ],
+      "properties": {
+        "project_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "state_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "unit_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "events_sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "events_length": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "event_tail_id": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "source_repositories": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "dependency_ordinal",
+          "repo_id",
+          "publication_mode",
+          "old_revision",
+          "candidate_revision",
+          "remote_readback_revision",
+          "provider_observation"
+        ],
+        "properties": {
+          "dependency_ordinal": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "repo_id": {
+            "$ref": "#/$defs/id"
+          },
+          "publication_mode": {
+            "enum": [
+              "fast-forward",
+              "provider-merge"
+            ]
+          },
+          "old_revision": {
+            "$ref": "#/$defs/oid"
+          },
+          "candidate_revision": {
+            "$ref": "#/$defs/oid"
+          },
+          "remote_readback_revision": {
+            "$ref": "#/$defs/oid"
+          },
+          "provider_observation": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/$defs/provider"
+              }
+            ]
+          }
+        }
+      },
+      "maxItems": 1
+    },
+    "preservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "accepted_unit_preserved",
+        "prepared_plan_preserved",
+        "event_prefix_preserved",
+        "protected_refs_changed",
+        "feature_refs_changed",
+        "provider_state_changed",
+        "publication_claimed",
+        "provider_snapshot_executor_attested",
+        "live_protected_refs_checked"
+      ],
+      "properties": {
+        "accepted_unit_preserved": {
+          "const": true
+        },
+        "prepared_plan_preserved": {
+          "const": true
+        },
+        "event_prefix_preserved": {
+          "const": true
+        },
+        "protected_refs_changed": {
+          "const": false
+        },
+        "feature_refs_changed": {
+          "const": false
+        },
+        "provider_state_changed": {
+          "const": false
+        },
+        "publication_claimed": {
+          "const": false
+        },
+        "provider_snapshot_executor_attested": {
+          "const": true
+        },
+        "live_protected_refs_checked": {
+          "const": true
+        }
+      }
+    },
+    "failure_evidence": {
+      "properties": {
+        "bytes": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "path": {
+          "pattern": "^(?:\\.\\./)?local/[A-Za-z0-9._/-]+$",
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "path",
+        "bytes",
+        "sha256"
+      ],
+      "additionalProperties": false
+    },
+    "required_checks": {
+      "items": {
+        "properties": {
+          "bucket": {
+            "enum": [
+              "pass",
+              "fail",
+              "skipping"
+            ]
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "link": {
+            "pattern": "^https://github[.]com/",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "SUCCESS",
+              "FAILURE",
+              "SKIPPED",
+              "NEUTRAL"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "state",
+          "bucket",
+          "link"
+        ],
+        "additionalProperties": false
+      },
+      "type": "array",
+      "minItems": 1
+    },
+    "result": {
+      "const": "retired-unmerged-required-check-failure"
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,127}$"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "oid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "repository",
+        "pull_request_number",
+        "url",
+        "state",
+        "merged",
+        "base_branch",
+        "base_revision",
+        "head_branch",
+        "head_revision",
+        "head_repository",
+        "snapshot"
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "github-rest",
+            "github-connector"
+          ]
+        },
+        "repository": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "pull_request_number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "state": {
+          "enum": [
+            "open",
+            "closed"
+          ]
+        },
+        "merged": {
+          "const": false
+        },
+        "base_branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "base_revision": {
+          "$ref": "#/$defs/oid"
+        },
+        "head_branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "head_revision": {
+          "$ref": "#/$defs/oid"
+        },
+        "head_repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "snapshot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "path",
+            "sha256"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "$ref": "#/$defs/hash"
+            }
+          }
+        }
+      }
+    }
+  }
+}

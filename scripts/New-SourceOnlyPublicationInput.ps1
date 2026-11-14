@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][ValidateSet('Readiness', 'Plan', 'StartOperation', 'ObserveOperation', 'Execution', 'Disposition', 'ObserveLanding', 'VerifyLanding', 'ComputeReviewedIntegration')][string]$Action,
+    [Parameter(Mandatory = $true)][ValidateSet('Readiness', 'Plan', 'StartOperation', 'ObserveOperation', 'Execution', 'Disposition', 'ObserveLanding', 'VerifyLanding', 'ComputeReviewedIntegration', 'Retirement')][string]$Action,
     [string]$WorkspaceRoot = '', [string]$UnitId = '', [string]$RepoMapPath = '', [string]$PublicationId = '',
     [ValidateSet('fast-forward', 'provider-merge')][string]$PublicationMode = 'provider-merge',
     [string]$Remote = 'origin', [string]$TargetBranch = 'main', [string]$PlanPath = '', [string]$RepoId = '',
@@ -9,6 +9,8 @@ param(
     [string]$RequestPath = '', [string]$ExpectedRequestSha256 = '',
     [string]$HumanDecisionPath = '', [string]$ExpectedHumanDecisionSha256 = '',
     [string]$LandingPath = '', [string]$ExpectedLandingSha256 = '',
+    [string[]]$ProviderObservationPaths = @(), [string]$Reason = '',
+    [string]$FailureEvidencePath = '', [string]$ExpectedFailureEvidenceSha256 = '',
     [string]$OutPath = ''
 )
 
@@ -29,6 +31,10 @@ switch ($Action) {
     }
     'VerifyLanding' {
         Test-MorphospaceSourceDeliveryLanding -LandingPath $LandingPath -ExpectedLandingSha256 $ExpectedLandingSha256 -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId -RepositoryMap $RepoMapPath
+    }
+    'Retirement' {
+        Import-Module (Join-Path $PSScriptRoot 'SourceOnlyPublication.psm1') -Force
+        New-MorphospaceSourceOnlyPublicationRetirement -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId -RepoMapPath $RepoMapPath -PlanPath $PlanPath -ProviderObservationPaths $ProviderObservationPaths -FailureEvidencePath $FailureEvidencePath -ExpectedFailureEvidenceSha256 $ExpectedFailureEvidenceSha256 -Reason $Reason -Timestamp $Timestamp -OutPath $OutPath
     }
     'Readiness' {
         Get-MorphospaceSourceOnlyPublicationReadiness -WorkspaceRoot $WorkspaceRoot -UnitId $UnitId -RepoMapPath $RepoMapPath -PublicationId $PublicationId -PublicationMode $PublicationMode -Remote $Remote -TargetBranch $TargetBranch -OutPath $OutPath
