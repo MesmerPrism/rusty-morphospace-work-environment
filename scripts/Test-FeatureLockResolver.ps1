@@ -77,6 +77,32 @@ try {
         release_policy = [ordered]@{ versioning = "semver"; commit_policy = "validated slices"; push_checkpoint = "integration-batch"; source_first = $true; planning_last = $true; force_push_allowed = $false }
         public_boundary = [ordered]@{ mode = "public"; private_overlay = "local/"; prohibited_evidence = @("device serials") }
     }
+    # Repository roles are architectural labels. Keep the deprecated lowercase
+    # library spelling without relaxing repository identity or path constraints.
+    $projectSchema = Join-Path $RepoRoot "schemas\project-spec-v2.schema.json"
+    $projectJson = $project | ConvertTo-Json -Depth 48 -Compress
+    foreach ($role in @('application','core','adapter','tool','lab','planning','compatibility','platform-test-harness','library')) {
+        $candidate = $projectJson | ConvertFrom-Json -AsHashtable
+        $candidate.repositories[1].role = $role
+        Assert-FeatureLock (Test-Json -Json ($candidate | ConvertTo-Json -Depth 48 -Compress) -SchemaFile $projectSchema -ErrorAction SilentlyContinue) "project repository role '$role'"
+    }
+    foreach ($role in @('Library','unreviewed-role')) {
+        $candidate = $projectJson | ConvertFrom-Json -AsHashtable
+        $candidate.repositories[1].role = $role
+        Assert-FeatureLock (-not (Test-Json -Json ($candidate | ConvertTo-Json -Depth 48 -Compress) -SchemaFile $projectSchema -ErrorAction SilentlyContinue)) "unknown project repository role '$role'"
+    }
+    foreach ($damage in @('unknown-field','missing-repo-id','empty-allowed-paths')) {
+        $candidate = $projectJson | ConvertFrom-Json -AsHashtable
+        $candidate.repositories[1].role = 'library'
+        switch ($damage) {
+            'unknown-field' { $candidate.repositories[1].unexpected = $true }
+            'missing-repo-id' { [void]$candidate.repositories[1].Remove('repo_id') }
+            'empty-allowed-paths' { $candidate.repositories[1].allowed_paths = @() }
+        }
+        Assert-FeatureLock (-not (Test-Json -Json ($candidate | ConvertTo-Json -Depth 48 -Compress) -SchemaFile $projectSchema -ErrorAction SilentlyContinue)) "library repository rejects $damage"
+    }
+    Assert-FeatureLock (($project | ConvertTo-Json -Depth 48 -Compress) -ceq $projectJson) 'schema controls preserve project bytes'
+
     $projectPath = Join-Path $projectRoot "project.spec.json"
     $lockPath = Join-Path $projectRoot "feature.lock.json"
     Write-Json -Path $projectPath -Value $project
