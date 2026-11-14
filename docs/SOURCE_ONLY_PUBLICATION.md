@@ -297,12 +297,87 @@ not repeat source remote, ordering, merge-parent, or tree observations; the
 source-only writer performs those checks before it commits the transition. It
 also does not require a planning transport repository or planning remote.
 
+## Retire a failed, unmerged preparation
+
+Use `RetireSourceOnlyPublication` for one prepared provider-merge source whose
+feature push and PR creation succeeded without force, whose required checks
+failed, and whose protected target remains unchanged and PR remains open and
+unmerged. This is a terminal failure disposition. Do not reopen its accepted unit, rewrite its plan, or use
+the distinct legacy `RetirePreparedPush` container format.
+
+Capture the actual current provider pull-request snapshot, then use
+`New-SourceOnlyPublicationInput.ps1 -Action Retirement` with `-WorkspaceRoot`,
+`-UnitId`, `-RepoMapPath`, the canonical prepared `-PlanPath`,
+`-ProviderObservationPaths`, `-FailureEvidencePath`, its reviewed
+`-ExpectedFailureEvidenceSha256`, a truthful `-Reason`, and a create-new `-OutPath`.
+Keep the failure envelope and original raw files in an explicit ignored local
+capsule. The envelope's `capsule_root` is either `local/<capsule>` relative to
+the workspace, or `../local/<capsule>` in its immediate project parent. The
+owner rejects roots outside these two project-owned local areas, reparse
+paths, nonignored roots and nested references outside the declared capsule.
+Original nested absolute paths remain valid only inside that capsule; their
+bytes are never rewritten or relabeled. Every referenced file and stream
+retains its raw byte length and hash. The closed
+`source_only_publication_failure_evidence.v1` envelope
+binds publication, project, trigger unit, source repository, executor and plan
+SHA-256, with `operation_start`, `push_verification`, `pull_request`, and
+`required_check_watch` references. Each reference has `path`, `bytes`, and
+`sha256`. Retain the actual checked-result shape: exact exit code, original
+wait returned, both stream EOF flags, completion, elapsed seconds, and both
+stream references. Push and PR must exit zero; the required watch must exit one.
+The preserved push verification binds clean before/after candidate, tree,
+branch, upstream, remote and before/after refs, force false and unchanged
+upstream. This remains an executor attestation of its actual command; remote
+readback alone does not prove that command or absence of force.
+
+The one source requires an actual GitHub REST or connector
+pull-request JSON snapshot. A bare `merged: false` declaration is not a
+snapshot. The input binds its raw path/hash, repository, PR number, exact
+head/base revisions and target branch. Fast-forward and multi-source partial
+outcomes are outside this bounded operation.
+
+Pass that input to `Invoke-WorkUnitAutomation.ps1 -Action
+RetireSourceOnlyPublication -SourceOnlyPublicationRetirement <input>
+-ExpectedSourceOnlyPublicationRetirementSha256 <reviewed hash>`, with the same
+workspace, unit and map. Dry-run first; execution requires its reviewed hash.
+The canonical output is `receipts/<publication-id>-retirement.json`.
+
+The writer reauthenticates the exact accepted unit and prepared transaction,
+all current source identities, the project/state/event CAS and each raw
+provider snapshot. It directly reads the protected target and pushed feature
+ref, requiring the original base and candidate respectively. It also uses the
+bound `gh` executable for fresh read-only PR and required-check observations.
+The PR must retain its exact same-repository head/base and be open/unmerged;
+all required checks must have known terminal outcomes, including a failure.
+Unknown, pending, canceled, swapped or changed check evidence is held. Changed,
+already published or partly published refs, merged PRs, damaged snapshots,
+identity drift and completed cancellation replay refuse. An interrupted
+retirement may resume only its exact immutable transaction and input.
+
+Capture the original evidence once; the constructor and writer independently
+refresh current provider and Git observations. Retirement performs no provider
+or source mutation. Exact input/CAS and fresh readbacks supply its guards.
+
+Retirement appends one truthful `source-publication-retired` transaction and
+clears only that pending bundle. It preserves accepted-unit and old-plan
+bytes, validation and ledger history. It neither closes the PR nor removes a
+feature push, changes a remote, grants publication credit or resolves an
+external effect. The receipt retains the observed provider state. Make and
+accept any source correction through the ordinary next unit before preparing
+a fresh publication plan. Current-work validation authenticates the retired
+tail without repeating network observations.
+
 Run `pwsh -NoProfile -File .\scripts\Test-SourceOnlyPublication.ps1 -SelfTest`
 for the focused provider-merge, replay, and prepared/recorded current-work
 fixture. This check is Windows-only because source/planning alias rejection
 uses volume serial and `FileIdInfo` directory identity. Its affected-validation
 closure includes the transition ledger, content-observation helper, protocol
 common layer, and public automation wrapper.
+Run `scripts/Test-SourceOnlyPublicationRetirement.ps1 -SelfTest` for the exact
+known-partial failure, adversarial, current-work and four interruption fixtures.
+Its provider responses are isolated synthetic fixtures; actual prepare and
+retire transactions use the owner writer and local Git remotes. This does not
+claim a real provider operation ran during the test.
 
 Also run `scripts/Test-SourceOnlyPublicationInputs.ps1 -SelfTest` when changing
 the builders or their shared receipt contract. This rehearsal uses the receipt

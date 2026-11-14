@@ -1052,6 +1052,8 @@ function Get-SourceOnlyPublicationTailProjection {
         'prepared'
     } elseif ($tailId.EndsWith('-source-publication-recorded',[StringComparison]::Ordinal)) {
         'recorded'
+    } elseif ($tailId.EndsWith('-source-publication-retired',[StringComparison]::Ordinal)) {
+        'retired'
     } else {
         return $null
     }
@@ -1066,7 +1068,7 @@ function Get-SourceOnlyPublicationTailProjection {
         throw 'Source-only publication tail is not an exact accepted-unit state transition with one receipt.'
     }
     $unitId = [string]$event.unit_id
-    $artifactPath = "receipts/$publicationId-$(if($phase -ceq 'prepared'){'plan'}else{'execution'}).json"
+    $artifactPath = "receipts/$publicationId-$(if($phase -ceq 'prepared'){'plan'}elseif($phase -ceq 'retired'){'retirement'}else{'execution'}).json"
     if ([string](@($event.receipts)[0]) -cne $artifactPath) { throw 'Source-only publication tail does not reference its exact canonical artifact.' }
     $transaction = Test-MorphospaceCommittedTransitionLedger -WorkspaceRoot $WorkspaceRoot -TransactionId "$tailId-transition" `
         -ExpectedStatePath 'workspace.state.json' -ExpectedUnitPath "iteration-units/$unitId.json" -ExpectedEventsPath 'iteration-events.jsonl' -RequireTail
@@ -1082,7 +1084,7 @@ function Get-SourceOnlyPublicationTailProjection {
         throw 'Source-only publication transaction does not own its exact live artifact.'
     }
     $document = & $script:ProtocolCommonModule.ExportedCommands['Read-MorphospaceProtocolJson'] $artifactFullPath
-    $schemaName = if ($phase -ceq 'prepared') {'source-only-publication-plan-v1.schema.json'} else {'source-only-publication-execution-v1.schema.json'}
+    $schemaName = if ($phase -ceq 'prepared') {'source-only-publication-plan-v1.schema.json'} elseif ($phase -ceq 'retired') {'source-only-publication-retirement-v1.schema.json'} else {'source-only-publication-execution-v1.schema.json'}
     if (-not (Test-Json -Json (Get-Content -Raw -LiteralPath $artifactFullPath) -SchemaFile (Join-Path $RepoRoot "schemas/$schemaName"))) {
         throw "Source-only publication $phase artifact does not satisfy its schema."
     }
@@ -1095,6 +1097,8 @@ function Get-SourceOnlyPublicationTailProjection {
     $expectedIntentSchema = if ($phase -ceq 'prepared') {'rusty.morphospace.workflow.transition_ledger_intent.v3'} else {'rusty.morphospace.workflow.transition_ledger_intent.v1'}
     $expectedSummary = if ($phase -ceq 'prepared') {
         'Prepared exact source-only publication from an accepted trigger; planning remains local-only.'
+    } elseif ($phase -ceq 'retired') {
+        'Retired exact unmerged source-only publication; accepted source and known remote effects remain preserved.'
     } else {
         'Recorded ordered source publication and remote readback; planning remains local-only.'
     }
@@ -1195,6 +1199,28 @@ function Get-SourceOnlyPublicationTailProjection {
         $reconstructedPre.last_event_id = $preparedId
         if ((& $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceCanonicalJsonSha256'] $reconstructedPre) -cne [string]$transaction.intent.pre.state.sha256) {
             throw 'Recorded source-only publication changes state outside its pending bundle and event tail.'
+        }
+        if ($phase -ceq 'retired') {
+            $retirementOwner = Import-Module (Join-Path $RepoRoot 'scripts/SourceOnlyPublication.psm1') -PassThru -Scope Local
+            $failure = & $retirementOwner {param($w,$p,$r) Test-SourceOnlyFailureEvidence ([pscustomobject]@{workspace=$w}) $p $r.failure_evidence} $WorkspaceRoot $plan $document
+            & $retirementOwner {param($r) Assert-SourceOnlyFailureRequiredChecks @($r.required_checks)} $document
+            foreach ($name in @('state_sha256','unit_sha256','events_sha256','events_length','event_tail_id')) {
+                if ([string]$document.expected.$name -cne [string]$transaction.intent.expected.$name) { throw 'Retired SourceOnly publication CAS differs from its exact transaction.' }
+            }
+            if ([string]$document.expected.project_sha256 -cne [string]$plan.expected.project_sha256) { throw 'Retired SourceOnly publication project binding drifted.' }
+            $retirementRows=@($document.source_repositories);$plannedRows=@($plan.source_repositories)
+            for($i=0;$i-lt$plannedRows.Count;$i++) {
+                $row=$retirementRows[$i];$bound=$plannedRows[$i]
+                foreach($name in @('dependency_ordinal','repo_id','publication_mode','old_revision','candidate_revision')) {
+                    if([string]$row.$name-cne[string]$bound.$name){throw 'Retired SourceOnly publication source identity drifted.'}
+                }
+                if([string]$row.remote_readback_revision-cne[string]$bound.old_revision){throw 'Retired SourceOnly publication claims a changed protected ref.'}
+                if([string]$bound.publication_mode-ceq'provider-merge') {
+                    $retainedProvider = & $retirementOwner {param($r,$b) Get-SourceOnlyProviderObservation ([string]$r.provider_observation.snapshot.path) ([string]$b.remote_url)} $row $bound
+                    if ((& $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceCanonicalJsonSha256'] $retainedProvider) -cne (& $script:ProtocolCommonModule.ExportedCommands['Get-MorphospaceCanonicalJsonSha256'] $row.provider_observation) -or [string]$retainedProvider.url -cne [string]$failure.pull_request.url) { throw 'Retired SourceOnly provider raw snapshot or subject drifted.' }
+                    if($null-eq$row.provider_observation-or[string]$row.provider_observation.head_revision-cne[string]$bound.candidate_revision-or[string]$row.provider_observation.head_branch-cne[string]$bound.candidate_branch-or[string]$row.provider_observation.head_repository-cne[string]$row.provider_observation.repository-or[string]$row.provider_observation.base_revision-cne[string]$bound.old_revision-or[string]$row.provider_observation.base_branch-cne[string]$bound.target_branch){throw 'Retired SourceOnly provider observation differs from its prepared source.'}
+                }elseif($null-ne$row.provider_observation){throw 'Retired fast-forward publication contains an unrelated provider observation.'}
+            }
         }
     }
     $liveState = & $script:ProtocolCommonModule.ExportedCommands['Read-MorphospaceProtocolJson'] (& $script:ProtocolCommonModule.ExportedCommands['Resolve-MorphospaceWorkspacePath'] $WorkspaceRoot 'workspace.state.json' -RequireLeaf)
